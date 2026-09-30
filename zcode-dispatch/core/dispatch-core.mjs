@@ -8,7 +8,9 @@
  * 形如 `[zcode-run] done exit=0 elapsed=9.7s session=sess_x provider=plan:x model=M responseChars=N`，
  * 结束后按 tag 回读台账 `zcode-runs.jsonl` 补全字段（stdout 解析与台账取并集，解析失败不崩）。
  *
- * 互斥语义：spec.lock = 'repo' | 'memory' | 'both'（默认 both）。
+ * 互斥语义：spec.lock = 'repo' | 'memory' | 'both'（**默认 repo**；ZB-15 起由 both 收窄 ——
+ * 单写者纪律的本义是"仓库文件写权限"，memory 锁保护的是 ZCode 自己的记忆库 ~/.zcode，
+ * 与仓库写入互不相干，改为按需显式声明）。声明 spec.write 则走文件级细粒度锁。
  *   同一时刻至多一个 run 持有 repo 锁、至多一个 run 持有 memory 锁；
  *   请求不满足锁条件时进 FIFO 队列等待（head-of-line，保证排队顺序），不报错。
  *   锁 = 文件锁（跨进程互斥，内容含 jobId/pid/at；过期 >2h 或 pid 已死即清理）
@@ -516,20 +518,33 @@ export function createDispatcher(options = {}) {
   }
 
   /* ---------- 锁与队列 ---------- */
-  /* ZB-08：锁集合的计算。
-   *   · spec.write 非空（且文件路径合法）⇒ 细粒度：只锁这些文件
-   *   · 否则                            ⇒ 粗粒度 repo/memory（沿用既有语义，不退化安全） */
+  /* 锁集合的计算（ZB-15：默认由 both 收窄为 repo）。
+   *
+   * 用户观察（成立）：一般派发都是 repo+memory 两把锁 ⇒ 任何两个任务都互斥，
+   * 多并发无从谈起。而 **memory 锁保护的是 ZCode 自己的记忆库（~/.zcode）**，
+   * 与仓库写入互不相干 —— 绝大多数"改代码"的派发根本不写它，白占一把锁。
+   *
+   * 宿主 PROTOCOL §5.2 对单写者的定义是「**仓库文件写权限**」（ZCode 独占代码写入），
+   * 故**默认只锁 repo 就已守住单写者纪律的本义**；memory 改为按需显式声明。
+   *
+   * 三档语义：
+   *   · spec.write 非空        ⇒ 细粒度：只锁这些文件（最强并发，且更精确）
+   *   · spec.lock === 'both'   ⇒ 显式要求两把锁（任务确实会写 ~/.zcode 记忆时才用）
+   *   · 其它（含缺省 'repo'）  ⇒ **只锁 repo**（默认；单写者本义）
+   */
   function locksFor(spec) {
     const decl = normalizeWriteSet(spec && spec.write);
     if (decl.length > 0) {
       return decl.map((p) => ({ name: 'file', path: fileLockPath(dirLocks, p), file: p }));
     }
-    if (spec.lock === 'repo') return [{ name: 'repo', path: repoLockPath }];
     if (spec.lock === 'memory') return [{ name: 'memory', path: memoryLockPath }];
-    return [ // 默认 both；固定顺序 repo→memory，防死锁
-      { name: 'repo', path: repoLockPath },
-      { name: 'memory', path: memoryLockPath },
-    ];
+    if (spec.lock === 'both') {
+      return [ // 固定顺序 repo→memory，防死锁
+        { name: 'repo', path: repoLockPath },
+        { name: 'memory', path: memoryLockPath },
+      ];
+    }
+    return [{ name: 'repo', path: repoLockPath }]; // 默认（含 spec.lock === 'repo'）
   }
 
   /** 归一化声明的写入集：去空、去重（归一化后）、排序（保证加锁顺序一致 ⇒ 防死锁）。

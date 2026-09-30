@@ -77,7 +77,7 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 
 - `dispatch`：`kind=prompt|task|target` + 对应内容字段；可选 `model(GLM-5.3|GLM-5.3-Flash)`、
   `provider(plan|personal)`、`mode(build|edit|plan|yolo，默认 edit)`、`timeoutMin(>0)`、
-  `memoryBench(仅 kind=prompt)`、`tag`、`lock(repo|memory|both，默认 both)`、`cwd`、`resume`。
+  `memoryBench(仅 kind=prompt)`、`tag`、`lock(repo|memory|both，**默认 repo**；写 ZCode 记忆库时才用 both)`、`write(预计写入的文件列表)`、`cwd`、`resume`。
 - `list` / `kill(id)` / `dismiss(id)` / `tail(id, n=30)` / `quota`（本地台账 5h 滚动 / 本周 / 今日聚合 +
   引擎本周已用；`bin/zcd.mjs quota --json` 同时含 `local` 与 `planQuota` 两段，
   任一失败不互相影响）。`dismiss`（Z11）：把 paused/终态 job 从列表移除并落盘
@@ -86,22 +86,37 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 - `channels` / `channel set` / `retry(jobId, {provider?, model?})` / `fallback`：Z6 通道与续跑，见下节。
 - 限制：单写者互斥（同锁 FIFO 排队，不报错）；`memoryBench` 仅 prompt；工具不授予/确认任何权限。
 
-## 并发语义（ZB-08：实测得出，此前文档未说明）
+## 并发语义（ZB-08 实测 + ZB-15 默认锁收窄）
 
 **实际并发 = min(`maxConcurrent`, 单写者锁闸)**，而**锁闸通常更严**：
 
 | 任务的 `lock` / `write` | 行为 |
 |---|---|
-| `lock=both`（默认，**未声明 `write`**） | 彼此**完全串行** —— 即使把 `maxConcurrent` 调到 8 也一样 |
-| `lock=repo` 与 `lock=memory` 各一 | 可并行（**最多 2 路**，锁只有两把） |
+| **默认（不传 `lock`）** | 只锁 `repo` ⇒ 与其它默认任务**仍串行**（都争 repo），但**可与 memory 任务 / write 任务并行** |
+| `lock=both` | 取 `repo`+`memory` 两把锁 ⇒ 与默认任务互斥（共享 repo） |
+| `lock=repo` 与 `lock=memory` 各一 | 可并行（最多 2 路） |
 | 声明了 `write: [...]` | **按文件判冲突**：写不同文件的可并行；写同一文件的后排队 |
+
+> **默认锁的语义（ZB-15 收窄）**：默认 `repo` —— 单写者纪律的本义是「**仓库文件写权限**」
+> （宿主 PROTOCOL §5.2）。`memory` 锁保护的是 **ZCode 自己的记忆库（`~/.zcode`）**，
+> 与仓库写入互不相干，故改为**按需显式声明**（确实会写记忆库时才用 `lock=both`）。
+
+> ⚠️ **收窄默认锁的收益边界（实测，别误解）**：`both → repo` 对「多个同类"改代码"任务」的
+> 并发提升是 **0** —— 它们仍然都争 `repo` 这一把锁。收益只在**混合场景**：
+>
+> | 场景 | 同时 running 峰值 |
+> |---|---|
+> | `both` ×3 | 1 |
+> | **默认(repo) ×3** | **1**（仍串行） |
+> | 默认(repo) + 显式 `memory` | **2** |
+> | 默认(repo) + 声明 `write` | **2** |
+>
+> ⇒ **想真正让多个同类任务并发，唯一正路是声明 `write`**（细粒度文件锁）。
 
 > 实测（2026-09-30）：T18（`lock=both`）跑 27 分钟期间，一个只要 `repo`、
 > 一个只要 `memory` 的任务全程干等，三者 `started`/`finished` 首尾相接、**无一毫秒重叠** ——
 > 因为 `maxConcurrent=1` 是总闸。故 `maxConcurrent` 已提到 4（profile 配置）。
->
-> 但**粗粒度锁仍是最严的那道闸**：`lock=both` 的任务彼此串行与 `maxConcurrent` 无关。
-> **想真正提升并发，正确做法是声明 `write`**（细粒度文件锁），而不是放宽锁。
+
 
 ### 细粒度文件锁（`write`）
 
@@ -265,6 +280,7 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/panel-anchor.test.mjs` | 22 | 面板锚定语义（ZB-11：贴边跟随，缩窗不挤到中间、放大回原位） |
 | `node test/elapsed-format.test.mjs` | 15 | 耗时展示格式（ZB-13：恒定三段 XX时XX分XX秒；数据层仍为秒数） |
 | `node test/ctx-format.test.mjs` | 23 | 上下文占用展示（ZB-14：`180.9k / 200k`，截断非四舍五入） |
+| `node test/min-lock.test.mjs` | 7 | 默认锁最小化（ZB-15：默认只锁 repo；write 优先；both 仍需显式声明） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 > `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），

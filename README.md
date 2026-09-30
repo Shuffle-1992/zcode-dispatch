@@ -163,6 +163,7 @@ node test/panel-reclamp.test.mjs  # 面板位置可见性（9 项）
 node test/panel-anchor.test.mjs  # 面板锚定语义（22 项：缩窗不挤中间 / 放大回原位）
 node test/elapsed-format.test.mjs  # 耗时展示格式（15 项：XX时XX分XX秒）
 node test/ctx-format.test.mjs  # 上下文占用展示（23 项：180.9k / 200k）
+node --test test/min-lock.test.mjs  # 默认锁最小化（7 项：默认只锁 repo / write 优先）
 Z2_HOST_REPO=<宿主项目> node test/z2-verify.mjs   # 端到端验收（不设则跳过越界检查并如实标注）
 ```
 

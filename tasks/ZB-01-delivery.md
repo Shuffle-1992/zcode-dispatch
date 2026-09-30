@@ -2580,3 +2580,93 @@ file-lock **9/9**；wait-action **6/6**。
 百分比删掉后，**"快满了"的警示信息也随之消失** —— 现在 `199.9k / 200.0k` 与
 `28.9k / 200.0k` 在视觉上仍然只是灰色小字，没有颜色区分。
 若需要，可加阈值着色（≥80% 黄、≥95% 红）；本轮按用户明确要求只做格式替换，未擅自添加。
+
+---
+
+## 38. ZB-15：默认锁由 `both` 收窄为 `repo`（最小锁）
+
+### 38.1 用户观察（成立）
+
+> 「我发现一般派发都是 repo 锁 + memory 锁，会导致无法实现多并发，优化下要求，尽量实现最小锁要求。」
+
+`lock` 原默认 `both`（`index.js:213` + `core:530` 兜底），即每个任务都同时占
+`repo` + `memory` 两把锁 ⇒ **任何两个任务都互斥**。
+
+### 38.2 先查清"这两把锁到底保护什么"（不拍脑袋）
+
+`repo` / `memory` 在 core 里只是**抽象锁名**（`<workRoot>/locks/{repo,memory}.lock`），
+core 并不知道它们代表什么资源。故去宿主项目查原始语义：
+
+- 宿主 `PROTOCOL.md` §1/§5.2：**「单写者互斥（R35 定）：同一时刻只允许一个写者…
+  一次只派一个 run；提交轮与修复轮串行」**，且明确 **「"单写者"指仓库文件写权限」**
+- 用户确认：**`memory` 锁保护的是 ZCode 自己的记忆库（`~/.zcode` 等）**
+
+⇒ **`memory` 与仓库写入互不相干**；绝大多数"改代码"的派发根本不写它，却白占一把锁。
+
+### 38.3 改动
+
+```js
+function locksFor(spec) {
+  const decl = normalizeWriteSet(spec && spec.write);
+  if (decl.length > 0) return decl.map(…);          // ① write 声明 ⇒ 文件级细粒度
+  if (spec.lock === 'memory') return [memoryLock];  // ② 只要 memory
+  if (spec.lock === 'both') return [repoLock, memoryLock]; // ③ 显式要两把
+  return [repoLock];                                // ④ **默认（含缺省）= 只锁 repo**
+}
+```
+
+同时更新：`core` 头注释、`index.js` 的 `lock` 参数描述与工具描述「并发」段、
+插件 README 的参数表与「并发语义」节。`wire.host.mjs` 只在调用方显式传 `lock` 时才写入
+`spec.lock`，故缺省值一路流到 core 由 `locksFor` 兜底 —— 无需改 wire。
+
+### 38.4 ★ 收益边界（实测，**别误解**）
+
+用真实 dispatcher（假 runner，`maxConcurrent=4`）实测同时 running 峰值：
+
+| 场景 | 峰值 | 说明 |
+|---|---|---|
+| `lock=both` ×3 | 1 | 旧默认行为 |
+| **默认(`repo`) ×3** | **1** | **仍串行** —— 三个任务都争 `repo` |
+| 默认(`repo`) + 显式 `memory` | **2** | ✅ 收窄的收益 |
+| 默认(`repo`) + 声明 `write` | **2** | ✅ |
+
+**结论（必须讲清）**：把默认从 `both` 改成 `repo`，对**多个同类"改代码"任务**的并发提升是
+**0** —— 它们仍然都争 `repo` 这一把锁。收益只在**混合场景**（有任务显式要 memory、
+或声明了 write）。**想让多个同类任务真正并发，唯一正路是声明 `write`**（文件级锁）。
+
+> 我没有把这个改动包装成"并发问题解决了" —— 那是不诚实的。默认收窄的**真实价值**是：
+> ① 去掉每个任务无谓占用的一把锁（语义更准）；② 让"memory 任务 / write 任务"不再被
+> 默认任务无谓阻塞。
+
+### 38.5 安全底线（未退化）
+
+- **单写者本义仍守住**：默认任务之间依然按 `repo` 串行（实测场景②峰值 = 1）
+- **`lock=both` 仍可取两把锁**（确实会写 `~/.zcode` 记忆时才用）
+- **声明 `write` 时优先走文件级**，且**不占** `repo`/`memory` 粗粒度锁（测试专门断言）
+- `lock` 取值校验不变（仍只接受 `repo|memory|both`）
+
+### 38.6 验证
+
+新增 `test/min-lock.test.mjs`（**7 项**，`node:test`）：
+默认只锁 repo（且 **memory 锁文件不存在**）/ 默认×2 仍串行 / 默认 + memory 可并行 /
+显式 both 取两把锁 / both 与默认互斥 / write 优先且不占粗粒度锁 / 取值校验。
+
+**开发中自曝**：该测试首版最后一个用例派了 3 个 job 却不等待 ⇒ 测试结束后 dispatcher 仍在
+`persist()`，而 `test.after` 已删临时目录 ⇒ `ENOENT: jobs.json.*.tmp`，被 `node:test` 判为
+*"generated asynchronous activity after the test ended"*。**是测试没收尾，不是产品问题**；
+已改为等它们落地。
+
+### 38.7 门禁（全绿）
+
+`node --check` 零失败；verify-plugin **20/20**；verify-switch **8/8**；core **12/12**；
+channel-retry **9/9**；quota-rpc **16/16**；tail-scroll **13/13**；pill **16/16**；
+pill-position **16/16**；section-order **9/9**；panel-anchor **22/22**；
+panel-reclamp **9/9**；elapsed-format **15/15**；ctx-format **23/23**；
+**min-lock 7/7**（新增）；file-lock **9/9**；wait-action **6/6**。
+
+> 关键回归确认：`core.test.mjs` 里多个用例**不传 `lock`**（依赖旧默认 both），
+> 默认收窄后**全部仍通过**（12/12）—— 因为它们本就期望"同锁串行"，而 `repo` 默认同样满足。
+
+### 38.8 生效条件
+
+改了 `core/dispatch-core.mjs` 与 `index.js`（**Host 半边**）⇒ **完全退出 DSH 再启动**才生效。
