@@ -3,7 +3,8 @@
  *
  * 覆盖任务包「四、验收方式」：
  *   1. node --check 全部 JS；package.json / locale/*.json JSON.parse；cordis.patch.yml 结构校验
- *   2. 静态纪律 grep：@deepseek-ai 仅允许 wire.host.mjs 的协议标记键常量（Z8-02） /
+ *   2. 静态纪律 grep：@deepseek-ai 仅允许 wire.host.mjs 的协议标记键常量（Z8-02）与
+ *      index.js 的 schemastery 导入（Z10-01，宿主随包出货） /
  *      document.body / 字面 # 色值（icon.svg 除外）；
  *      模块说明符只允许 node:* 与相对路径；client.js 只 require('react')；TODO 应已清偿（Z8-01 落地）
  *   3. client.js 桩加载：window.__ModuleLoader__ + require 桩 → factory 可执行、返回 {inject, apply}、
@@ -111,9 +112,12 @@ const jsTexts = Object.fromEntries(JS_FILES.map((f) => [f, readFileSync(join(PKG
 const allJs = Object.entries(jsTexts);
 // Z8-02：wire.host.mjs 需协议标记键字符串常量（typert 协议要求键跨副本精确相等，
 // protocol/lib/index.js:135 的 '@deepseek-ai/dsh-typert-protocol/remote-methods'）——
-// 这是数据契约不是 import；说明符扫描（下两条）已保证不会出现宿主包 import。
-ok(allJs.every(([f, s]) => f === 'wire.host.mjs' || !s.includes('@deepseek-ai')), 'JS 不出现 @deepseek-ai（协议标记键常量仅限 wire.host.mjs）');
+// 这是数据契约不是 import。Z10-01：index.js 需 @deepseek-ai/schemastery（cordis 的
+// resolveConfig 只认 Standard Schema；schemastery 宿主随包出货，官方插件同款）——
+// 仅此两处豁免；说明符扫描（下两条）保证不出现其余宿主包 import。
+ok(allJs.every(([f, s]) => f === 'wire.host.mjs' || f === 'index.js' || !s.includes('@deepseek-ai')), 'JS 不出现 @deepseek-ai（豁免：wire.host.mjs 协议键 + index.js schemastery 导入）');
 ok((jsTexts['wire.host.mjs'].match(/@deepseek-ai/g) ?? []).length === 1, 'wire.host.mjs 的 @deepseek-ai 仅协议标记键一处', String((jsTexts['wire.host.mjs'].match(/@deepseek-ai/g) ?? []).length));
+ok((jsTexts['index.js'].match(/@deepseek-ai/g) ?? []).length === 1 && jsTexts['index.js'].includes("'@deepseek-ai/schemastery'"), 'index.js 的 @deepseek-ai 仅 schemastery 导入一处', String((jsTexts['index.js'].match(/@deepseek-ai/g) ?? []).length));
 ok(allJs.every(([, s]) => !/document\s*\.\s*body/.test(s)), 'JS 不操作 document.body');
 ok(allJs.every(([f, s]) => f === 'icon.svg' || !/#[0-9a-fA-F]{3,8}\b/.test(s)), 'JS 无字面 # 色值');
 const specifierRe = /(?:import[\s\S]*?from\s*|import\s*\(\s*|require\s*\(\s*)['"]([^'"]+)['"]/g;
@@ -127,7 +131,8 @@ for (const [f, s] of allJs) {
   for (const m of code.matchAll(specifierRe)) {
     const spec = m[1];
     if (f === 'client.js') clientRequires.push(spec);
-    if (spec !== 'react' && !spec.startsWith('node:') && !spec.startsWith('./') && !spec.startsWith('../')) badSpecs.push(`${f}: ${spec}`);
+    const allowedBare = f === 'index.js' && spec === '@deepseek-ai/schemastery'; // Z10-01：宿主随包出货的校验器
+    if (spec !== 'react' && !allowedBare && !spec.startsWith('node:') && !spec.startsWith('./') && !spec.startsWith('../')) badSpecs.push(`${f}: ${spec}`);
   }
 }
 ok(badSpecs.length === 0, 'import/require 说明符仅 node:*、相对路径或浏览器模块表约定的 react', badSpecs.join('; '));
@@ -191,11 +196,15 @@ section('6. index.js Host 半边端到端（Z1 假 runner）');
 {
   const host = await import(pathToFileURL(join(PKG, 'index.js')).href);
   ok(typeof host.apply === 'function', '导出 apply');
-  ok(host.Config?.type === 'object' && typeof host.Config.properties === 'object', 'Config 为 JSON Schema object');
-  const cfgKeys = Object.keys(host.Config.properties ?? {}).sort().join(',');
-  ok(cfgKeys === 'demo,ledgerPath,maxConcurrent,runnerPath,workRoot', 'Config 字段与 patch config 一致', cfgKeys);
-  ok(['demo', 'maxConcurrent', 'runnerPath', 'ledgerPath', 'workRoot'].every((k) => 'default' in host.Config.properties[k]), 'Config 字段均带默认值');
-  ok(host.Config.properties.action === undefined && host.Config.properties.maxConcurrent.default === 1, 'Config 抽查默认值');
+  // Z10-01：Config 必须是 Standard Schema v1（cordis resolveConfig 只认 ['~standard'].validate，
+  // 裸 JSON Schema 会在激活时 TypeError）——断言行为不变式而非 schema 内部形状
+  ok(typeof host.Config?.['~standard']?.validate === 'function', 'Config 为 Standard Schema（~standard.validate 可用）');
+  const KEYS = ['demo', 'maxConcurrent', 'runnerPath', 'ledgerPath', 'workRoot'];
+  const v0 = host.Config['~standard'].validate({});
+  ok(!!v0?.value && KEYS.every((k) => k in v0.value), 'validate({}) 补全 5 字段', JSON.stringify(v0?.value));
+  ok(v0.value.demo === false && v0.value.maxConcurrent === 1 && v0.value.runnerPath === '' && v0.value.ledgerPath === '' && v0.value.workRoot === '', 'validate({}) 默认值逐项正确');
+  const v1 = host.Config['~standard'].validate({ maxConcurrent: 3, demo: true, runnerPath: 'r', ledgerPath: 'l', workRoot: 'w' });
+  ok(v1.value.maxConcurrent === 3 && v1.value.demo === true && v1.value.runnerPath === 'r' && v1.value.ledgerPath === 'l' && v1.value.workRoot === 'w', 'validate 保留显式配置值');
 
   const tmp = mkdtempSync(join(PKG, 'test', 'z2-e2e-')); // 临时 workRoot 放本包 test/ 下，跑完删除
   const cfg = {

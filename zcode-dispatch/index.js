@@ -7,27 +7,58 @@
  * （references/user-actions.md「一个操作两个调用方」）。
  *
  * 说明两点（creator 会话如遇激活/注册问题按此排查）：
- * 1. Config 用 JSON Schema（draft-07 语境）声明；references/practices.md 提到
- *    Config.listConfigs 返回文档含 $defs 引用，即 JSON Schema。若实际加载器要求
- *    cordis Schema 包装形态，只需改写本文件 Config 常量（字段与默认值不变）。
+ * 1. Config 是 Standard Schema v1——cordis 的 resolveConfig 只认 Config['~standard'].validate，
+ *    裸 JSON Schema 会在激活时抛「Cannot read properties of undefined (reading 'validate')」。
+ *    首选宿主随包出货的 schemastery（官方插件同款）；解析不到时降级为 fallbackConfig() 的
+ *    手写 Standard Schema，激活永不因 schema 崩。字段与默认值不变。
  * 2. agent 工具的注册 API 未经 inspection 确认（标准模式无 cordis_inspect_query），
  *    registerZcodeDispatchTool() 按候选顺序防御式尝试；工具本体（动作实现）不受影响。
  */
 import { createDispatcher } from './core/dispatch-core.mjs';
 import { attachHostWire, createActionHandler } from './wire.host.mjs';
 
-/** 插件 config schema（与 cordis.patch.yml 的 config 字段一一对应，均带默认值）。 */
-export const Config = {
-  $schema: 'http://json-schema.org/draft-07/schema#',
-  type: 'object',
-  properties: {
-    demo: { type: 'boolean', default: false, description: 'UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher' },
-    maxConcurrent: { type: 'integer', default: 1, minimum: 1, maximum: 8, description: '同时运行的 run 上限（单写者互斥语义下的并发度）' },
-    runnerPath: { type: 'string', default: '', description: 'runner 脚本绝对路径（宿主仓库 scripts/collab/zcode-run.mjs，只读使用）；留空则不创建 dispatcher' },
-    ledgerPath: { type: 'string', default: '', description: '台账 zcode-runs.jsonl 绝对路径；留空则跳过台账回读与用量聚合' },
-    workRoot: { type: 'string', default: '', description: '派发器工作根目录（locks/、state/jobs.json、logs/ 落在这里）；留空则不创建 dispatcher' },
-  },
-};
+/** 插件 config 默认值（与 cordis.patch.yml 的 config 字段一一对应，均带默认值）。 */
+const DEFAULTS = { demo: false, maxConcurrent: 1, runnerPath: '', ledgerPath: '', workRoot: '' };
+
+/**
+ * 无依赖降级：手写 Standard Schema v1（cordis 只认 Config['~standard'].validate）。
+ * 语义与 schemastery 主路径对齐：补默认值、demo 收敛为布尔、maxConcurrent 夹在 1..8、
+ * 三个路径字段非字符串一律回空串——只归一不抛 issues，激活不被配置打崩。
+ */
+function fallbackConfig() {
+  return {
+    '~standard': {
+      version: 1,
+      vendor: 'zcode-dispatch',
+      validate(raw) {
+        const cfg = { ...DEFAULTS, ...(raw && typeof raw === 'object' ? raw : {}) };
+        cfg.demo = !!cfg.demo;
+        cfg.maxConcurrent = Math.min(8, Math.max(1, Number(cfg.maxConcurrent) || 1));
+        for (const k of ['runnerPath', 'ledgerPath', 'workRoot']) cfg[k] = typeof cfg[k] === 'string' ? cfg[k] : '';
+        return { value: cfg };
+      },
+    },
+  };
+}
+
+/** 首选官方形态（schemastery 即 Standard Schema v1，官方插件同款）；解析不到时降级。 */
+async function loadConfig() {
+  try {
+    const { default: z } = await import('@deepseek-ai/schemastery');
+    return z.object({
+      demo: z.boolean().default(false).description('UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher'),
+      maxConcurrent: z.number().min(1).max(8).default(1).description('同时运行的 run 上限（单写者互斥语义下的并发度）'),
+      runnerPath: z.string().default('').description('runner 脚本绝对路径（宿主仓库 scripts/collab/zcode-run.mjs，只读使用）；留空则不创建 dispatcher'),
+      ledgerPath: z.string().default('').description('台账 zcode-runs.jsonl 绝对路径；留空则跳过台账回读与用量聚合'),
+      workRoot: z.string().default('').description('派发器工作根目录（locks/、state/jobs.json、logs/ 落在这里）；留空则不创建 dispatcher'),
+    });
+  } catch {
+    return fallbackConfig();
+  }
+}
+
+/** 插件 config schema（Standard Schema v1；cordis resolveConfig 经 Config['~standard'].validate 取值）。 */
+export const Config = await loadConfig();
 
 const ACTIONS = ['dispatch', 'list', 'kill', 'tail', 'quota', 'channels', 'channel', 'retry', 'fallback'];
 

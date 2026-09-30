@@ -146,8 +146,11 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
    demo（徽标「演示数据」）；安装后以徽标为准判断（见「真数据 vs demo 判据」一节）。
    宿主→客户端的 `$on` 推送依赖装配级事件源，未接通时以 1s 轮询兜底（功能不受影响，仅刷新及时性）。
 4. **工具注册 API 未确认**：见上文 `zcode_dispatch` 一节；激活后看 Host 日志即可判断是否注册成功。
-5. **Config 形态**：`index.js` 的 `Config` 用 JSON Schema；若加载器要求 cordis Schema 包装
-   （`Schema.object`），只需改写该常量（字段与默认值不变）。
+5. **Config 形态**：`index.js` 的 `Config` 是 Standard Schema v1——cordis 的 `resolveConfig`
+   只认 `Config['~standard'].validate`，裸 JSON Schema 会在激活时报
+   `Cannot read properties of undefined (reading 'validate')`（Z10-01 已修）。首选宿主随包
+   出货的 schemastery（官方插件同款），解析不到时自动降级为手写 Standard Schema
+   （`fallbackConfig()`），激活永不因 schema 崩；字段与默认值不变。
 6. **与任务包给定 manifest 的偏离**：`package.json` 的 `files` 数组在任务包给定内容之上补了
    `wire.host.mjs` / `wire.client.mjs` 两项——否则 install_bundle 按 `files` 打包时
    `index.js` 的相对 import 会缺文件。其余字段与任务包逐字一致。

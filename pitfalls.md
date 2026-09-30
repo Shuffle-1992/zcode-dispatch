@@ -2,6 +2,12 @@
 
 > 按全局规则维护：遇到踩坑问题登记于此，避免重复踩坑。新条目置顶。
 
+## 2026-09-30 Z10（Config 换 Standard Schema）
+
+1. **cordis 的 Config 只认 Standard Schema v1，裸 JSON Schema 直接炸激活**：`resolveConfig` 取 `runtime.Config['~standard'].validate`（cordis lib/index.js:958），draft-07 JSON Schema 没有 `~standard` → `TypeError: Cannot read properties of undefined (reading 'validate')`。宿主随包出货的 schemastery 就是 Standard Schema（`Schema.prototype['~standard']` getter，vendor='schemastery'），官方插件一律 `import z from '@deepseek-ai/schemastery'` + `z.object({...})`。降级兜底写手写 `{'~standard':{version:1,vendor,validate}}`，validate 只归一不抛 issues——激活永不被配置打崩。
+2. **验收探针的正则是契约，改代码形态前先 grep 探针**：DSH 探针用 `/export\s+const\s+Config\s*=/` 断言「Config 可配置」，任务包示例的 `let Config; export { Config }` 会让这条静默变红；写成 `export const Config = await loadConfig();` 语义等价且保住契约。同坑变体：本地探针的纪律断言（`@deepseek-ai` 全禁、裸包名说明符禁、Config 为 JSON Schema 形状）必须随行为变更同步豁免/改写（Z5-1、Z8-02 同一先例），否则探针永久假红。
+3. **try/catch 包住主路径会让「方法名写错」静默落降级**：schemastery 导入失败与方法不存在都会进 catch → 手写降级兜底，探针若只断言 `~standard.validate` 是函数就测不出主路径已死。探针必须断言 `Config['~standard'].vendor === 'schemastery'` 区分主/降级路径（本地探针临时脚本据此发现主路径健康）。
+
 ## 2026-09-30 Z8（wire 全接线）
 
 1. **新增的状态枚举值必须逐个核对消费者，否则永远停在初始态**：Z8-01 给远端 wire 选了新连接态 `conn='remote'`，但 UI 徽标映射（client.js connLabel）只认 `demo/ext/live`，未识别值全部落到「连接中」——远端真接通徽标也永远显示连接中，`node --check`/探针/浅渲染全测不出来（纯映射遗漏）。修法：wire 发 `conn='live'`（与既有枚举对齐），两处 emit（正常/出错）都要改；同源镜像 wire.client.mjs 同步。教训：给既有 discriminated 字段加值前先 `grep` 该字段的全部比较点。
