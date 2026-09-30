@@ -14,7 +14,8 @@
 | 安装方式 | GUI 插件页「添加插件」→ 填本地目录路径；profile 里是 **Junction 软链**：`~/.dsh/profiles/desktop/node_modules/@local/zcode-dispatch → F:\My Code\dsh-plugins\zcode-dispatch` |
 | 启用状态 | ✅ `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` **含** `@local/zcode-dispatch` |
 | DSH 启动 | ✅ 14:12:56 重启后**无崩溃报告**（`%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*.log` 最新仍是 14:05 的两条旧记录） |
-| **面板** | ❌ **页面上看不到**（用户实测） |
+| **面板** | ✅ **已可见**（2026-09-30 14:2x 用户确认）。根因 = `createWire()` 渲染期抛错且当时无 ErrorBoundary → 整块浮层静默消失；修复见提交 `e4cdb4c`（createWire 兜底 + DEAD_WIRE + PanelBoundary），用户刷新页面后可见 |
+| 面板数据 | ⚠️ 仍是**演示数据**（`conn='demo'`）→ 真数据卡在 **P2（Remote 命名空间）**，是本单主要剩余项 |
 | 宿主半边 | ❓ 未确认激活：`zcode-dispatch\.data\` 自 14:04:41 起**无新写入**（该目录由派发核心按 `config.workRoot` 创建） |
 | 客户端半边 | ❓ client entry 是否 activated 待你用 inspection / `plugin_manager` 查 |
 | 常驻探针 | `node tools/verify-plugin.mjs` → **20/20**（带 `Z2_ALLOW_PROFILE_WRITE=1`；那是"用户已安装插件"导致的 profile 写入，属预期） |
@@ -68,7 +69,18 @@
 
 ## 四、待解决（按优先级，含具体验证方法）
 
-### P1（阻塞"能用"）：面板不可见
+### P0（**已完成，存档**）：面板不可见 —— 2026-09-30 14:2x 用户确认已解决
+根因：`createWire()` 在渲染期抛错 + 当时没有 ErrorBoundary → React 整块渲染失败 → 浮层静默消失（页面无报错）。
+修复（提交 `e4cdb4c`）：`createWire` 全程 try/catch、`DEAD_WIRE` 兜底、`PanelBoundary`（渲染异常 → 屏幕上一张可见的失败卡片 + 重试）。
+→ 若将来又"看不见面板"，现在页面会给出可见原因；把那段文字带回即可定位。
+
+### P1（本单核心）：让面板显示**真数据**（徽标从「演示数据」变「已连接」）
+宿主半边**已激活**（`zcode-dispatch\.data\{locks,logs,state}` 已创建；无 `jobs.json` 是因为还没有 job 落盘）。
+缺的是**客户端能否拿到 `ctx.remote.zcodeDispatch`**。
+- `cordis_inspect_query` → **Service**：查 `zcodeDispatch`（`wire.host.mjs` 里 `ctx.provide(FACE_NAME, face)`，`FACE_NAME='zcodeDispatch'`）是否真的在服务表、由哪个 fiber 提供；
+- 若不合法/不可见：按官方形态改写 —— `refs/dsh-typert/protocol/README.zh.md`（`TypertRemoteService` + `Remote` 装饰器 / `bindTypertRemote()`；实现见 `protocol/lib/index.js:146-157`、`:248-268`），对照 `refs/dsh-typert/plugin-manager/lib/index.js`（官方 host 半边完整实现）；
+- 客户端 `$mount(REMOTE_CONTRIBUTION)` 契约对齐 `refs/dsh-typert/registry/lib/client.js`；
+- 判据：徽标「演示数据」→「**已连接**」，且进程列表反映真实 job（空列表是正确的"无进程"）。
 
 本地已加两道"可见化"防护（提交 `e4cdb4c`）：`createWire()` 全程 try/catch、`DEAD_WIRE` 兜底、以及 **`PanelBoundary`（ErrorBoundary）** —— 任何渲染异常会显示一张「ZCode 派发台渲染失败：<msg>」卡片，而不是静默消失。
 
