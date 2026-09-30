@@ -2,6 +2,14 @@
 
 > 按全局规则维护：遇到踩坑问题登记于此，避免重复踩坑。新条目置顶。
 
+## 2026-09-30 Z13（官方 API 注册 agent 工具 zcode_dispatch）
+
+1. **「宿主随包出货」≠ 本地能静态 import**：本地 node_modules 只有宿主出货包的子集（cosmokit/schemastery）。给 index.js 加静态 `import '@deepseek-ai/dsh-tools'` 会让模块加载即炸——verify-plugin ③「Config 是 Standard Schema」项会**真实 import index.js**（tools/verify-plugin.mjs:38），门禁直接红；宿主真缺包则激活死（Z10-1 同源）。正解沿用本文件 loadConfig 同款：动态 import + try/catch 降级 null，宿主内解析到同一个官方包，语义等价、失败可降。
+2. **defineTool 的 output 不可省略**：`options.output.render` / `options.output.schema` 被无条件读取（refs/dsh-tools/lib/index.js:842/:849），「若 output 可省略就省略」按真契约为假。最小合法形态：`{ schema: { type: 'json' }, render: (args, value) => [{type:'text', text: …}] }`——DSL 的 `type:'json'` 编译为注解即无约束 JSON（:688），任意 JSON 返回值都合法。
+3. **官方参数 DSL 不是 JSON Schema**：字段级 `{ type, required?:true, description?, enum?/items?/const? }`；`required` 只能是 `true`（编译收拢到顶层 required 数组，:603）；`exclusiveMinimum`/`minimum` 不是 DSL 词汇 → authorError，数字范围约束只能写进 description 由 execute 侧兜底。
+4. **validateArgs 吃「作者 spec」不吃编译产物**：`tool.parameters` 里存的是编译后 JSON Schema（`{type:'object', properties, required}` 形状），把它喂回 `validateArgs` 会报 `parameters.type must be a value schema object`（保真脚本首跑即踩）。要验「校验语义」直接走 `tool.execute(args)`——defineTool 的 execute 包装器内部先 validate 再透传（:866-870）。
+5. **本地跑通官方包行为的通路（模块钩子）**：`node:module` 的 `register()` resolve 钩子把 `@deepseek-ai/dsh-tools` 短路到工作区提取的 `refs/dsh-tools/lib/index.js`，其 import 的宿主内部包（cordis/dsh-llm/dsh-scope/dsh-util-values/dsh-brand/dsh-sandbox）按名生成 data URL 最小桩——真实 defineTool 即可在本地完成编译/校验/注册全链路验证（本轮 14/14，脚本跑完即删）。另注意：URL pathname 在 Windows 不解码 `%20`（Z12-1），钩子里的文件 URL 一律 `fileURLToPath`/`new URL(…, import.meta.url).href`。
+
 ## 2026-09-30 Z12（派发总开关插件侧接入）
 
 1. **`new URL('.', import.meta.url).pathname` 在 Windows 不解码 `%20`**：路径含空格时得到 `F:\My%20Code\…`，再喂给 `pathToFileURL` 会二次编码（`%2520`）→ ERR_MODULE_NOT_FOUND。Z6-4 只记了正向（path → import 要用 `pathToFileURL(p).href`），反向（URL → path）必须用 `fileURLToPath(import.meta.url)`，别手搓 `.pathname` 替换。
