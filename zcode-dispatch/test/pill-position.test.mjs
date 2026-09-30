@@ -52,7 +52,21 @@ ok(/className:\s*'zcd-root zcd-min'/.test(seg), 'S4 胶囊根节点仍带 zcd-mi
 ok(/pointer-events:auto/.test(src.match(/\.zcd-pill\{[^}]*\}/)?.[0] || ''), 'S5 .zcd-pill 仍是 pointer-events:auto（可点）');
 ok(/\.zcd-root\{[^}]*pointer-events:none/.test(src), 'S6 .zcd-root 仍是 none（浮层空白不挡应用）');
 
-console.log('\n面板位置载入钳制');
-ok(/useState\(\(\) => \{[\s\S]{0,400}clampPos\(saved,/.test(src), 'S7 FloatingPanel 载入 pos 时经过 clampPos');
+console.log('\n面板位置载入时仍受视口约束');
+/* ZB-11 起：载入改走 resolvePos（锚定推导），其内部**仍调用 clampPos** 作安全网。
+ * 故这里断言"载入经过 resolvePos，且 resolvePos 内部用 clampPos" ——
+ * 直接写死 clampPos(saved,...) 会与已退役的 ZB-07 实现细节耦合。 */
+/* 断言方式说明：不用 `[\s\S]{0,N}` 这种脆弱的距离匹配 ——
+ * 载入片段中间夹着注释，N 稍小就假失败（本文件就踩过一次：600 不够，实际 ~840）。
+ * 改为"截取 useState(() => { 之后的 1200 字符，看其中是否含 resolvePos(saved,"。 */
+{
+  const i = src.indexOf('const [pos, setPos] = useState');
+  const seg2 = i >= 0 ? src.slice(i, i + 1200) : '';
+  ok(/resolvePos\(saved,/.test(seg2), 'S7 FloatingPanel 载入 pos 时经过 resolvePos（锚定推导）');
+}
+{
+  const mRes = /function resolvePos\(p, view\) \{([\s\S]*?)\n    \}/.exec(src);
+  ok(mRes && /clampPos\(\{ left, top \}, view\)/.test(mRes[1]), 'S8 resolvePos 内部仍用 clampPos 作安全网（视口约束不丢）');
+}
 
 console.log(`\n===== ZB-07：${pass} PASS / 0 FAIL =====`);

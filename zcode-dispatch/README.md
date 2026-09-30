@@ -261,7 +261,8 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/file-lock.test.mjs` | 9 | 细粒度文件锁（ZB-08：声明 write 才生效、未声明回退粗粒度、路径归一化、防死锁、无泄漏） |
 | `node test/wait-action.test.mjs` | 6 | `wait` 动作（ZB-08：等终态 / paused 也返回 / 超时不谎报 / 参数校验） |
 | `node test/section-order.test.mjs` | 9 | 面板分区渲染顺序（ZB-09：单写者/文件锁紧跟进程、用量置末） |
-| `node test/panel-reclamp.test.mjs` | 13 | 面板位置重钳（ZB-10：视口变化/挂载后按真实尺寸钳回视口内） |
+| `node test/panel-reclamp.test.mjs` | 9 | 任意视口下位置可见（ZB-10 初衷；ZB-11 改锚定后仍保证） |
+| `node test/panel-anchor.test.mjs` | 22 | 面板锚定语义（ZB-11：贴边跟随，缩窗不挤到中间、放大回原位） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 > `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），

@@ -359,6 +359,62 @@ window.__ModuleLoader__.load({
      * @param {{vw:number, vh:number, w:number, h:number}} view
      * @returns {{left:number, top:number}|null} null = 没存过位置（调用方走默认右下角）
      */
+    /* ZB-11：浮动位置改为**锚定语义**（纯函数，便于独立测试）。
+     *
+     * 起因（用户报告）：「DSH 全屏时把派发台固定在右上角 → 缩到默认大小 → 派发台被挤到
+     * 中间对话上面 → 再全屏，它仍留在中间」。
+     *
+     * 根因（★ 这正是 ZB-10「钳制」引入的反效果）：位置只存绝对 {left, top}。
+     * 窗口缩小时钳制会把坐标**改写**进 pos 并落盘（left 被拉到视口内 ⇒ 落到中间）；
+     * 再放大时钳制只保证"不越界"，**不会**把它还原回右上角 ⇒ 用户的意图被永久破坏。
+     *
+     * 正解：记住面板**贴的是哪条边**与**该方向的边距**，位置由「边距 + 当前视口」推导：
+     *   贴右 ⇒ left = vw - w - rx   贴下 ⇒ top = vh - h - by
+     *   贴左 ⇒ left = lx            贴上 ⇒ top = ty
+     * 于是缩小窗口时它贴着右边一起收（仍在右上角），放大时自然回到右上角。
+     * 四条边距在拖拽/固定时一次记录齐全，只有被锚定的那一对参与推导。
+     *
+     * @param {{left:number, top:number}} rect 面板当前矩形左上角
+     * @param {{vw:number, vh:number, w:number, h:number}} view
+     * @returns {{ax:'left'|'right', ay:'top'|'bottom', lx:number, ty:number, rx:number, by:number, left:number, top:number}}
+     */
+    function anchorOf(rect, view) {
+      const vw = (view && view.vw) || 0, vh = (view && view.vh) || 0;
+      const w = (view && view.w) || 0, h = (view && view.h) || 0;
+      const left = Number(rect && rect.left) || 0;
+      const top = Number(rect && rect.top) || 0;
+      return {
+        /* 面板中心落在视口哪一半 ⇒ 贴哪条边。
+         * 用"中心过半"而不是"距边多近"：用户把面板放在右上角时中心在上半+右半，判定稳定；
+         * 也天然覆盖"面板比视口还大"的退化情形（此时中心仍在某一半）。 */
+        ax: left + w / 2 <= vw / 2 ? 'left' : 'right',
+        ay: top + h / 2 <= vh / 2 ? 'top' : 'bottom',
+        lx: left,
+        ty: top,
+        rx: Math.max(0, vw - left - w),
+        by: Math.max(0, vh - top - h),
+        left,
+        top,
+      };
+    }
+
+    /** 由锚定信息 + 当前视口推导实际位置；仍过一遍 clampPos 作安全网（绝不跑到视口外）。
+     *  旧格式（只有 {left, top}，无 ax/ay）按"贴左+贴上"处理 —— 与旧行为一致，向后兼容。 */
+    function resolvePos(p, view) {
+      if (!p || typeof p !== 'object') return null;
+      const vw = (view && view.vw) || 0, vh = (view && view.vh) || 0;
+      const w = (view && view.w) || 0, h = (view && view.h) || 0;
+      if (!vw || !vh) {
+        // 拿不到视口尺寸时不猜，用记录里的绝对坐标
+        return Number.isFinite(Number(p.left)) && Number.isFinite(Number(p.top))
+          ? { left: Number(p.left), top: Number(p.top) }
+          : null;
+      }
+      const left = p.ax === 'right' ? vw - w - (Number(p.rx) || 0) : (Number.isFinite(Number(p.lx)) ? Number(p.lx) : Number(p.left) || 0);
+      const top = p.ay === 'bottom' ? vh - h - (Number(p.by) || 0) : (Number.isFinite(Number(p.ty)) ? Number(p.ty) : Number(p.top) || 0);
+      return clampPos({ left, top }, view); // 安全网：贴边距若因面板变大而越界，仍钳回视口内
+    }
+
     function clampPos(p, view) {
       if (!p || typeof p !== 'object') return null;
       const left = Number(p.left), top = Number(p.top);
@@ -1944,19 +2000,31 @@ window.__ModuleLoader__.load({
     }
 
     function FloatingPanel() {
-      /* ZB-07：保存的位置可能是脏值（早期版本存的负数/越界值，或存完之后窗口变小了）——
-       * 直接沿用会让整个面板跑到屏幕外、再也点不到。载入时按当前视口钳制一次。
-       * 初始化阶段拿不到面板真实尺寸（还没渲染），用保存的宽高 / 默认值保守估计即可：
-       * 目的只是把「明显在视口外」的位置拉回来，精确对齐交给 ZB-10 的挂载后重钳。 */
+      /* ZB-07/10/11：位置持久化。ZB-11 起存的是**锚定信息**（贴哪条边 + 四条边距），
+       * 而不是单纯的绝对 {left, top} —— 这样窗口尺寸变化时位置可被正确推导（见 anchorOf/resolvePos）。
+       * 载入时按当前视口解析一次；旧格式（只有 left/top）自动按"贴左+贴上"兼容。
+       * 初始化阶段拿不到面板真实尺寸（还没渲染），用保存的宽高 / 默认值估计；
+       * 挂载后 ZB-10 会用真实测量尺寸再解析一次。 */
+      /* ZB-11：**锚定记录**（贴哪条边 + 四条边距）—— 必须在 pos 的 useState 之前声明：
+       * 那个初始化函数会把落盘的锚定种进来（否则 TDZ：Cannot access before initialization）。 */
+      const anchorRef = useRef(null);
       const [pos, setPos] = useState(() => {
         const saved = loadJson(LS.pos, null);
+        if (!saved) return null;
         const savedSize = loadJson(LS.size, null) || {};
-        return clampPos(saved, {
+        /* ★ 关键：把落盘的**锚定记录**同时种进 anchorRef —— 渲染位置由它推导。
+         * 旧格式（只有 left/top，无 ax/ay）在这里补一次 anchorOf，于是老数据也能获得
+         * "贴边跟随"的新行为（否则首次升级后会一直用绝对坐标）。 */
+        const view = {
           vw: (typeof window !== 'undefined' && window.innerWidth) || 0,
           vh: (typeof window !== 'undefined' && window.innerHeight) || 0,
           w: Number(savedSize.width) || WIDTH.def,
           h: Number(savedSize.height) || 320,
-        });
+        };
+        anchorRef.current = (saved.ax && saved.ay)
+          ? saved
+          : anchorOf({ left: Number(saved.left) || 0, top: Number(saved.top) || 0 }, view);
+        return resolvePos(saved, view);
       });
       const [width, setWidth] = useState(() => clampWidth(loadJson(LS.size, null)?.width));
       /* ZB-06：高度初值。无保存值 → null = auto（保持旧观感）；有则钳到当前视口允许范围。 */
@@ -1977,36 +2045,35 @@ window.__ModuleLoader__.load({
         switchSet,
       } = useWire();
       const rootRef = useRef(null);
-      /* ZB-10：按**真实测量尺寸**重新钳制位置。
+      /* ZB-11：这里保存的是**锚定记录**（贴哪条边 + 四条边距），而不是解析后的坐标。
+       * 渲染时才用 resolvePos 推导实际 left/top（见 rootStyle），故窗口尺寸一变，
+       * 位置会随锚定边自动重算 —— 这才是"固定在右上角"应有的跨尺寸行为。
        *
-       * 起因（用户报告）：「面板固定了，重开 DSH 时窗口显示有变化，导致固定位置变动」。
-       * 缺口有二：
-       *   ① 载入时的钳制用的是**猜的**高度（savedSize.height || 320），与真实渲染高度不符
-       *      ⇒ 钳制结果有偏差；
-       *   ② **视口尺寸变化时完全没有重钳** —— 重开 DSH 后窗口变小，面板就留在视口外/贴边不对。
-       * 故：挂载后用 offsetWidth/offsetHeight（真实值，含用户设过的宽高）重钳一次，
-       * 并监听 resize 持续重钳；只在**确实越界**时才移动（clampPos 是最小平移）。
-       * 折叠/最小化时不重钳：折叠态面板很矮、胶囊本就固定右下角，重钳无意义且会干扰。 */
-      const reclampPos = useCallback(() => {
+       * ★ ZB-10 的错误（本轮修正）：当时把**解析后的绝对坐标**写回 pos 并落盘，
+       * 窗口一缩，钳制后的坐标就固化成"新位置"（落在中间），用户意图被永久破坏；
+       * 再放大也不会还原。现在渲染值不落盘，落盘的只有意图（锚定）。 */
+      /* （anchorRef 已上移到 pos 的 useState 之前 —— 那里要用它种入落盘的锚定） */
+      /** 读取当前视口与面板真实尺寸（拿不到时退化为 0，由各纯函数自行处理）。 */
+      const viewMetrics = useCallback(() => {
         const el = rootRef.current;
-        if (!el) return; // 未挂载 / 最小化态（根节点不是面板）
-        const w = el.offsetWidth || WIDTH.def;
-        const h = el.offsetHeight || 320;
-        const vw = (typeof window !== 'undefined' && window.innerWidth) || 0;
-        const vh = (typeof window !== 'undefined' && window.innerHeight) || 0;
-        setPos((prev) => {
-          if (!prev) return prev; // 没存过位置 ⇒ 走默认右下角，无需钳
-          const next = clampPos(prev, { vw, vh, w, h });
-          if (!next) return prev;
-          return next.left === prev.left && next.top === prev.top ? prev : next;
-        });
+        return {
+          vw: (typeof window !== 'undefined' && window.innerWidth) || 0,
+          vh: (typeof window !== 'undefined' && window.innerHeight) || 0,
+          w: (el && el.offsetWidth) || WIDTH.def,
+          h: (el && el.offsetHeight) || 320,
+        };
       }, []);
+      /* ZB-10/11：视口尺寸变化时**按锚定重算**（不是把坐标钳死）。
+       * 用 forcePos 触发一次重渲染即可 —— 真正的坐标由渲染期的 resolvePos 推导。 */
+      const [, forcePos] = useState(0);
       useEffect(() => {
-        reclampPos(); // 挂载后按真实尺寸钳一次（修 ①）
-        const onResize = () => reclampPos();
-        window.addEventListener('resize', onResize); // 视口变化持续钳（修 ②）
+        const onResize = () => forcePos((n) => n + 1);
+        window.addEventListener('resize', onResize);
         return () => window.removeEventListener('resize', onResize);
-      }, [reclampPos, collapsed, minimized]); // 展开态变化后尺寸变了，也重钳一次
+      }, []);
+      /* 挂载后也要重算一次：初始渲染时面板还没有真实尺寸（offsetWidth=0），
+       * 用估计值推导过一次；挂载后尺寸已知，需要纠正。 */
+      useEffect(() => { forcePos((n) => n + 1); }, [collapsed, minimized, width, height]);
       // Z6：通道清单 / 默认通道 / 降级链（挂载时拉一次；切换即时回显，wire 返回后用权威值校正）
       const [channelsInfo, setChannelsInfo] = useState({ channels: [], warnings: [] });
       const [channel, setChannelState] = useState({ provider: 'plan', model: 'GLM-5.3-Flash' });
@@ -2095,18 +2162,31 @@ window.__ModuleLoader__.load({
         const offY = e.clientY - rect.top;
         const target = e.currentTarget;
         const last = { left: rect.left, top: rect.top };
+        /* ZB-11：拖动过程中即按"当前位置"重算锚定（贴哪条边随拖动实时变化），
+         * 松手时把**锚定记录**落盘 —— 落盘的是意图（贴右上角），不是某一时刻的绝对坐标。 */
+        const commitAnchor = () => {
+          const a = anchorOf({ left: last.left, top: last.top }, {
+            vw: (typeof window !== 'undefined' && window.innerWidth) || 0,
+            vh: (typeof window !== 'undefined' && window.innerHeight) || 0,
+            w: el.offsetWidth || WIDTH.def,
+            h: el.offsetHeight || 320,
+          });
+          anchorRef.current = a;
+          return a;
+        };
         const move = (ev) => {
           const w = el.offsetWidth || 1;
           const ht = el.offsetHeight || 1;
           last.left = Math.min(Math.max(EDGE, ev.clientX - offX), Math.max(EDGE, window.innerWidth - w - EDGE));
           last.top = Math.min(Math.max(EDGE, ev.clientY - offY), Math.max(EDGE, window.innerHeight - ht - EDGE));
-          setPos({ left: last.left, top: last.top });
+          const a = commitAnchor();
+          setPos({ left: a.left, top: a.top }); // pos 状态仍用于触发重渲染
         };
         const up = () => {
           target.removeEventListener('pointermove', move);
           target.removeEventListener('pointerup', up);
           target.removeEventListener('pointercancel', up);
-          saveJson(LS.pos, { left: last.left, top: last.top });
+          saveJson(LS.pos, commitAnchor()); // 落盘锚定记录（含 ax/ay 与四条边距）
         };
         try {
           target.setPointerCapture(e.pointerId);
@@ -2128,11 +2208,17 @@ window.__ModuleLoader__.load({
          * 这要求面板是 left/top 锚定：若还没被拖动过（pos 为空，CSS 是 right/bottom 锚定），
          * 先把 left/top 按**当前实际几何**钉住 —— 取的就是当前 rect，视觉上零位移，
          * 但从此右边缘/下边缘才是会动的那两条边，手柄与行为一致（ZB-10 那类"抓错角"不会再出现）。 */
-        if (!pos && el) {
+        if (!anchorRef.current && el) {
           const r = el.getBoundingClientRect();
-          const p = { left: Math.round(r.left), top: Math.round(r.top) };
-          setPos(p);
-          saveJson(LS.pos, p);
+          const a = anchorOf({ left: Math.round(r.left), top: Math.round(r.top) }, {
+            vw: (typeof window !== 'undefined' && window.innerWidth) || 0,
+            vh: (typeof window !== 'undefined' && window.innerHeight) || 0,
+            w: el.offsetWidth || WIDTH.def,
+            h: el.offsetHeight || 320,
+          });
+          anchorRef.current = a;
+          setPos({ left: a.left, top: a.top });
+          saveJson(LS.pos, a);
         }
         const target = e.currentTarget;
         let w = startW;
@@ -2172,8 +2258,12 @@ window.__ModuleLoader__.load({
         '--zcd-st-failed': T.stFailed, '--zcd-st-killed': T.stKilled, '--zcd-st-interrupted': T.stInterrupted,
         '--zcd-st-idle': T.stIdle,
       };
-      const rootStyle = pos
-        ? { ...cssVars, left: `${pos.left}px`, top: `${pos.top}px` }
+      /* ZB-11：渲染位置由**锚定记录**推导（窗口尺寸变化时自动跟随贴边）。
+       * anchorRef.current 为 null ⇒ 从未定位过，走默认右下角。 */
+      const metrics = viewMetrics();
+      const resolved = resolvePos(anchorRef.current, metrics);
+      const rootStyle = resolved
+        ? { ...cssVars, left: `${Math.round(resolved.left)}px`, top: `${Math.round(resolved.top)}px` }
         : { ...cssVars, right: '24px', bottom: '24px' };
 
       if (minimized) {
