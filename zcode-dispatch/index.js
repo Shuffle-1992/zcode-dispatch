@@ -34,6 +34,10 @@ const DEFAULTS = {
   runnerPath: '',
   ledgerPath: '',
   workRoot: '',
+  // runner 子进程的工作目录。runner 已迁至通用工具仓库（dsh-plugins/collab-kit），
+  // 不再能从自身位置推出宿主项目根；显式给 cwd 最稳（runner 也支持从绝对 --task 反推，双保险）。
+  // 留空 = 用 DSH 进程的 cwd（旧行为）。
+  runnerCwd: '',
   // Z12：派发总开关真值文件（契约：宿主仓库 collab/PROTOCOL.md §7）；缺省为空 = 未接入宿主仓库
   switchPath: DEFAULT_SWITCH_PATH,
 };
@@ -52,7 +56,7 @@ function fallbackConfig() {
         const cfg = { ...DEFAULTS, ...(raw && typeof raw === 'object' ? raw : {}) };
         cfg.demo = !!cfg.demo;
         cfg.maxConcurrent = Math.min(8, Math.max(1, Number(cfg.maxConcurrent) || 1));
-        for (const k of ['runnerPath', 'ledgerPath', 'workRoot', 'switchPath']) cfg[k] = typeof cfg[k] === 'string' ? cfg[k] : '';
+        for (const k of ['runnerPath', 'ledgerPath', 'workRoot', 'runnerCwd', 'switchPath']) cfg[k] = typeof cfg[k] === 'string' ? cfg[k] : '';
         return { value: cfg };
       },
     },
@@ -66,9 +70,10 @@ async function loadConfig() {
     return z.object({
       demo: z.boolean().default(false).description('UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher'),
       maxConcurrent: z.number().min(1).max(8).default(1).description('同时运行的 run 上限（单写者互斥语义下的并发度）'),
-      runnerPath: z.string().default('').description('runner 脚本绝对路径（宿主仓库 scripts/collab/zcode-run.mjs，只读使用）；留空则不创建 dispatcher'),
+      runnerPath: z.string().default('').description('runner 脚本绝对路径（通用工具仓库 dsh-plugins/collab-kit/zcode-run.mjs，只读使用）；留空则不创建 dispatcher'),
       ledgerPath: z.string().default('').description('台账 zcode-runs.jsonl 绝对路径；留空则跳过台账回读与用量聚合'),
       workRoot: z.string().default('').description('派发器工作根目录（locks/、state/jobs.json、logs/ 落在这里）；留空则不创建 dispatcher'),
+      runnerCwd: z.string().default('').description('runner 子进程工作目录（通常设为宿主项目根，如 F:\\My Code\\keysion dac vue）；留空 = 用 DSH 进程 cwd'),
       switchPath: z.string().default(DEFAULT_SWITCH_PATH).description('ZCode 派发总开关真值文件绝对路径（宿主仓库 collab/zcode-dispatch.switch.json，契约见其 PROTOCOL.md §7）；文件缺失/损坏视为开启；留空则开关不可写'),
     });
   } catch {
@@ -360,6 +365,7 @@ export function apply(ctx, config = {}) {
       ledgerPath: config.ledgerPath || undefined,
       workRoot: config.workRoot,
       maxConcurrent: config.maxConcurrent,
+      ...(config.runnerCwd ? { runnerCwd: config.runnerCwd } : {}),
     });
     log('info', `dispatcher 就绪：work=${dispatcher.workRoot} maxConcurrent=${config.maxConcurrent ?? 1}`);
   } else {

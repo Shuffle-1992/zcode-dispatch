@@ -1,0 +1,14 @@
+{
+  "name": "@local/dsh-collab-kit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "DSH ↔ ZCode 协作工具集：无头派发、派发总开关、门禁复跑、信箱等待、会话钩子（与宿主业务项目解耦）",
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "bin": {
+    "zcode-run": "./zcode-run.mjs",
+    "zcode-switch": "./zcode-switch.mjs"
+  }
+}
