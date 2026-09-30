@@ -3039,3 +3039,55 @@ lock-model **8/8**；lock-ui **26/26**；lock-priority **4/4**；
 改了 `bin/zcd.mjs`（CLI）、`wire.client.mjs`（降级 wire）、`index.js`（Host 描述）、
 `core/dispatch-core.mjs`（注释）、`client.js`（UI 演示引擎）
 ⇒ **完全退出 DSH 再启动**。
+
+---
+
+## 43. ZB-20：补上「记忆禁令注入」缺失的测试（ZB-16 核心功能此前零覆盖）
+
+### 43.1 缘起：重启后复核时发现的测试盲区
+
+用户重启后，我用 `cordis_inspect_query` 读活体工具 schema，确认 ZB-19 的两处文案已生效
+（`write` 描述改为「不声明则锁整个仓库」；「限制」行改为「仓库写锁互斥…文件锁优先放行」）。
+
+复核过程中发现：**ZB-16 的「默认注入记忆禁令」是用户明确要求的核心功能，但我从未写过测试** ——
+`core.test.mjs` / `channel-retry.test.mjs` / `lock-*.test.mjs` 全都没覆盖它。
+`memoryBanApplied` 字段也只是写进 job、无人验证。
+
+### 43.2 先补测试基础设施：让假 runner 能落盘 argv
+
+`test/fixtures/fake-runner.mjs` 此前**不记录收到的参数**，故无法验证"注入了什么"。
+新增能力（**仅当设置 `FAKE_ARGV_FILE` 时生效**，不影响既有测试）：
+
+```js
+if (env.FAKE_ARGV_FILE) {
+  writeFileSync(`${env.FAKE_ARGV_FILE}.${process.pid}.json`, JSON.stringify(process.argv.slice(2)));
+}
+```
+
+文件名带 pid，防并发互相覆盖。
+
+### 43.3 新增 `test/memory-ban.test.mjs`（4 项）
+
+| 用例 | 断言 |
+|---|---|
+| `kind=prompt` | 禁令已注入（`不要执行任何 ZCode 记忆写入` / `不写 ~/.zcode` / 优先级声明）；**原有提示词内容原样保留在最前**；`job.memoryBanApplied === true` |
+| `kind=target` | 同样注入（内容由插件传入） |
+| **★ `kind=task`** | 以 `--task` 传路径、**不传 `--prompt`**（故无注入点）；**`memoryBanApplied === false`** —— **如实标记，不假装生效** |
+| 措辞如实 | 含「派发台硬约束」「一次性子任务」；**不含**「禁止调用/进程级强制/已禁用」这类夸大措辞（它只是提示词层面约束） |
+
+**反向验证**：把 `withMemoryBan` 调用停用（等价"没注入"）⇒ **3 处断言报红**
+（两处「注入了记忆禁令」+ 一处「禁令有明确标题」）⇒ 测试有效。
+
+### 43.4 门禁（全绿，20 个测试文件）
+
+`node --check` 零失败；verify-plugin **20/20**；verify-switch **8/8**；core **12/12**；
+channel-retry **9/9**；quota-rpc **16/16**；tail-scroll **13/13**；pill **16/16**；
+pill-position **16/16**；section-order **9/9**；panel-anchor **22/22**；
+panel-reclamp **9/9**；elapsed-format **15/15**；ctx-format **23/23**；
+lock-model **8/8**；lock-ui **26/26**；lock-priority **4/4**；lock-badge **34/34**；
+**memory-ban 4/4**（新增）；file-lock **9/9**；wait-action **6/6**。
+
+### 43.5 生效条件
+
+只改了**测试**（`test/memory-ban.test.mjs` 与 `test/fixtures/fake-runner.mjs`）
+⇒ **无需重启、无需刷新**（产品代码未动）。

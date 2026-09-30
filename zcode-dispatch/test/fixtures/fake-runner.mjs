@@ -10,11 +10,20 @@
  *   FAKE_TAG        启动行的 tag（默认 fake）
  *   FAKE_MODEL      done 行的 model（默认 GLM-5.3-Flash）
  *   FAKE_SESSION    done 行的 session（默认随机；台账匹配测试需要固定值）
+ *   FAKE_ARGV_FILE  把本次 argv 以 JSON 落盘到该路径（ZB-20：验证提示词注入，默认不落盘）
  * out/err/result 路径故意带空格，用于验证含空格路径的解析。
  */
 import { setTimeout as delay } from 'node:timers/promises';
+import { writeFileSync } from 'node:fs';
 
 const env = process.env;
+/* ZB-20：把真实收到的 argv 落盘，供测试断言「提示词注入」是否生效。
+ * 默认不落盘（不影响既有测试）；文件名带 pid 以防并发覆盖。 */
+if (env.FAKE_ARGV_FILE) {
+  try {
+    writeFileSync(`${env.FAKE_ARGV_FILE}.${process.pid}.json`, JSON.stringify(process.argv.slice(2)));
+  } catch { /* 落盘失败不影响被测行为 */ }
+}
 const sleepMs = Number(env.FAKE_SLEEP_MS ?? 300);
 const exitCode = Number(env.FAKE_EXIT_CODE ?? 0);
 const skip = new Set((env.FAKE_SKIP ?? '').split(',').map((s) => s.trim()).filter(Boolean));
