@@ -264,6 +264,7 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/panel-reclamp.test.mjs` | 9 | 任意视口下位置可见（ZB-10 初衷；ZB-11 改锚定后仍保证） |
 | `node test/panel-anchor.test.mjs` | 22 | 面板锚定语义（ZB-11：贴边跟随，缩窗不挤到中间、放大回原位） |
 | `node test/elapsed-format.test.mjs` | 15 | 耗时展示格式（ZB-13：恒定三段 XX时XX分XX秒；数据层仍为秒数） |
+| `node test/ctx-format.test.mjs` | 23 | 上下文占用展示（ZB-14：`180.9k / 200k`，截断非四舍五入） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 > `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），

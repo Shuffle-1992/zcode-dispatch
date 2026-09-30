@@ -162,6 +162,7 @@ node test/section-order.test.mjs  # 分区顺序（9 项：单写者紧跟进程
 node test/panel-reclamp.test.mjs  # 面板位置可见性（9 项）
 node test/panel-anchor.test.mjs  # 面板锚定语义（22 项：缩窗不挤中间 / 放大回原位）
 node test/elapsed-format.test.mjs  # 耗时展示格式（15 项：XX时XX分XX秒）
+node test/ctx-format.test.mjs  # 上下文占用展示（23 项：180.9k / 200k）
 Z2_HOST_REPO=<宿主项目> node test/z2-verify.mjs   # 端到端验收（不设则跳过越界检查并如实标注）
 ```
 

@@ -446,7 +446,25 @@ window.__ModuleLoader__.load({
       return `${h}时${String(m).padStart(2, '0')}分${String(sec).padStart(2, '0')}秒`;
     };
     const shortId = (id) => (id ? String(id).slice(0, 12) : '—');
-    const ctxPct = (j) => (j && j.contextUsed != null && j.contextWindow ? `${Math.round((j.contextUsed / j.contextWindow) * 100)}%` : '—');
+    /* ZB-14（用户要求）：上下文占用由「90%」改为**绝对值**「180.9k / 200k」——
+     * 百分比只说明"快满了"，绝对值才能一眼看出还剩多少 token 可用。
+     * 精度取舍：k 档保留 **1 位小数**，且**截断而非四舍五入** ——
+     * 用户举例的 180973 应显示 `180.9k`；若用 toFixed(1) 会四舍五入成 `181.0k`（与预期不符）。
+     * 截断还有一个好处：显示值**不会超过真实值**，不会出现"显示 200.0k 但实际只用了 199.98k"这种误导。
+     * 注意：这里**不复用 fmtTokens** —— 它在 <10000 时给 2 位小数（29.0k/29.1k 抖动），
+     * 且同样用四舍五入；上下文用量需要稳定的一位截断精度，故独立实现。 */
+    const fmtCtx = (n) => {
+      if (n == null || !Number.isFinite(Number(n))) return '—';
+      const v = Math.max(0, Number(n));
+      if (v < 1000) return String(Math.round(v));
+      if (v < 1000000) return `${(Math.floor(v / 100) / 10).toFixed(1)}k`; // 截断到 0.1k
+      return `${(Math.floor(v / 10000) / 100).toFixed(2)}M`; // 截断到 0.01M
+    };
+    /** 上下文占用：`已用 / 上限`（如 `180.9k / 200k`）；任一缺失则显示 —。 */
+    const ctxLabel = (j) => {
+      if (!j || j.contextUsed == null || !j.contextWindow) return '—';
+      return `${fmtCtx(j.contextUsed)} / ${fmtCtx(j.contextWindow)}`;
+    };
     // Z11：长文本截断展示（详情区 prompt 最多 1200 字符）；时间本地化
     const clampText = (s, n) => {
       const str = s == null ? '' : String(s);
@@ -1799,7 +1817,7 @@ window.__ModuleLoader__.load({
           job.parentJobId ? h('span', { className: 'zcd-badge', title: job.parentJobId }, `${t('parentFrom')} ${shortId(job.parentJobId)}`) : null,
           (job.hopCount ?? 0) > 0 ? h('span', { className: 'zcd-badge' }, `${job.hopCount} ${t('hop')}`) : null,
           h('span', { className: 'zcd-dim' }, fmtSec(job.elapsedSec)),
-          h('span', { className: 'zcd-dim', title: `${job.contextUsed ?? '—'} / ${job.contextWindow ?? '—'}` }, ctxPct(job)),
+          h('span', { className: 'zcd-dim', title: `${job.contextUsed ?? '—'} / ${job.contextWindow ?? '—'} tokens` }, ctxLabel(job)),
           job.exitCode != null ? h('span', { className: 'zcd-dim' }, `${t('exit')} ${job.exitCode}`) : null,
           job.lock ? h('span', { className: 'zcd-badge', title: t('lockHeld') }, String(job.lock)) : null,
         ),
