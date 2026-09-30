@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react');
     const h = React.createElement;
-    const { useState, useEffect, useRef, useCallback } = React;
+    const { useState, useEffect, useRef, useCallback, useLayoutEffect } = React;
 
     /* ─────────────── 槽位 ───────────────
      * shell.overlay 已从客户端 bundle 实证存在（详见 refs/dsh-slots.md）：
@@ -1524,9 +1524,77 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /* ZB-05：tail 输出框的滚动决策（**纯函数**，便于脱离 React 独立测试）。
+     *
+     * 背景（用户报告）：「输出框里的文本一直闪烁，滚到最下面会自动弹回最上面内容」。
+     * 两个成因：
+     *   ① 轮询（refreshKey 每秒变）每次都 setTail(null) ⇒ 内容被换成「读取中…」再换回来 = 闪烁；
+     *   ② 内容被替换的那一帧，浏览器把 scrollTop 归零 ⇒ 看起来"弹回最上面"。
+     *
+     * 本函数负责 ②：根据**用户意图**（onScroll 记下的快照）决定内容更新后 scrollTop 该是多少。
+     * 关键：意图必须在**内容更新之前**记录 —— 内容一变长，gap 就变大，
+     * 事后量 gap 已无法区分"用户本就在底部"与"用户停在中间"。
+     *
+     * @param {{intent: {top:number, atBottom:boolean}|null, scrollTop:number, scrollHeight:number, clientHeight:number}} s
+     * @returns {number|null} 期望的 scrollTop；null = 不干预（保持浏览器默认）
+     */
+    function nextTailScroll(s) {
+      const { intent, scrollHeight, clientHeight } = s;
+      if (!intent) return null; // 尚无用户意图（首次渲染）⇒ 不动
+      const max = Math.max(0, scrollHeight - clientHeight);
+      if (intent.atBottom) return max; // 用户停在底部 ⇒ 贴底跟随新输出
+      return Math.min(intent.top, max); // 否则还原到用户自己的位置（内容变短时按上限收敛）
+    }
+
     function JobRow({ job, onKill, onDismiss, onTail, onRetry, onContinue, channels, refreshKey }) {
       const [open, setOpen] = useState(false);
+      /* ZB-05：tail 取数。原实现每次轮询（refreshKey 变）都 `setTail(null)`，
+       * 于是面板每秒经历「内容 → 读取中… → 内容」的闪烁；且内容被替换的那一帧，
+       * 浏览器会把滚动容器 scrollTop 归零 ⇒ 用户看到「滚到底自动弹回最上面」。
+       * 现改为：只在**首次取数**时显示「读取中…」，后续刷新静默替换（保内容、保滚动位）。 */
+      const tailBoxRef = useRef(null); // 滚动容器（.zcd-mono）
+      /* {top, atBottom}：onScroll 时记下的**用户意图**。
+       * atBottom 必须在"内容更新之前"判定并留存 —— 内容一变长，gap 就变大，
+       * 事后量已经无法区分"用户本就在底部"与"用户停在中间"。 */
+      const tailScrollRef = useRef(null);
+      const tailLoadedRef = useRef(false); // 是否已成功取过一次（决定要不要显示"读取中"）
       const [tail, setTail] = useState(undefined); // undefined=未取 null=读取中 {...}=结果
+      useEffect(() => {
+        if (!open) {
+          tailLoadedRef.current = false;
+          tailScrollRef.current = null;
+          setTail(undefined);
+          return undefined;
+        }
+        let alive = true;
+        if (!tailLoadedRef.current) setTail(null); // 仅首次显示「读取中…」（轮询不清空 ⇒ 不闪烁）
+        Promise.resolve(onTail(job.id, 30)).then((r) => {
+          if (!alive) return;
+          tailLoadedRef.current = true;
+          setTail(r);
+        });
+        return () => {
+          alive = false;
+        };
+      }, [open, refreshKey]); // 展开/收起与快照刷新时重取（运行中可见进度）
+      /* 内容更新后校正滚动位置（标准日志查看器语义）：
+       *   · 用户停在底部 → 跟随新输出继续贴底（运行中的 tail 才像"实时日志"）
+       *   · 用户滚在中间/顶部 → 精确还原到原位置（不被新内容顶走）
+       *   · 尚无用户意图（首次渲染）→ 不动，保持浏览器默认
+       * 关键：用 onScroll 记下的 atBottom **意图**判断，而不是当场量 gap ——
+       * 内容变长后 gap 必然变大，当场量会把"本在底部"误判成"用户滚在中间"。
+       * 放在 useLayoutEffect：commit 后、paint 前执行，用户看不到跳动。 */
+      useLayoutEffect(() => {
+        const el = tailBoxRef.current;
+        if (!el) return;
+        const want = nextTailScroll({
+          intent: tailScrollRef.current,
+          scrollTop: el.scrollTop,
+          scrollHeight: el.scrollHeight,
+          clientHeight: el.clientHeight,
+        });
+        if (want != null && want !== el.scrollTop) el.scrollTop = want;
+      }, [tail]);
       const [handoffOpen, setHandoffOpen] = useState(false); // 换通道交接重跑的选择器
       const [hoProvider, setHoProvider] = useState('');
       const [hoModel, setHoModel] = useState('');
@@ -1536,17 +1604,6 @@ window.__ModuleLoader__.load({
       const [continueOpen, setContinueOpen] = useState(false);
       const [contText, setContText] = useState('');
       const [contFb, setContFb] = useState(null);
-      useEffect(() => {
-        if (!open) return undefined;
-        let alive = true;
-        setTail(null);
-        Promise.resolve(onTail(job.id, 30)).then((r) => {
-          if (alive) setTail(r);
-        });
-        return () => {
-          alive = false;
-        };
-      }, [open, refreshKey]); // 展开/收起与快照刷新时重取（运行中可见进度）
       const active = job.state === 'queued' || job.state === 'running';
       const paused = job.state === 'paused';
       const canDismiss = DISMISSABLE_STATES.includes(job.state);
@@ -1712,7 +1769,18 @@ window.__ModuleLoader__.load({
             job.pauseReason ? kvRow(t('paused'), pauseLabel(job.pauseReason)) : null,
           ),
           h('div', { className: 'zcd-note', style: { marginTop: 6 } }, t('tail')),
-          h('div', { className: 'zcd-mono' },
+          h('div', {
+            className: 'zcd-mono',
+            ref: tailBoxRef, // ZB-05：内容轮询刷新后据此校正滚动位置
+            onScroll: (e) => {
+              const el = e.currentTarget;
+              tailScrollRef.current = {
+                top: el.scrollTop,
+                // 意图判定必须在内容更新前完成（内容一变长 gap 就失真）
+                atBottom: el.scrollHeight - el.scrollTop - el.clientHeight <= 4,
+              };
+            },
+          },
             tail === null ? t('tailLoading')
               : tail === undefined ? t('tailEmpty')
                 : tail && tail.ok ? (tail.lines && tail.lines.length ? tail.lines.join('\n') : t('tailEmpty'))
