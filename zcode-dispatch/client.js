@@ -884,15 +884,79 @@ window.__ModuleLoader__.load({
      * 再否则内置 demo 引擎（conn='demo'）。MOD_CTX 为 null（apply 未跑过，如纯组件桩
      * 浅渲染）等同远端缺席，走降级链，绝不抛错。 */
     function createWire() {
-      const remote = MOD_CTX ? resolveRemote(MOD_CTX) : null;
-      if (remote) return remoteWire(MOD_CTX, remote);
-      return legacyWire();
+      try {
+        const remote = MOD_CTX ? resolveRemote(MOD_CTX) : null;
+        if (remote) return remoteWire(MOD_CTX, remote);
+      } catch (e) {
+        try { console.warn('[zcode-dispatch] 远端 wire 初始化失败，降级 demo：', e && e.message); } catch { /* ignore */ }
+      }
+      try {
+        return legacyWire();
+      } catch (e) {
+        try { console.warn('[zcode-dispatch] 降级 wire 初始化失败：', e && e.message); } catch { /* ignore */ }
+        return null; // 交给 DEAD_WIRE：只报错、不白屏
+      }
     }
 
+    /* 最后一道兜底 wire：连降级链都起不来时使用，保证组件永远有 wire（失败可见，不静默消失） */
+    const DEAD_WIRE = {
+      conn: 'error',
+      subscribe(fn) {
+        try { fn({ conn: 'error', snapshot: null, quota: null, planQuota: null }); } catch { /* ignore */ }
+        return () => {};
+      },
+      dispose() {},
+      dispatch: async () => ({ ok: false, error: 'wire 不可用' }),
+      kill: async () => ({ ok: false, error: 'wire 不可用' }),
+      retry: async () => ({ ok: false, error: 'wire 不可用' }),
+      tail: async () => [],
+      channels: async () => ({ channels: [] }),
+      channelGet: async () => ({}),
+      channelSet: async () => ({ ok: false, error: 'wire 不可用' }),
+      fallbackGet: async () => ({}),
+      fallbackSet: async () => ({ ok: false, error: 'wire 不可用' }),
+    };
+
     /* ─────────────── 组件 ─────────────── */
+    /* 渲染兜底：任何渲染期异常都转成一张可见的失败卡片，而不是静默消失。
+     * （2026-09-30 实测：createWire 若抛错会让整块浮层不见且页面无报错，难以定位。） */
+    class PanelBoundary extends React.Component {
+      constructor(props) {
+        super(props);
+        this.state = { err: null };
+      }
+
+      static getDerivedStateFromError(err) {
+        return { err };
+      }
+
+      componentDidCatch(err) {
+        try { console.warn('[zcode-dispatch] 渲染失败（已降级显示）:', err && err.message); } catch { /* ignore */ }
+      }
+
+      render() {
+        if (!this.state.err) return this.props.children;
+        return h('div', {
+          className: 'zcd-root',
+          style: {
+            position: 'fixed', right: '24px', bottom: '24px', zIndex: Z_INDEX, maxWidth: '340px',
+            padding: '8px 10px', fontSize: '12px', lineHeight: 1.5,
+            color: T.text, background: T.bg, border: '1px solid ' + T.border,
+            borderRadius: '8px', boxShadow: T.shadow,
+          },
+        },
+        h('div', { style: { fontWeight: 600, marginBottom: '4px' } }, 'ZCode 派发台渲染失败'),
+        h('div', { style: { color: T.text2, wordBreak: 'break-all' } }, String((this.state.err && this.state.err.message) || this.state.err)),
+        h('button', {
+          className: 'zcd-btn2', style: { marginTop: '6px' },
+          onClick: () => this.setState({ err: null }),
+        }, '重试'));
+      }
+    }
+
     function useWire() {
       const ref = useRef(null);
-      if (ref.current == null) ref.current = createWire();
+      if (ref.current == null) ref.current = createWire() ?? DEAD_WIRE;
       const wire = ref.current;
       const [state, setState] = useState({ conn: 'connecting', snapshot: null, quota: null, planQuota: null });
       useEffect(() => {
@@ -1434,7 +1498,8 @@ window.__ModuleLoader__.load({
           } catch { /* 同上：远端面不可达不致命 */ }
           // list 型槽位：id 必填且同 priority 下唯一；id 遵循宿主先例的 <功能>.<物> 命名
           // （对照 chat.quota-notice / plugin-manager.refresh-toast / workspace.row-toast）
-          ctx.slots.inject(SLOT, () => ctx.slots.register({ name: SLOT, id: 'zcode-dispatch.console', order: 20 }, FloatingPanel));
+          ctx.slots.inject(SLOT, () => ctx.slots.register({ name: SLOT, id: 'zcode-dispatch.console', order: 20 },
+            () => h(PanelBoundary, null, h(FloatingPanel))));
         } catch (e) {
           try { console.warn('[zcode-dispatch] apply 降级（不阻塞启动）:', e && e.message); } catch { /* 连 console 都不可用就彻底静默 */ }
         }

@@ -1,0 +1,127 @@
+// DSH 独立验收探针（Z2）：静态纪律 + 客户端模块加载 + 槽位注册（不复用实现方脚本）
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const PKG = 'F:\\My Code\\dsh-plugins\\zcode-dispatch';
+const results = [];
+const check = (name, ok, detail = '') => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  ${detail}`); };
+
+/* ---------- ① manifest / patch ---------- */
+const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
+check('manifest: name/exports/dsh.bundle.patch', pkg.name === '@local/zcode-dispatch' && pkg.exports?.['.'] === './index.js' && pkg.exports?.['./client'] === './client.js' && pkg.dsh?.bundle?.patch === './cordis.patch.yml', `${pkg.name}`);
+check('manifest: dsh.client 平台/立即加载', pkg.dsh?.client?.platform === 'web' && pkg.dsh?.client?.immediately === true, JSON.stringify(pkg.dsh?.client ?? {}));
+check('manifest: meta 标题/描述/图标', !!pkg.meta?.title && !!pkg.meta?.description && pkg.icon === './icon.svg', `${pkg.meta?.title}`);
+const patch = readFileSync(join(PKG, 'cordis.patch.yml'), 'utf8');
+check('patch: 插入行 id/name/config', /id:\s*zcode-dispatch/.test(patch) && /name:\s*'@local\/zcode-dispatch'/.test(patch) && /runnerPath:/.test(patch) && /ledgerPath:/.test(patch), patch.split('\n').filter((l) => /runnerPath|ledgerPath|demo|maxConcurrent/.test(l)).join(' | ').slice(0, 140));
+
+/* ---------- ② 静态纪律 ---------- */
+const jsFiles = readdirSync(PKG, { recursive: true }).filter((f) => /\.(js|mjs)$/.test(f) && !f.includes('work') && !f.includes('test'));
+const readAll = (f) => readFileSync(join(PKG, f), 'utf8');
+const client = readAll('client.js');
+const index = readAll('index.js');
+check('纪律: 不 import DSH 客户端包', !/@deepseek-ai\/dsh-client/.test(jsFiles.map(readAll).join('\n')), 'no @deepseek-ai/dsh-client');
+check('纪律: 不操作 document.body', !/document\.body/.test(jsFiles.map(readAll).join('\n')), 'no document.body');
+const literalColors = [...client.matchAll(/#[0-9a-fA-F]{3,8}\b/g)].map((m) => m[0]);
+check('纪律: client.js 无字面色值（仅主题令牌）', literalColors.length === 0, literalColors.slice(0, 5).join(',') || 'none');
+check('纪律: client.js 不用 JSX/模块 import', !/^\s*import\s/m.test(client) && !/=>\s*</.test(client), `createElement 次数=${(client.match(/createElement/g) ?? []).length}`);
+const tokens = [...client.matchAll(/--dsw-alias-[a-z0-9-]+/g)].map((m) => m[0]);
+check('纪律: 使用 --dsw-alias-* 主题令牌', tokens.length >= 5, `令牌引用 ${tokens.length} 处，去重 ${new Set(tokens).size} 个`);
+
+/* ---------- ③ Host 半边导出 ---------- */
+check('index.js 导出 apply', /export\s+function\s+apply\s*\(/.test(index), 'apply found');
+check('index.js 声明 Config（可配置）', /export\s+const\s+Config\s*=/.test(index), 'Config found');
+/* cordis resolveConfig 只认 Config['~standard'].validate（裸 JSON Schema 会导致激活失败，见 Z10） */
+{
+  let std = { ok: false, detail: 'import 失败' };
+  try {
+    const mod = await import('file:///F:/My Code/dsh-plugins/zcode-dispatch/index.js');
+    const C = mod.Config;
+    const fn = C && C['~standard'] && C['~standard'].validate;
+    const res = typeof fn === 'function' ? fn({}) : null;
+    const v = res && res.value;
+    std = {
+      ok: typeof fn === 'function' && !!v && v.demo === false && v.maxConcurrent === 1 && typeof v.workRoot === 'string',
+      detail: typeof fn === 'function' ? JSON.stringify(v) : '无 ~standard.validate',
+    };
+  } catch (e) {
+    std = { ok: false, detail: e.message.split('\n')[0] };
+  }
+  check('Config 是 Standard Schema（cordis 激活判据）', std.ok, std.detail);
+}
+check('index.js 引用 core dispatcher', /dispatch-core\.mjs/.test(index) && /createDispatcher/.test(index), 'imports core');
+
+/* ---------- ④ 客户端模块加载（stub ModuleLoader + require） ---------- */
+let captured = null;
+globalThis.window = { __ModuleLoader__: { load: (o) => { captured = o; } } };
+await import(pathToFileURL(join(PKG, 'client.js')).href);
+check('client.js 通过 __ModuleLoader__.load 注册', !!captured && captured.id === '@local/zcode-dispatch' && typeof captured.factory === 'function', `id=${captured?.id}`);
+
+const el = (type, props, ...children) => ({ type, props, children });
+class StubComponent {
+  constructor(props) { this.props = props ?? {}; this.state = {}; }
+  setState(next) { this.state = { ...this.state, ...(typeof next === 'function' ? next(this.state) : next) }; }
+}
+const React = {
+  createElement: el, Fragment: 'Fragment', Component: StubComponent,
+  useState: (v) => [typeof v === 'function' ? v() : v, () => {}],
+  useEffect: () => {}, useLayoutEffect: () => {}, useRef: (v) => ({ current: v }),
+  useCallback: (f) => f, useMemo: (f) => (typeof f === 'function' ? f() : f),
+  useSyncExternalStore: () => undefined,
+};
+const unexpected = [];
+const mod = captured.factory((name) => {
+  if (name === 'react') return React;
+  unexpected.push(name);
+  return {};
+});
+check('factory 只 require react', unexpected.length === 0, unexpected.join(',') || 'react only');
+check('factory 返回 {inject, apply}', Array.isArray(mod?.inject) && typeof mod?.apply === 'function', `inject=${JSON.stringify(mod?.inject)}`);
+/* boot 安全：inject 里绝不能出现自家 remote 命名空间（等自己 → pending → web boot 失败；2026-09-30 实际崩溃） */
+{
+  const bad = (mod?.inject ?? []).filter((n) => typeof n === 'string' && n.startsWith('remote.'));
+  check('boot 安全: inject 不自声明 remote 命名空间', bad.length === 0, bad.length ? `❌ ${bad.join(',')}` : `inject=${JSON.stringify(mod?.inject)}`);
+}
+
+let slots = [];
+let registrations = [];
+const ctx = {
+  slots: {
+    inject: (key, cb) => { slots.push(key); cb(); return () => {}; },
+    register: (opts, comp) => { registrations.push({ opts, comp }); return () => {}; },
+  },
+  effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {}; },
+  on: () => () => {},
+  locale: { formatMessage: (m, v) => `${m.id ?? m}${v ? JSON.stringify(v) : ''}` },
+};
+try {
+  mod.apply(ctx);
+  check('apply 注入槽位并注册组件', slots.length > 0 && registrations.length > 0, `slot=${slots[0]} 注册数=${registrations.length}`);
+} catch (err) {
+  check('apply 注入槽位并注册组件', false, `抛错: ${err.message}`);
+}
+
+/* ---------- ⑤ 组件可执行（浅渲染一次，验证不白屏） ---------- */
+if (registrations.length) {
+  try {
+    const tree = registrations[0].comp({});
+    check('组件函数可执行（浅渲染不抛错）', !!tree, `根节点 type=${tree?.type}`);
+  } catch (err) {
+    check('组件函数可执行（浅渲染不抛错）', false, `抛错: ${err.message}`);
+  }
+}
+
+/* ---------- ⑥ 越界：$DSH_HOME 未被写入 ---------- */
+const profile = 'C:\\Users\\Administrator\\.dsh\\profiles\\desktop';
+const recent = readdirSync(profile).filter((f) => Date.now() - statSync(join(profile, f)).mtimeMs < 3600 * 1000);
+const allowProfileWrite = process.env.Z2_ALLOW_PROFILE_WRITE === '1';
+check(
+  '越界: $DSH_HOME profile 近 1h 无写入',
+  recent.length === 0 || allowProfileWrite,
+  recent.join(',') || 'clean',
+);
+if (recent.length && allowProfileWrite) console.log('   （已按 Z2_ALLOW_PROFILE_WRITE=1 放行：用户已安装插件，profile 写入属预期）');
+
+const failed = results.filter((r) => !r.ok).length;
+console.log(`\n[DSH Z2 探针] ${results.length} 项，失败 ${failed} 项`);
+process.exit(failed ? 1 : 0);
