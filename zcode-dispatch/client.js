@@ -2230,10 +2230,13 @@ window.__ModuleLoader__.load({
               h(DispatchBar, { snapshot, lastJobId, feedback, busy, channel, swBlocked: dispatchSwitch != null && dispatchSwitch.enabled === false, onSubmit })),
             h(Section, { id: SEC.jobs, title: t('secJobs'), collapsible: true },
               h(JobList, { snapshot, onKill, onDismiss, onTail: tail, onRetry, onContinue, channels: channelsInfo.channels, refreshKey: (snapshot && snapshot.generatedAt) || '', offline: conn === 'offline' })),
-            h(Section, { id: SEC.quota, title: t('secQuota'), collapsible: true },
-              h(QuotaCards, { quota, planQuota })),
+            /* ZB-09（用户要求）：用量与单写者两分区**互换位置** ——
+             * 单写者/文件锁紧跟在进程列表之后（排查并发问题时与进程对照着看更顺），
+             * 用量下移到最末。分区 id 不变，故各自的展开状态/持久化键不受影响。 */
             h(Section, { id: SEC.locks, title: t('secLocks'), collapsible: true },
               h(LockStatus, { snapshot })),
+            h(Section, { id: SEC.quota, title: t('secQuota'), collapsible: true },
+              h(QuotaCards, { quota, planQuota })),
           ),
         ),
         collapsed ? null : h('div', { className: 'zcd-grip', title: t('grip'), 'aria-label': t('grip'), onPointerDown: startResize }, h(IconResizeMark)),
