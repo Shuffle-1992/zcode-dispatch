@@ -184,11 +184,13 @@ export function slimJob(job) {
       provider: spec?.provider ?? null,
       mode: spec?.mode ?? null,
       cwd: spec?.cwd ?? null,
-      lock: spec?.lock ?? 'both',
+      /* ZB-16 修正（ZB-17 补漏）：默认由 'both' 改为 'repo' —— 上一轮删 memory 时漏改了这里，
+       * 导致未显式传 lock 的 job 在快照里仍显示 'both'（与实际生效的 repo 锁不符）。 */
+      lock: spec?.lock ?? 'repo',
       timeoutMin: spec?.timeoutMin ?? null,
       memoryBench: Boolean(spec?.memoryBench),
       tag: spec?.tag ?? null,
-      /* ZB-08：声明的写入集（细粒度文件锁）。null/[] = 未声明 ⇒ 走 repo/memory 粗粒度锁。 */
+      /* ZB-08：声明的写入集（细粒度文件锁）。null/[] = 未声明 ⇒ 锁整个仓库。 */
       write: Array.isArray(spec?.write) ? spec.write.filter((x) => typeof x === 'string' && x.trim()) : [],
     },
     usage: { ...(usage ?? {}) },

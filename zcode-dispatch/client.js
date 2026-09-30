@@ -185,6 +185,11 @@ window.__ModuleLoader__.load({
       '.zcd-dim{color:' + T.text3 + ';white-space:nowrap;}',
       '.zcd-spring{flex:1;}',
       '.zcd-badge{flex:none;font-size:10px;line-height:1.6;padding:1px 5px;border:1px solid ' + T.border + ';border-radius:4px;color:' + T.text2 + ';white-space:nowrap;}',
+      /* ZB-18：锁类型视觉区分（不引入字面色值，复用主题令牌）：
+       *   整仓库锁 = 更"重"（实线边框 + 主文本色），文件锁 = 更"轻"（次要色），旧版记录 = 危险色提示。 */
+      '.zcd-badge.zcd-lock-repo{color:' + T.text + ';border-color:' + T.text3 + ';}',
+      '.zcd-badge.zcd-lock-file{color:' + T.text2 + ';}',
+      '.zcd-badge.zcd-lock-legacy{color:' + T.danger + ';border-color:' + T.danger + ';}',
       '.zcd-dot{flex:none;width:8px;height:8px;border-radius:50%;background:' + T.stIdle + ';}',
       '.zcd-dot.s-queued{background:' + T.stQueued + ';}',
       '.zcd-dot.s-running{background:' + T.stRunning + ';animation:zcd-pulse 1.2s ease-in-out infinite;}',
@@ -452,6 +457,42 @@ window.__ModuleLoader__.load({
       return `${h}时${String(m).padStart(2, '0')}分${String(sec).padStart(2, '0')}秒`;
     };
     const shortId = (id) => (id ? String(id).slice(0, 12) : '—');
+    /* ZB-18（用户要求：进程那里应该显示整仓库锁或者文件锁进行区分）：
+     * 把 job 的锁归类成可读类型 + 受影响文件列表（纯函数，便于独立测试）。
+     *
+     * 输入是**已持久化的 job**，可能来自旧版本（如 lock='repo+memory' 的 ZB-15 记录），
+     * 故这里按"能识别就识别、识别不出按原始值显示"处理，不假设字段一定存在。
+     *
+     * @returns {{kind:'repo'|'file'|'none'|'legacy', label:string, files:string[], detail:string}}
+     *   kind:  repo=整仓库锁 / file=文件锁 / none=未持锁 / legacy=旧版本记录
+     *   label: 徽标上显示的短文本
+     *   files: 文件锁覆盖的文件（从 spec.write 或 lock 字符串里的 file: 前缀解析）
+     */
+    function lockKindOf(job) {
+      const lock = job && job.lock != null ? String(job.lock) : '';
+      const declared = Array.isArray(job && job.spec && job.spec.write) ? job.spec.write.filter(Boolean) : [];
+      if (!lock) return { kind: 'none', label: '', files: [], detail: '' };
+      /* 旧版本记录（含 memory）——如实标注为"旧版锁"，不假装是新模型 */
+      if (/memory/.test(lock)) {
+        return { kind: 'legacy', label: lock, files: declared, detail: `${lock}（旧版本记录：memory 锁已于 ZB-16 删除）` };
+      }
+      /* 文件锁：lock 形如 `file:<path>` 或多个用 + 连接；文件列表优先取 spec.write（更完整） */
+      if (/(^|\+)file:/.test(lock)) {
+        const fromLock = lock.split('+').filter((x) => x.startsWith('file:')).map((x) => x.slice(5));
+        const files = declared.length ? declared : fromLock;
+        return {
+          kind: 'file',
+          label: files.length > 1 ? `文件锁 ${files.length}` : '文件锁',
+          files,
+          detail: `文件锁：只锁这些文件 ⇒ 与写其它文件的任务可并发\n${files.join('\n')}`,
+        };
+      }
+      if (lock === 'repo') {
+        return { kind: 'repo', label: '整仓库锁', files: [], detail: '整仓库锁：未声明要写的文件 ⇒ 与任何任务互斥（单写者本义）' };
+      }
+      if (lock === 'none') return { kind: 'none', label: '不取锁', files: [], detail: '明确不取锁（调用方确认无竞写关系）' };
+      return { kind: 'legacy', label: lock, files: declared, detail: `未知锁形态：${lock}` };
+    }
     /* ZB-14（用户要求）：上下文占用由「90%」改为**绝对值**「180.9k / 200k」——
      * 百分比只说明"快满了"，绝对值才能一眼看出还剩多少 token 可用。
      * 精度取舍：k 档保留 **1 位小数**，且**截断而非四舍五入** ——
@@ -1858,7 +1899,16 @@ window.__ModuleLoader__.load({
           h('span', { className: 'zcd-dim' }, fmtSec(job.elapsedSec)),
           h('span', { className: 'zcd-dim', title: `${job.contextUsed ?? '—'} / ${job.contextWindow ?? '—'} tokens` }, ctxLabel(job)),
           job.exitCode != null ? h('span', { className: 'zcd-dim' }, `${t('exit')} ${job.exitCode}`) : null,
-          job.lock ? h('span', { className: 'zcd-badge', title: t('lockHeld') }, String(job.lock)) : null,
+          /* ZB-18：锁徽标区分「整仓库锁」/「文件锁 N」/「不取锁」；tooltip 给出细节与文件列表。
+           * 旧版本记录（含 memory）如实显示为旧形态，不伪装成新模型。 */
+          (() => {
+            const lk = lockKindOf(job);
+            if (lk.kind === 'none') return null;
+            return h('span', {
+              className: `zcd-badge zcd-lock-${lk.kind}`,
+              title: lk.detail || t('lockHeld'),
+            }, lk.label);
+          })(),
         ),
         /* 反馈行移到动作区之外：关闭按钮现在在行头，终态行没有动作区，失败反馈仍需可见。 */
         retryFb ? h('div', { className: 'zcd-note', role: 'status' }, retryFb) : null,

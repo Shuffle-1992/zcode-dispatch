@@ -166,6 +166,7 @@ node test/ctx-format.test.mjs  # 上下文占用展示（23 项：180.9k / 200k�
 node --test test/lock-model.test.mjs  # 锁模型（8 项：删 memory / 不同文件集可并发）
 node test/lock-ui.test.mjs  # 派发区锁控件与中文锁名（26 项）
 node --test test/lock-priority.test.mjs  # 调度优先级（4 项：文件锁任务优先放行）
+node test/lock-badge.test.mjs  # 进程行锁徽标（32 项：整仓库锁 / 文件锁 N 区分）
 Z2_HOST_REPO=<宿主项目> node test/z2-verify.mjs   # 端到端验收（不设则跳过越界检查并如实标注）
 ```
 

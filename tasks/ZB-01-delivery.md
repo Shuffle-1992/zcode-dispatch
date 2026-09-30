@@ -2880,3 +2880,81 @@ file-lock **9/9**；wait-action **6/6**。
 
 改了 `core/dispatch-core.mjs`（**Host 半边**）+ `client.js`（UI）
 ⇒ **完全退出 DSH 再启动**。
+
+---
+
+## 41. ZB-18：进程行锁徽标区分「整仓库锁 / 文件锁」
+
+### 41.1 用户要求
+
+> 「进程那里应该显示整仓库锁或者文件锁进行区分。」
+
+### 41.2 问题：进程行显示的是**原始锁值**，不可读
+
+改前进程行渲染 `job.lock` 原文：
+
+| 情况 | 显示 | 问题 |
+|---|---|---|
+| 整仓库锁 | `repo` | 看不出中文含义 |
+| 单文件锁 | `file:f:/proj/a.ts` | 长且是内部形态 |
+| **多文件锁** | `file:a.ts+file:b.ts+file:c.ts…` | **徽标被撑爆**，完全不可读 |
+| 旧版本记录 | `repo+memory` | 显示已删除的锁 |
+
+### 41.3 改动：新增纯函数 `lockKindOf(job)`
+
+```js
+function lockKindOf(job) {
+  const lock = String(job?.lock ?? '');
+  const declared = Array.isArray(job?.spec?.write) ? job.spec.write.filter(Boolean) : [];
+  if (!lock) return { kind:'none', label:'', files:[], detail:'' };
+  if (/memory/.test(lock)) return { kind:'legacy', label:lock, … };  // 旧版记录如实标注
+  if (/(^|\+)file:/.test(lock)) { … return { kind:'file', label:`文件锁 ${n}`, … }; }
+  if (lock === 'repo') return { kind:'repo', label:'整仓库锁', … };
+  if (lock === 'none') return { kind:'none', label:'不取锁', … };
+  return { kind:'legacy', label:lock, … };                            // 未知形态不崩
+}
+```
+
+| 锁形态 | 徽标 | tooltip |
+|---|---|---|
+| 整仓库锁 | **整仓库锁** | 「未声明要写的文件 ⇒ 与任何任务互斥（单写者本义）」 |
+| 文件锁（1 个） | **文件锁** | 「只锁这些文件 ⇒ 与写其它文件的任务可并发」+ 文件列表 |
+| 文件锁（N 个） | **文件锁 N** | 同上（N = 文件数，**避免徽标被多路径撑爆**） |
+| 不取锁 | **不取锁** | 「明确不取锁（调用方确认无竞写关系）」 |
+| 未持锁 | （不渲染） | — |
+| 旧版记录（含 memory） | 原始值 | 「（旧版本记录：memory 锁已于 ZB-16 删除）」**危险色** |
+
+视觉区分（复用主题令牌，不引入字面色值）：
+`.zcd-lock-repo`（主文本色 + 更重边框）/ `.zcd-lock-file`（次要色）/ `.zcd-lock-legacy`（危险色）。
+
+### 41.4 顺带修掉一个 ZB-16 的漏改（**我的疏漏**）
+
+`wire.host.mjs` 的 `slimJob` 里仍是 **`lock: spec?.lock ?? 'both'`** —— ZB-16 删 memory 时
+只改了 core 的 `locksFor`，**漏了这里**，导致未显式传 `lock` 的 job 在快照里仍显示 `'both'`
+（与实际生效的 `repo` 锁不符）。已改为 `'repo'`。
+
+### 41.5 验证
+
+- **新增 `test/lock-badge.test.mjs`（32 项）**：整仓库锁 / 文件锁（单+多，含数量与文件列表）/
+  不取锁 / 未持锁 / **旧版记录如实标注** / 脏数据容错（null、非数组 write）/ 接线与样式断言 /
+  `slimJob` 默认值修正
+- **真实组件树实测**：`demo-running` 行显示徽标 **「整仓库锁」**，
+  tooltip = 「整仓库锁：未声明要写的文件 ⇒ 与任何任务互斥（单写者本义）」；
+  且**不再出现原始 `repo`/`both`/`repo+memory`** ✅
+- **开发中自曝**：我一度定义了 `hasLockBadge` 却未在渲染里使用（**死代码**）—— 已删除，
+  并加断言 F7 防复发；探针最后一行统计 class 时因中途切过 tab 取错节点，属探针瑕疵
+  （逐行输出已直接验证徽标文本与 title，结论不受影响）。
+
+### 41.6 门禁（全绿）
+
+`node --check` 零失败；verify-plugin **20/20**；verify-switch **8/8**；core **12/12**；
+channel-retry **9/9**；quota-rpc **16/16**；tail-scroll **13/13**；pill **16/16**；
+pill-position **16/16**；section-order **9/9**；panel-anchor **22/22**；
+panel-reclamp **9/9**；elapsed-format **15/15**；ctx-format **23/23**；
+lock-model **8/8**；lock-ui **26/26**；lock-priority **4/4**；
+**lock-badge 32/32**（新增）；file-lock **9/9**；wait-action **6/6**。
+
+### 41.7 生效条件
+
+改了 `wire.host.mjs`（**Host 半边**）+ `client.js`（UI）
+⇒ **完全退出 DSH 再启动**（UI 部分刷新即可，但 wire 改了，一并重启更稳）。
