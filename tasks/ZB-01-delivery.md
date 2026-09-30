@@ -1759,3 +1759,107 @@ verify-plugin 20/20（含"无字面色值"纪律项）
 ### 28.5 生效条件
 
 只改 `client.js` ⇒ **刷新页面即可**。
+
+---
+
+## 29. ZB-02：修「新会话让它派发 zcode，却走了 DSH 后台」+ 公开仓库整备
+
+用户报告：**在新会话里说「派发 zcode」，任务跑去了 DSH 自带后台，没进 ZCode 派发台。**
+用户随后明确策略：**能用派发台时优先用派发台；不可用才用自带子代理。**
+
+### 29.1 根因：工具描述把模型带偏了（不是代码 bug，是**提示词契约 bug**）
+
+用 `cordis_inspect_query` 的 `Tool.listTools` 取到**模型眼中的描述原文**：
+
+```
+操作「ZCode 派发台」：把任务派发给 ZCode 子代理（当前：已开启）。action=status 查开关状态；
+action=switch 切换 enabled=true|false；action=dispatch 派发（关闭时会被拒绝）。…
+```
+
+两处硬伤：
+
+1. **首行把动作重心给了 `status`/`switch`** —— 读起来像"状态管理工具"，不像"派发入口"；
+2. **「子代理」是撞车词** —— DSH 自带 `subagent` 的自述是
+   *"Delegate a self-contained task to a subagent"*。模型看到「派发 / 子代理」，
+   顺手调了 `subagent`，任务于是跑在 DSH 后台，**不产生派发台 job、也不受派发总开关约束**。
+
+### 29.2 修复：把「优先级策略」写进描述首段
+
+```js
+'【派发优先级：能用派发台就优先用派发台】凡是「把任务交给一个 agent 去做」的诉求——用户说
+ 「派发给 ZCode / 让 ZCode 做 / 用 ZCode 跑 / zcode 派发 / 在派发台派一个」，或只是笼统地说
+ 「派发这个任务」——**先**用本工具的 action=dispatch：它才会在「ZCode 派发台」面板里生成
+ 可监视的 job（独立 ZCode 进程、独立额度与会话，可查输出/终止/续跑/换通道）。',
+'✅ **仅当派发台不可用时**才退回 DSH 自带的 subagent / spawn_teammate / subagent_fork / 后台 jobs：
+ 即 action=status 显示开关已关闭、dispatch 返回 ok:false（未配置 runner/workRoot、锁冲突等），
+ 或用户明确要求「你自己（DSH）去做」。此时要**说明为什么没用派发台**，不要静默切换。',
+`当前派发总开关：${state}（实时状态用 action=status）。…`,
+```
+
+要点：① 触发条件从"用户点名 ZCode"放宽到**一切"把任务交给 agent 去做"的诉求**（含笼统的"派发这个任务"）；
+② 明确**优先级**（能用就用）而非只说"必须用"；③ 给出**可判定的降级条件**（`status` 关闭 / `dispatch` 返回
+`ok:false` / 用户点名要 DSH 自己做）；④ 要求降级时**说明原因**，不静默切换。
+「子代理」全部换成「ZCode 无头进程」；开关状态挪到第三行（不再是首行主角）。
+
+> **为什么改描述就够**：模型选工具的唯一依据就是这段文字，而它随插件注册进**每一个会话**，
+> 与工作目录无关——比在某个项目的 `AGENTS.md` 里写约定更可靠（那种只在那个目录生效）。
+> 描述属 Host 半边 ⇒ **需要重启 DSH 才生效**。
+
+### 29.3 公开仓库整备（三件事）
+
+**① 根 `README.md`（新增）** —— 项目定位、能力表、目录结构、安装、配置、agent 工具、面板、
+复跑证据、第三方材料声明、许可现状。
+
+**② 机器专有路径移出公开仓库**
+
+原先 `zcode-dispatch/cordis.patch.yml` 直接写着宿主项目的绝对路径（runner/ledger/switch），
+这是**部署配置**，不该进公开仓库：
+
+- 仓库内 `cordis.patch.yml` 只留 `demo` / `maxConcurrent` + 注释说明覆盖方式；
+- 真值路径写进 **`~/.dsh/profiles/desktop/cordis.patch.yml`**（profile patch 层，仓库外）；
+- 代码硬编码兜底一并清掉，改为「参数 → 环境变量 → 空」：
+  - `wire.host.mjs`：`DEFAULT_SWITCH_PATH = ''`；`writeSwitch` 遇空路径**明确报错**而非猜位置
+    （`readSwitch('')` 仍按"无文件=开启"降级，不误锁）；
+  - `bin/zcd.mjs`：`runner`/`ledger` 默认空，缺则报错退出（`--runner` / `ZCD_RUNNER` 可用）；
+  - `tools/bridge.mjs`：`ZCD_SWITCH_FILE` 未设时按"无文件=开启"放行并提示该事实；
+  - `test/z2-verify.mjs`：改 `Z2_HOST_REPO`，未设则第 8 节 **SKIP 并如实标注**（不伪装通过）。
+
+> profile patch 按 id 覆盖是 DSH 标准机制——同一文件里 `ui-theme` / `ui-chat` 等条目正是这样
+> 覆盖 bundle 内置条目的，本机既有先例。
+
+**③ 清除宿主项目名（用户要求）**
+
+机械替换 36 个 md 文件 88 处 + 代码注释 1 处，**全仓 `宿主项目` 出现次数 = 0**：
+
+| 原 | 现 |
+|---|---|
+| `F:\My Code\<项目>` 等 4 种写法 | `<HOST_REPO>` |
+| `<项目> 仓库` | `宿主仓库` |
+| `<项目> 侧` | `宿主侧` |
+| 其余 `<项目>` | `宿主项目` |
+
+> 代价如实说明：`tasks/` 是开发留档，替换后**损失了原文里的具体项目名**（路径变占位符）。
+> 替换规则有序（先长后短），已抽查 `Z12-01-task.md` / 本文档可读性正常。
+
+### 29.4 门禁（全绿）
+
+`node --check` **12 文件**零失败；verify-plugin **20/20**；verify-switch **8/8**；
+core **12/12**；channel-retry **9/9**；quota-rpc **16/16**。
+
+### 29.5 ⚠️ 生效条件（这轮**不只要刷新页面**）
+
+| 改动 | 生效方式 | 不重启的后果 |
+|---|---|---|
+| `index.js`（工具描述） | **完全退出 DSH 再启动** | 新会话看到的仍是旧描述，原问题依旧 |
+| `cordis.patch.yml` + profile patch（路径搬家） | **完全退出 DSH 再启动** | 仍用旧配置，派发照常 |
+| README / tasks 文档 | 无 | —— |
+
+**重启后按序验证这三条**（能证明"路径搬家没把功能搬坏 + 描述已更新"）：
+
+1. host `Config.listConfigs{name:'@local/zcode-dispatch'}` → `runnerPath`/`workRoot`/`switchPath`
+   应为**非空**（证明 profile patch 覆盖生效）；
+2. host `Tool.listTools` → `zcode_dispatch` 描述首段应为「【派发优先级：能用派发台就优先用派发台】…」；
+3. `zcode_dispatch{action:'status'}` 返回真实开关状态，而非 `default(未配置)`。
+
+> 若第 1 条为空 ⇒ profile patch 的 override 未命中：把 `- id: zcode-dispatch`（含 `name`）那段
+> 补进 profile patch 即可。插件会退化为"不创建 dispatcher"而**不会崩**（刻意设计）。

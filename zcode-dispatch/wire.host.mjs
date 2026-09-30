@@ -38,14 +38,17 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { dirname, join } from 'node:path';
 import { aggregate, fetchPlanQuota } from './core/quota.mjs';
 
-/* ─────────────── Z12：ZCode 派发总开关（跨进程唯一真值，契约：宿主项目 collab/PROTOCOL.md §7）───────────────
+/* ─────────────── Z12：ZCode 派发总开关（跨进程唯一真值，契约：宿主仓库 collab/PROTOCOL.md §7）───────────────
  * 语义：enabled:false = 拒绝对 ZCode 的任何派发；文件缺失/损坏 = 开启（不误锁，与 CLI 同）。
  * 读写全包只允许这一处实现：readSwitch（mtime 缓存，永不抛）/ writeSwitch（tmp+rename 原子写，
- * 键序/缩进/换行与 宿主项目 scripts/collab/zcode-switch.mjs 的 writeDispatchSwitch 逐字段一致——
+ * 键序/缩进/换行与宿主仓库 scripts/collab/zcode-switch.mjs 的 writeDispatchSwitch 逐字段一致——
  * 文件即契约，出现第二个写文件方 = 格式漂移）。UI 与 agent 工具经 createActionHandler 的
- * switch 动作共用它；config.switchPath 可指向别的真值文件（测试密封用），缺省即契约真值。 */
+ * switch 动作共用它；config.switchPath 指向真值文件，缺省为空 = 本机未接入宿主仓库。 */
 
-export const DEFAULT_SWITCH_PATH = '<HOST_REPO>\\collab\\zcode-dispatch.switch.json';
+/* 真值文件路径**刻意不设硬编码兜底**：这是机器专有路径（指向宿主项目），属于部署配置，
+ * 应由 profile patch 的 config.switchPath 提供。为空时 readSwitch 视作「无文件 = 开启」（不误锁），
+ * writeSwitch 则明确报错而不是写到一个猜出来的位置。 */
+export const DEFAULT_SWITCH_PATH = '';
 /** 协议标记行（跨写方逐字节一致；勿改文案——CLI 与本处共用同一字符串才是同一契约）。 */
 export const SWITCH_CONTRACT = 'collab/PROTOCOL.md §ZCode 派发总开关；false = 任何会话都不得把任务派发给 ZCode';
 /** dispatch/retry 被拒时的统一错误文案（任务包规定）。 */
@@ -82,6 +85,9 @@ export function readSwitch(path = DEFAULT_SWITCH_PATH) {
 
 /** 写开关（唯一写入口；原子替换 tmp+rename，格式与 CLI writeDispatchSwitch 一致）。失败抛错，动作层折成 {ok:false,error}。 */
 export function writeSwitch(enabled, { by = 'ui/tool', note = '' } = {}, path = DEFAULT_SWITCH_PATH) {
+  if (typeof path !== 'string' || !path) {
+    throw new Error('未配置派发总开关真值文件路径（config.switchPath）：无法写入开关。请在 profile patch 里指定宿主仓库的 collab/zcode-dispatch.switch.json');
+  }
   mkdirSync(dirname(path), { recursive: true });
   const body = {
     enabled: !!enabled,

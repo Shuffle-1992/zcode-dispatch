@@ -48,10 +48,26 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 |---|---|---|
 | `demo` | boolean / `false` | UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher |
 | `maxConcurrent` | integer / `1` | 同时运行的 run 上限（单写者互斥下的并发度） |
-| `runnerPath` | string / `''` | runner 绝对路径（宿主仓库 `scripts/collab/zcode-run.mjs`，只读使用）。**与 `workRoot` 任一为空则不创建 dispatcher**（UI 走 demo 降级，工具动作返回可读错误） |
+| `runnerPath` | string / `''` | runner 绝对路径（宿主项目 `scripts/collab/zcode-run.mjs`，只读使用）。**与 `workRoot` 任一为空则不创建 dispatcher**（UI 走 demo 降级，工具动作返回可读错误） |
 | `ledgerPath` | string / `''` | 台账 `zcode-runs.jsonl` 绝对路径；留空则跳过台账回读与用量聚合 |
-| `workRoot` | string / `''` | 派发器工作根目录（`locks/`、`state/jobs.json`、`logs/` 落在这里）。默认 patch 指到本包 `.data/` |
-| `switchPath` | string / 宿主项目 真值文件绝对路径 | Z12：派发总开关真值文件（`collab/zcode-dispatch.switch.json`）。文件缺失/损坏=开启；测试可指向临时文件密封 |
+| `workRoot` | string / `''` | 派发器工作根目录（`locks/`、`state/jobs.json`、`logs/` 落在这里）。留空即落到本包 `.data/` |
+| `switchPath` | string / `''` | Z12：派发总开关真值文件（宿主项目 `collab/zcode-dispatch.switch.json`）。文件缺失/损坏=开启；留空则开关不可写；测试可指向临时文件密封 |
+
+> **路径都是机器专有配置，仓库里不写死。** 本包的 `cordis.patch.yml` 只插入 `demo` / `maxConcurrent`；
+> 上述四个路径请在 **profile patch**（`~/.dsh/profiles/<profile>/cordis.patch.yml`）里按 id 覆盖：
+>
+> ```yaml
+> - id: zcode-dispatch
+>   name: "@local/zcode-dispatch"
+>   config:
+>     runnerPath: '<宿主项目>\scripts\collab\zcode-run.mjs'
+>     ledgerPath: '<宿主项目>\collab\logs\zcode-runs.jsonl'
+>     workRoot:   '<本插件目录>\.data'
+>     switchPath: '<宿主项目>\collab\zcode-dispatch.switch.json'
+> ```
+>
+> 三个路径全空时插件照常激活，只是不创建 dispatcher（面板 demo 降级、工具动作返回可读错误）——
+> 不会猜一个位置静默跑错。
 
 ## agent 工具 `zcode_dispatch`
 
@@ -154,12 +170,12 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 
 **用户可见语义（一句话）**：一个跨会话的「能否把任务派发给 ZCode」总开关，面板、agent 工具、CLI 三处看到的都是同一个文件。
 
-- **真值文件**：`<HOST_REPO>\collab\zcode-dispatch.switch.json`（`{enabled, updatedAt, updatedBy, note, contract}`；契约全文：宿主仓库 `collab/PROTOCOL.md` §7，各会话开工即读其 `AGENTS.md` §九）。
+- **真值文件**：`<宿主项目>/collab/zcode-dispatch.switch.json`（`{enabled, updatedAt, updatedBy, note, contract}`；契约全文见宿主项目 `collab/PROTOCOL.md` §7）。路径由 `config.switchPath` 给出（机器专有，见上文「config 说明」）。
   语义：`enabled:false` = **拒绝对 ZCode 的任何派发**；文件缺失/损坏 = 视为开启（不误锁）。
 - **查询/切换 CLI**：`node "<宿主项目>/scripts/collab/zcode-switch.mjs" status|on|off [--by …] [--note "…"]`（status 退出码 0=开、2=关）。
 - **遵守的三个入口**（缺一不可）：① runner `zcode-run.mjs`（关闭时 exit 3，不启动进程）② 本插件 Host 动作层（`dispatch`/`retry` 关闭时返回 `{ok:false, error, switch}`，不创建 job、不 spawn）③ `dsh-plugins/tools/bridge.mjs`（关闭时 exit 3，拒绝投放）。
 - **插件侧读写只此一处**：`wire.host.mjs` 的 `readSwitch()`（mtime 缓存、永不抛）/ `writeSwitch()`（tmp+rename 原子写，格式与 CLI 逐字段一致）。UI 与工具都经 `createActionHandler` 的 `switch` 动作写，杜绝第二个写文件方。
-- **config**：`switchPath`（string，默认即上面真值文件；测试可指向临时文件密封）。既有 5 个字段不变。
+- **config**：`switchPath`（string，默认空 = 未接入宿主项目；由 profile patch 指定；测试可指向临时文件密封）。既有 5 个字段不变。
 - **面板（UI）**：标题栏徽标「派发：开 / 关」——`conn='live'` 时可点击切换（成功后 1s 轮询带回新快照；真实点击效果需刷新页面后确认）；远端不可用（ext/demo/offline/连接中）时显示为**只读**，tooltip 提示「未连接宿主：请在终端执行 zcode-switch.mjs 切换」，状态未知时如实显示「派发：未知」（浏览器读不到宿主文件，不谎报）。关闭态下派发按钮禁用并显示原因（`switchOffBlocked`）。
 - **agent 工具**：`zcode_dispatch` 描述首行动态携带当前状态（注册时生成）；`action=status` 查实时状态、`action=switch`（`enabled` 必填，`by`/`note` 可选）切换、`action=dispatch` 派发（关闭时被拒）。其他会话开工先 `status` 一次即知。
 - **重载提示**：本节属宿主半边（`wire.host.mjs`/`index.js`）改动——完全退出 DSH 再启动才生效（pitfalls：cordis `_reload` 不重新 import）；客户端半边（`client.js`）刷新页面即可。

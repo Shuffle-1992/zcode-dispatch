@@ -13,7 +13,7 @@
  *   4. index.js：导出 apply/Config；apply() 用临时 workRoot + Z1 假 runner 端到端
  *      （dispatch → running → kill → killed → tail → quota → list → 卸载清理）
  *   5. wire.client.mjs：Node 内无 window → demo 引擎；注入 window.__zcodeDispatchDemo → ext 轮询
- *   6. 越界：宿主仓库 git porcelain 指纹前后一致（只读检查）
+ *   6. 越界：宿主仓库 git porcelain 指纹前后一致（只读检查，需 Z2_HOST_REPO）
  *
  * 用法：node test/z2-verify.mjs
  */
@@ -26,11 +26,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PKG = ROOT; // 本文件在 <pkg>/test/ 下
-const 宿主项目_REPO = '<HOST_REPO>';
+/* 宿主仓库（被本插件派发的那个项目）绝对路径。属机器专有路径，**不硬编码**：
+ * 由 Z2_HOST_REPO 给出；未给出时第 8 节「越界检查」自动 SKIP（如实标注，不伪装通过）。 */
+const HOST_REPO = process.env.Z2_HOST_REPO || '';
 
 /** 宿主仓库 git porcelain 指纹（只读检查，参照 Z1 交付做法）。 */
 const fingerprint = () => {
-  const porcelain = execFileSync('git', ['-C', 宿主项目_REPO, 'status', '--porcelain'], { encoding: 'utf8' });
+  if (!HOST_REPO) return null;
+  const porcelain = execFileSync('git', ['-C', HOST_REPO, 'status', '--porcelain'], { encoding: 'utf8' });
   return createHash('sha256').update(porcelain).digest('hex').slice(0, 16);
 };
 const FP_START = fingerprint(); // 脚本一开工先取指纹，结尾比对
@@ -453,8 +456,12 @@ section('7. client.js：ModuleLoader 桩 + 假 ctx + 渲染冒烟');
 
 /* ---------------- 8. 越界检查：宿主仓库零改动 ---------------- */
 section('8. 越界检查（宿主仓库 porcelain 指纹，只读）');
-const fpEnd = fingerprint();
-ok(FP_START === fpEnd, `宿主仓库指纹前后一致（${FP_START} → ${fpEnd}）`);
+if (!HOST_REPO) {
+  console.log('  SKIP：未设置 Z2_HOST_REPO，跳过越界指纹检查（不是通过）');
+} else {
+  const fpEnd = fingerprint();
+  ok(FP_START === fpEnd, `宿主仓库指纹前后一致（${FP_START} → ${fpEnd}）`);
+}
 
 /* ---------------- 汇总 ---------------- */
 console.log(`\n===== 结果：${passCount} PASS / ${failures.length} FAIL =====`);

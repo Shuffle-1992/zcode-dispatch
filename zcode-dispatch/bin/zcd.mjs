@@ -22,11 +22,13 @@
  *   --lock repo|memory|both --max-concurrent <n> --no-wait
  *
  * 路径默认值（可用环境变量或参数覆盖）：
- *   ZCD_RUNNER / --runner        runner 脚本（默认 宿主仓库 zcode-run.mjs，只读使用）
+ *   ZCD_RUNNER / --runner        runner 脚本（宿主仓库 scripts/collab/zcode-run.mjs，只读使用）
  *   ZCD_LEDGER / --ledger        台账 zcode-runs.jsonl
  *   ZCD_WORK_ROOT / --work-root  派发器工作根目录（默认 <zcode-dispatch>/work）
  *   ZCD_RUNNER_CWD / --runner-cwd  子进程工作目录（默认当前目录）
  * 测试注入：ZCD_FAKE_RUNNER 覆盖 runner 路径（见 test/core.test.mjs）。
+ * 注意：runner / ledger 指向宿主项目，属机器专有路径，**不设硬编码兜底**——必须由
+ * --runner/--ledger 或 ZCD_RUNNER/ZCD_LEDGER 给出，否则报错退出（避免猜一个位置静默跑错）。
  */
 import { createDispatcher } from '../core/dispatch-core.mjs';
 import { aggregate, fetchPlanQuota } from '../core/quota.mjs';
@@ -36,8 +38,8 @@ import { fileURLToPath } from 'node:url';
 
 const MODULE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DEFAULTS = {
-  runner: '<HOST_REPO>\\scripts\\collab\\zcode-run.mjs',
-  ledger: '<HOST_REPO>\\collab\\logs\\zcode-runs.jsonl',
+  runner: '',
+  ledger: '',
   workRoot: join(MODULE_ROOT, 'work'),
 };
 

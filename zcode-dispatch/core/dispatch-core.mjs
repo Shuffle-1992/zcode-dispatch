@@ -4,7 +4,7 @@
  * 职责：进程调度 / 单写者互斥（文件锁 + 进程内 FIFO 队列）/ 状态与用量采集 / 状态持久化。
  * 与 DSH 完全解耦：既可被 DSH Host 半边 `apply(ctx, config)` import，也可被 bin/zcd.mjs 独立驱动。
  *
- * 驱动的 runner 是只读依赖：`<宿主项目>/scripts/collab/zcode-run.mjs`，其控制台汇总行
+ * 驱动的 runner 是只读依赖：`<宿主仓库>/scripts/collab/zcode-run.mjs`，其控制台汇总行
  * 形如 `[zcode-run] done exit=0 elapsed=9.7s session=sess_x provider=plan:x model=M responseChars=N`，
  * 结束后按 tag 回读台账 `zcode-runs.jsonl` 补全字段（stdout 解析与台账取并集，解析失败不崩）。
  *

@@ -34,7 +34,7 @@ const DEFAULTS = {
   runnerPath: '',
   ledgerPath: '',
   workRoot: '',
-  // Z12：派发总开关真值文件（契约 宿主项目 collab/PROTOCOL.md §7）；缺省即契约真值
+  // Z12：派发总开关真值文件（契约：宿主仓库 collab/PROTOCOL.md §7）；缺省为空 = 未接入宿主仓库
   switchPath: DEFAULT_SWITCH_PATH,
 };
 
@@ -69,7 +69,7 @@ async function loadConfig() {
       runnerPath: z.string().default('').description('runner 脚本绝对路径（宿主仓库 scripts/collab/zcode-run.mjs，只读使用）；留空则不创建 dispatcher'),
       ledgerPath: z.string().default('').description('台账 zcode-runs.jsonl 绝对路径；留空则跳过台账回读与用量聚合'),
       workRoot: z.string().default('').description('派发器工作根目录（locks/、state/jobs.json、logs/ 落在这里）；留空则不创建 dispatcher'),
-      switchPath: z.string().default(DEFAULT_SWITCH_PATH).description('ZCode 派发总开关真值文件绝对路径（collab/zcode-dispatch.switch.json，契约见 宿主项目 PROTOCOL.md §7）；文件缺失/损坏视为开启'),
+      switchPath: z.string().default(DEFAULT_SWITCH_PATH).description('ZCode 派发总开关真值文件绝对路径（宿主仓库 collab/zcode-dispatch.switch.json，契约见其 PROTOCOL.md §7）；文件缺失/损坏视为开启；留空则开关不可写'),
     });
   } catch {
     return fallbackConfig();
@@ -235,13 +235,25 @@ const TOOL_DESCRIPTION_BODY = [
 ].join('\n');
 
 /**
- * 工具描述：首行动态携带开关当前状态（注册时按 readSwitch() 生成一次；
- * 运行中状态以 action=status 的实时返回为准——其他会话开工先 status 一次即知）。
+ * 工具描述：首段说清**什么时候必须用本工具**（模型选工具的唯一依据就是这段文字）+
+ * 显式排除 DSH 自带 subagent/jobs；末段动态携带开关当前状态（注册时按 readSwitch() 生成一次；
+ * 运行中状态以 action=status 的实时返回为准）。
+ *
+ * ZB-02（用户现场报告「新会话里让它派发 zcode，走的还是 DSH 后台，不在派发台里」）：
+ * 旧首行是「操作「ZCode 派发台」：把任务派发给 ZCode 子代理（当前：已开启）。action=status 查开关状态；…」，
+ * 有两处硬伤：① 首行把动作重心放在 status/switch 上，读起来像状态管理工具而非派发入口；
+ * ② 用了「子代理」一词，与 DSH 自带 `subagent`（Delegate a self-contained task to a subagent）
+ * 概念直接撞车——模型看到「派发/子代理」就顺手调了 subagent，任务于是跑在 DSH 后台、不产生派发台 job。
+ * 现改为：触发条件先讲、「ZCode 无头进程」替代「子代理」、并点名禁止替代品。
  */
 function buildToolDescription(switchFile) {
   const sw = readSwitch(switchFile);
   const state = sw.enabled ? '已开启' : '已关闭';
-  return `操作「ZCode 派发台」：把任务派发给 ZCode 子代理（当前：${state}）。action=status 查开关状态；action=switch 切换 enabled=true|false；action=dispatch 派发（关闭时会被拒绝）。与页面右下角悬浮窗是同一套操作（一操作两调用方）。\n${TOOL_DESCRIPTION_BODY}`;
+  return [
+    '【派发优先级：能用派发台就优先用派发台】凡是「把任务交给一个 agent 去做」的诉求——用户说「派发给 ZCode / 让 ZCode 做 / 用 ZCode 跑 / zcode 派发 / 在派发台派一个」，或只是笼统地说「派发这个任务」——**先**用本工具的 action=dispatch：它才会在「ZCode 派发台」面板里生成一个可监视的 job（独立 ZCode 进程、独立额度与会话，可查输出/终止/续跑/换通道）。',
+    '✅ **仅当派发台不可用时**才退回 DSH 自带的 subagent / spawn_teammate / subagent_fork / 后台 jobs：即 action=status 显示开关已关闭、dispatch 返回 ok:false（未配置 runner/workRoot、锁冲突等），或用户明确要求「你自己（DSH）去做」。此时要**说明为什么没用派发台**，不要静默切换。',
+    `当前派发总开关：${state}（实时状态用 action=status）。action=switch 切换开关；action=list/tail 监视；与页面右下角悬浮窗是同一套操作（一操作两调用方）。`,
+  ].join('\n') + `\n${TOOL_DESCRIPTION_BODY}`;
 }
 
 /**
