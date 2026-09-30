@@ -1420,18 +1420,24 @@ window.__ModuleLoader__.load({
       // 命名空间是否就绪改用运行时探测（createWire / MOD_CTX），缺席即降级 demo/ext。
       inject: ['slots', 'remote'],
       apply(ctx) {
-        MOD_CTX = ctx; // createWire 据此探测远端面；apply 未跑或无 remote 时走 ext/demo 降级
-        // 第三方本地包不被构建期内联进 api-remotes 聚合，须在 apply 自挂 remote.zcodeDispatch
-        // 子服务（同形调用见 extracted/dsh-api-remotes/lib/client.js:13505-13540）。$mount
-        // 返回「命名空间就绪后可用的 disposer」，随客户端 ctx 生命周期存续；这里不持有它
-        // （客户端模块表未给 apply 提供卸载通道），拒绝路径用 catch 吞掉，不白屏。
+        // 整个 apply 兜底：任何异常都不许冒泡（冒泡 = 条目激活失败 = web boot 失败）。
+        // 2026-09-30 曾因 inject 自声明 remote 命名空间导致启动死锁，此后按"启动绝不因插件失败"设防。
         try {
-          const mounted = ctx?.remote && typeof ctx.remote.$mount === 'function' && ctx.remote.$mount(REMOTE_CONTRIBUTION);
-          if (mounted && typeof mounted.catch === 'function') mounted.catch(() => { /* 远端面挂载失败：wire 走降级 */ });
-        } catch { /* 同上：远端面不可达不致命 */ }
-        // list 型槽位：id 必填且同 priority 下唯一；id 遵循宿主先例的 <功能>.<物> 命名
-        // （对照 chat.quota-notice / plugin-manager.refresh-toast / workspace.row-toast）
-        ctx.slots.inject(SLOT, () => ctx.slots.register({ name: SLOT, id: 'zcode-dispatch.console', order: 20 }, FloatingPanel));
+          MOD_CTX = ctx; // createWire 据此探测远端面；apply 未跑或无 remote 时走 ext/demo 降级
+          // 第三方本地包不被构建期内联进 api-remotes 聚合，须在 apply 自挂 remote.zcodeDispatch
+          // 子服务（同形调用见 extracted/dsh-api-remotes/lib/client.js:13505-13540）。$mount
+          // 返回「命名空间就绪后可用的 disposer」，随客户端 ctx 生命周期存续；这里不持有它
+          // （客户端模块表未给 apply 提供卸载通道），拒绝路径用 catch 吞掉，不白屏。
+          try {
+            const mounted = ctx?.remote && typeof ctx.remote.$mount === 'function' && ctx.remote.$mount(REMOTE_CONTRIBUTION);
+            if (mounted && typeof mounted.catch === 'function') mounted.catch(() => { /* 远端面挂载失败：wire 走降级 */ });
+          } catch { /* 同上：远端面不可达不致命 */ }
+          // list 型槽位：id 必填且同 priority 下唯一；id 遵循宿主先例的 <功能>.<物> 命名
+          // （对照 chat.quota-notice / plugin-manager.refresh-toast / workspace.row-toast）
+          ctx.slots.inject(SLOT, () => ctx.slots.register({ name: SLOT, id: 'zcode-dispatch.console', order: 20 }, FloatingPanel));
+        } catch (e) {
+          try { console.warn('[zcode-dispatch] apply 降级（不阻塞启动）:', e && e.message); } catch { /* 连 console 都不可用就彻底静默 */ }
+        }
       },
     };
   },
