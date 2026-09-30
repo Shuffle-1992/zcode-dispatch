@@ -9,6 +9,7 @@
     "connDemo": "演示数据",
     "connExt": "外部数据",
     "connLive": "已连接",
+    "connOffline": "未连接",
     "collapse": "折叠 / 展开",
     "minimize": "最小化为胶囊",
     "restore": "展开派发台",
@@ -45,6 +46,11 @@
     "tail": "输出",
     "tailLoading": "读取中…",
     "tailEmpty": "（无输出）",
+    "closeJob": "关闭",
+    "cwd": "工作目录",
+    "createdAt": "创建于",
+    "sessionId": "会话",
+    "emptyOffline": "未连接宿主：无进程数据（真数据需完成 Remote 接线）",
     "usage5h": "5 小时窗口",
     "usageWeek": "本周",
     "usageToday": "今日",
@@ -88,6 +94,12 @@
     "fallbackOffBtn": "关闭降级链",
     "fallbackConfirm2": "再次点击确认：会自动消耗下游通道额度",
     "fallbackSaved": "降级链已更新：",
-    "fallbackEmptyErr": "请先填写至少一个通道 id"
+    "fallbackEmptyErr": "请先填写至少一个通道 id",
+    "switchOn": "派发：开",
+    "switchOff": "派发：关",
+    "switchUnknown": "派发：未知",
+    "switchTitle": "ZCode 派发总开关：点击切换（写入 collab/zcode-dispatch.switch.json，全部会话生效）",
+    "switchHintOffline": "未连接宿主：请在终端执行 zcode-switch.mjs 切换",
+    "switchOffBlocked": "派发总开关已关闭：所有派发入口都被拒绝；请先用标题栏开关或 zcode-switch.mjs 恢复"
   }
 }

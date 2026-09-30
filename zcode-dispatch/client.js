@@ -3,8 +3,10 @@
  * 纯 JS + React.createElement（无构建 / 无 JSX / 无 npm 依赖）；唯一外部模块为 react（经宿主模块表注入）。
  *
  * 行为：右下角贴边悬浮窗，标题栏可拖拽（pointer events），可折叠，可最小化为圆角小胶囊；
- * 位置/尺寸/折叠态存 localStorage（key 带插件前缀）。五个分区：通道（切换器+降级链）/
- * 派发栏 / 进程列表（含 paused 暂停态与同通道续跑/换通道交接重跑）/ 用量卡片 / 单写者状态。
+ * 位置/尺寸/折叠态存 localStorage（key 带插件前缀）。五个分区均可折叠（通道/派发/单写者
+ * 默认收起，进程/用量默认展开，折叠态存 localStorage）：通道（切换器+降级链）/ 派发栏 /
+ * 进程列表（行头点击展开派发要素；paused 暂停态带同通道续跑/换通道交接重跑/关闭）/
+ * 用量卡片 / 单写者状态。
  * 样式仅走主题令牌（--dsw-alias-* / --dsw-shadow-* / --ds-font-family-code，集中在 TOKENS 常量，
  * 见下），不 import 任何 DSH 宿主客户端包，不碰宿主 body 节点，卸载时清理监听器与定时器。
  *
@@ -15,13 +17,15 @@
  * remote.zcodeDispatch 子服务（描述符与 wire.client.mjs 的 TYPERT_REMOTE 同源），
  * 内嵌同源远端传输层调用 ctx.remote.zcodeDispatch.<方法>()。宿主侧 face 已注册为
  * cordis 服务（wire.host.mjs，ctx.provide + exports["./typert"] 经 typert-loader 注册）。
- * 远端缺席/挂载失败时逐级回退：window 外部数据源 → 内置 demo 引擎，绝不白屏。
+ * 远端缺席/挂载失败时逐级回退：window 外部数据源 → 诚实空态（offline），绝不白屏；
+ * 内置 demo 引擎默认不启用（Z11：仅当 window.__zcodeDispatchDemo === 'builtin' 时使用，便于排查）。
  *
  * 真数据 vs demo 判据（面板标题栏徽标，connLabel）：
  * - 「已连接」（conn='live'）：数据来自 ctx.remote.zcodeDispatch 远端面——真 ZCode
  *   子进程与真用量台账（宿主 face 已注册时才有）；
  * - 「外部数据」（conn='ext'）：window.__zcodeDispatchDemo 注入的外部数据源；
- * - 「演示数据」（conn='demo'）：内置演示引擎（纯前端假数据）；
+ * - 「演示数据」（conn='demo'）：内置演示引擎（纯前端假数据，需显式 'builtin' 开启）；
+ * - 「未连接」（conn='offline'）：远端与外部源都没有——诚实空态，不渲染任何假行；
  * - 「连接中」：尚未收到任何数据包（连接建立前的一次渲染）。
  */
 window.__ModuleLoader__.load({
@@ -43,6 +47,12 @@ window.__ModuleLoader__.load({
       size: 'zcode-dispatch:panel:size:v1', // 宽度 {width}
       collapsed: 'zcode-dispatch:panel:collapsed:v1', // 折叠态 true/false
     };
+    /* Z11：分区折叠——id 常量集中一处（勿散落魔法字符串），折叠态存
+     * localStorage['zcode-dispatch:section:<id>']（复用 loadJson/saveJson，自带 try/catch）。 */
+    const SEC = { channel: 'channel', dispatch: 'dispatch', jobs: 'jobs', quota: 'quota', locks: 'locks' };
+    const secKey = (id) => `zcode-dispatch:section:${id}`;
+    // 默认展开/收起：通道与派发收起（少滚动）；进程与用量展开（主信息）；单写者收起
+    const SEC_DEFAULT_OPEN = { [SEC.channel]: false, [SEC.dispatch]: false, [SEC.jobs]: true, [SEC.quota]: true, [SEC.locks]: false };
     // z-index 仅约束浮层自身的层级（不写全局样式、不碰宿主 DOM），取固定较大值避免被页面浮层盖住
     const Z_INDEX = 2000000000;
     const WIDTH = { min: 320, max: 600, def: 440 };
@@ -91,11 +101,22 @@ window.__ModuleLoader__.load({
       '.zcd-titlebar:active{cursor:grabbing;}',
       '.zcd-title{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
       '.zcd-conn{flex:none;font-size:10px;line-height:1.6;padding:0 6px;border:1px solid ' + T.border + ';border-radius:8px;color:' + T.text2 + ';}',
+      // Z12 派发总开关徽标：非 live=只读 span；live=可点 button（hover 反馈，busy 半透明）
+      '.zcd-switch{display:inline-flex;align-items:center;gap:4px;}',
+      '.zcd-switch .zcd-dot{width:6px;height:6px;}',
+      'button.zcd-switch{background:transparent;font:inherit;cursor:pointer;transition:background-color .15s ease,color .15s ease;}',
+      'button.zcd-switch:hover{background:' + T.hover + ';color:' + T.text + ';}',
+      'button.zcd-switch:disabled{opacity:.5;cursor:default;}',
       '.zcd-iconbtn{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:' + T.text2 + ';cursor:pointer;transition:background-color .15s ease,color .15s ease;}',
       '.zcd-iconbtn:hover{background:' + T.hover + ';color:' + T.text + ';}',
       '.zcd-body{display:flex;flex-direction:column;gap:8px;padding:8px;overflow:auto;min-height:0;overscroll-behavior:contain;}',
       '.zcd-sec{display:flex;flex-direction:column;gap:6px;padding:8px;border:1px solid ' + T.border + ';border-radius:8px;min-width:0;}',
       '.zcd-sec-title{font-size:11px;font-weight:600;letter-spacing:.02em;color:' + T.text2 + ';}',
+      // Z11 可折叠分区：整条标题栏可点击切换（含 hover/键盘焦点态与倒三角指示）
+      '.zcd-sec-head{display:flex;align-items:center;gap:6px;min-height:18px;cursor:pointer;user-select:none;-webkit-user-select:none;border-radius:4px;transition:background-color .15s ease;}',
+      '.zcd-sec-head:hover{background:' + T.hover + ';}',
+      '.zcd-sec-head:focus-visible{outline:1px solid ' + T.text3 + ';outline-offset:2px;}',
+      '.zcd-sec-caret{flex:none;display:inline-flex;color:' + T.text3 + ';}',
       '.zcd-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}',
       '.zcd-label{color:' + T.text2 + ';white-space:nowrap;}',
       '.zcd-select,.zcd-input,.zcd-ta{background:' + T.sunken + ';color:' + T.text + ';border:1px solid ' + T.border + ';border-radius:6px;padding:3px 6px;font:inherit;outline:none;transition:border-color .15s ease;}',
@@ -137,6 +158,12 @@ window.__ModuleLoader__.load({
       '.zcd-card-title{font-size:10px;font-weight:600;color:' + T.text2 + ';}',
       '.zcd-kv{display:flex;justify-content:space-between;gap:6px;font-size:10.5px;min-width:0;}',
       '.zcd-kv-k{color:' + T.text3 + ';}',
+      // Z11 行展开详情：子块容器 + 值列长值换行 + 行 hover 反馈（行头可点击展开）
+      '.zcd-detail{display:flex;flex-direction:column;gap:3px;margin-top:2px;}',
+      '.zcd-kv-v{overflow-wrap:anywhere;text-align:right;}',
+      '.zcd-job{transition:border-color .15s ease;}',
+      '.zcd-job:hover{border-color:' + T.text3 + ';}',
+      '.zcd-job-head{cursor:pointer;}',
       '.zcd-planline{margin-top:2px;font-size:10.5px;color:' + T.text3 + ';white-space:normal;overflow-wrap:anywhere;line-height:1.45;}',
       '.zcd-grip{position:absolute;left:0;bottom:0;width:16px;height:16px;cursor:ew-resize;}',
       '.zcd-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid ' + T.border + ';border-radius:999px;background:' + T.bg + ';color:' + T.text + ';box-shadow:' + T.shadow + ';cursor:pointer;font:inherit;transition:transform .15s ease;}',
@@ -149,7 +176,7 @@ window.__ModuleLoader__.load({
     const STRINGS = {
       zh: {
         title: 'ZCode 派发台',
-        connConnecting: '连接中', connDemo: '演示数据', connExt: '外部数据', connLive: '已连接',
+        connConnecting: '连接中', connDemo: '演示数据', connExt: '外部数据', connLive: '已连接', connOffline: '未连接',
         collapse: '折叠 / 展开', minimize: '最小化为胶囊', restore: '展开派发台', grip: '拖拽调整宽度',
         secDispatch: '派发', secJobs: '进程', secQuota: '用量', secLocks: '单写者',
         kind: '类型', kindPrompt: '提示词', kindTask: '任务文件', kindTarget: '目标',
@@ -159,6 +186,8 @@ window.__ModuleLoader__.load({
         dispatch: '派发', queuedBtn: '排队中…', runningBtn: '执行中…', sending: '提交中…',
         fbQueued: '已排队：', errPrefix: '失败：', errEmpty: '请先填写内容',
         content: '内容', noJobs: '暂无进程记录', exit: '退出', kill: '终止', tail: '输出', tailLoading: '读取中…', tailEmpty: '（无输出）',
+        closeJob: '关闭', cwd: '工作目录', createdAt: '创建于', sessionId: '会话',
+        emptyOffline: '未连接宿主：无进程数据（真数据需完成 Remote 接线）',
         usage5h: '5 小时窗口', usageWeek: '本周', usageToday: '今日',
         runs: 'run 数', requests: '请求', inTok: '输入', outTok: '输出', cacheTok: '缓存读',
         localNote: '本地用量（可核对）：台账聚合的 5 小时 / 本周 / 今日窗口',
@@ -174,10 +203,14 @@ window.__ModuleLoader__.load({
         fallbackTitle: '自动降级链', fallbackStateOff: '关', fallbackStateOn: '开',
         fallbackPh: '通道 id，逗号分隔，按顺序', fallbackSave: '开启降级链', fallbackOffBtn: '关闭降级链',
         fallbackConfirm2: '再次点击确认：会自动消耗下游通道额度', fallbackSaved: '降级链已更新：', fallbackEmptyErr: '请先填写至少一个通道 id',
+        switchOn: '派发：开', switchOff: '派发：关', switchUnknown: '派发：未知',
+        switchTitle: 'ZCode 派发总开关：点击切换（写入 collab/zcode-dispatch.switch.json，全部会话生效）',
+        switchHintOffline: '未连接宿主：请在终端执行 zcode-switch.mjs 切换',
+        switchOffBlocked: '派发总开关已关闭：所有派发入口都被拒绝；请先用标题栏开关或 zcode-switch.mjs 恢复',
       },
       en: {
         title: 'ZCode Dispatch Console',
-        connConnecting: 'connecting', connDemo: 'demo data', connExt: 'external', connLive: 'live',
+        connConnecting: 'connecting', connDemo: 'demo data', connExt: 'external', connLive: 'live', connOffline: 'offline',
         collapse: 'Collapse / Expand', minimize: 'Minimize to pill', restore: 'Restore console', grip: 'Drag to resize width',
         secDispatch: 'Dispatch', secJobs: 'Processes', secQuota: 'Usage', secLocks: 'Single writer',
         kind: 'Kind', kindPrompt: 'Prompt', kindTask: 'Task file', kindTarget: 'Target',
@@ -187,6 +220,8 @@ window.__ModuleLoader__.load({
         dispatch: 'Dispatch', queuedBtn: 'Queued…', runningBtn: 'Running…', sending: 'Sending…',
         fbQueued: 'Queued: ', errPrefix: 'Failed: ', errEmpty: 'Content is required',
         content: 'Content', noJobs: 'No process records yet', exit: 'exit', kill: 'Kill', tail: 'Tail', tailLoading: 'Loading…', tailEmpty: '(no output)',
+        closeJob: 'Close', cwd: 'Workdir', createdAt: 'Created', sessionId: 'Session',
+        emptyOffline: 'Host not connected: no process data (live data needs the Remote wiring)',
         usage5h: '5h window', usageWeek: 'This week', usageToday: 'Today',
         runs: 'runs', requests: 'req', inTok: 'in', outTok: 'out', cacheTok: 'cache',
         localNote: 'Local usage (verifiable): ledger-aggregated 5h / week / today windows',
@@ -202,6 +237,10 @@ window.__ModuleLoader__.load({
         fallbackTitle: 'Auto fallback chain', fallbackStateOff: 'Off', fallbackStateOn: 'On',
         fallbackPh: 'Channel ids, comma separated, in order', fallbackSave: 'Enable fallback', fallbackOffBtn: 'Disable fallback',
         fallbackConfirm2: 'Click again to confirm: downstream channel quota will be consumed', fallbackSaved: 'Fallback chain updated: ', fallbackEmptyErr: 'At least one channel id is required',
+        switchOn: 'Dispatch: on', switchOff: 'Dispatch: off', switchUnknown: 'Dispatch: ?',
+        switchTitle: 'ZCode dispatch master switch: click to toggle (writes collab/zcode-dispatch.switch.json, effective for all sessions)',
+        switchHintOffline: 'Host not connected: run zcode-switch.mjs in a terminal to toggle',
+        switchOffBlocked: 'Dispatch master switch is off: all dispatch entries are rejected; re-enable via the title-bar switch or zcode-switch.mjs',
       },
     };
     const LANG = (() => {
@@ -237,6 +276,22 @@ window.__ModuleLoader__.load({
     const fmtSec = (s) => (s == null ? '—' : `${Number(s).toFixed(1)}s`);
     const shortId = (id) => (id ? String(id).slice(0, 12) : '—');
     const ctxPct = (j) => (j && j.contextUsed != null && j.contextWindow ? `${Math.round((j.contextUsed / j.contextWindow) * 100)}%` : '—');
+    // Z11：长文本截断展示（详情区 prompt 最多 1200 字符）；时间本地化
+    const clampText = (s, n) => {
+      const str = s == null ? '' : String(s);
+      return str.length > n ? `${str.slice(0, n)}…` : str;
+    };
+    const fmtTime = (iso) => {
+      if (!iso) return '—';
+      try {
+        return new Date(iso).toLocaleString();
+      } catch {
+        return String(iso);
+      }
+    };
+    /* 交互元素判定（模块级：拖拽守卫与 JobRow 行头点击守卫共用同一实现）。
+     * Z9 教训：可点击区域内嵌按钮时，事件必须先 closest 守卫，否则子按钮点击被外层吃掉。 */
+    const isInteractive = (el) => !!(el && typeof el.closest === 'function' && el.closest('button,input,select,textarea,a,[role="button"]'));
 
     /* apply(ctx) 捕获的客户端 ctx：createWire 用它探测远端面（模块级唯一；
      * apply 先于组件挂载执行，浅渲染等无 ctx 场景保持 null = 远端缺席 → 降级）。 */
@@ -257,10 +312,13 @@ window.__ModuleLoader__.load({
       ['snapshot', [], []],
       ['dispatch', ['spec'], []],
       ['kill', ['id'], []],
+      ['dismiss', ['id'], []],
       ['retry', ['id', 'opts'], ['opts']],
       ['tail', ['id', 'n'], ['n']],
       ['setChannel', ['next'], ['next']],
       ['setFallbackChain', ['list'], ['list']],
+      ['switchGet', [], []],
+      ['switchSet', ['next'], ['next']],
       ['quota', [], []],
       ['quotaPlan', [], []],
       ['channels', [], []],
@@ -357,10 +415,14 @@ window.__ModuleLoader__.load({
         fallbackChain: () => remote.call('fallbackChain'),
         dispatch: (spec) => remote.call('dispatch', spec && typeof spec === 'object' ? spec : {}),
         kill: (id) => remote.call('kill', id),
+        dismiss: (id) => remote.call('dismiss', id),
         retry: (id, opts) => remote.call('retry', id, opts && typeof opts === 'object' ? opts : {}),
         tail: (id, n) => remote.call('tail', id, n),
         setChannel: (next) => remote.call('setChannel', next && typeof next === 'object' ? next : {}),
         setFallbackChain: (list) => remote.call('setFallbackChain', list == null ? null : list),
+        // Z12：派发总开关（switchGet 读状态；switchSet 走宿主唯一写入口）
+        switchGet: () => remote.call('switchGet'),
+        switchSet: (next) => remote.call('switchSet', next && typeof next === 'object' ? next : {}),
       };
       // 旧接口（UI 信封：永不 reject）。别名方法不能在对象字面量里互相引用方法名
       // （属性不是作用域绑定，pitfalls Z7-1），先落局部函数。
@@ -431,6 +493,13 @@ window.__ModuleLoader__.load({
             return errOf(e);
           }
         },
+        async dismiss(id) {
+          try {
+            return await face.dismiss(id);
+          } catch (e) {
+            return errOf(e);
+          }
+        },
         async retry(id, opts = {}) {
           try {
             return await face.retry(id, opts);
@@ -474,6 +543,21 @@ window.__ModuleLoader__.load({
         // 与宿主 face 同名对齐（转发旧实现，语义一致）
         setChannel: (c) => channelSetImpl(c),
         setFallbackChain: (l) => fallbackSetImpl(l),
+        // Z12：派发总开关（switchGet 数据对象折成 {ok:true, switch}；switchSet 透传宿主信封）
+        async switchGet() {
+          try {
+            return { ok: true, switch: await face.switchGet() };
+          } catch (e) {
+            return errOf(e);
+          }
+        },
+        async switchSet(next = {}) {
+          try {
+            return await face.switchSet(next);
+          } catch (e) {
+            return errOf(e);
+          }
+        },
         dispose() {
           subs.clear();
           if (pollTimer != null) {
@@ -485,69 +569,128 @@ window.__ModuleLoader__.load({
       };
     }
 
-    /* ─────────────── 降级 wire（ext/demo；同源实现：wire.client.mjs）───────────────
-     * 远端面缺席时的降级顺序：1) 轮询 window.__zcodeDispatchDemo（宿主/creator 注入的
-     * 外部数据源，形如 { getSnapshot(), getQuota?(), dispatch?(spec), kill?(id), tail?(id, n) }）；
-     * 2) 内置 demo 引擎 —— UI 永远可渲染（不报错、不白屏）。 */
+    /* ─────────────── 降级 wire（ext/demo/offline；同源实现：wire.client.mjs）───────────────
+     * 远端面缺席时的降级顺序（legacyWire 选择器）：
+     * 1) window.__zcodeDispatchDemo === 'builtin' → 内置演示引擎（conn='demo'，排查用，默认关）；
+     * 2) window.__zcodeDispatchDemo 为外部数据源对象（含 getSnapshot()）→ extWire（conn='ext'）；
+     * 3) 都没有 → offlineWire（conn='offline'，Z11 诚实空态：无假行、无定时器）。 */
     function legacyWire() {
-      const ext = typeof window !== 'undefined' ? window.__zcodeDispatchDemo : null;
-      if (ext && typeof ext.getSnapshot === 'function') {
-        const subs = new Set();
-        let timer = null;
-        const call = async (name, ...args) => {
-          if (typeof ext[name] !== 'function') return { ok: false, error: `外部数据源未提供 ${name}()` };
-          try {
-            return await ext[name](...args);
-          } catch (e) {
-            return { ok: false, error: e?.message ?? String(e) };
-          }
-        };
-        return {
-          subscribe(cb) {
-            subs.add(cb);
-            const poll = () => {
-              try {
-                const bundle = {
-                  conn: 'ext',
-                  snapshot: ext.getSnapshot(),
-                  quota: typeof ext.getQuota === 'function' ? ext.getQuota() : null,
-                  planQuota: typeof ext.getPlanQuota === 'function' ? ext.getPlanQuota() : null,
-                };
-                for (const fn of subs) fn(bundle);
-              } catch { /* 外部源抖动一拍不致命 */ }
-            };
-            poll();
-            timer = setInterval(poll, 2000);
-            return () => {
-              subs.delete(cb);
-              if (subs.size === 0 && timer != null) {
-                clearInterval(timer);
-                timer = null;
-              }
-            };
-          },
-          dispatch: (spec) => call('dispatch', spec),
-          kill: (id) => call('kill', id),
-          tail: (id, n) => call('tail', id, n),
-          // Z6 增量：外部源未提供这些方法时 call() 返回 {ok:false,error}，UI 自行降级
-          channels: () => call('channels'),
-          channelGet: () => call('channel', {}),
-          channelSet: (c) => call('channel', c ?? {}),
-          retry: (id, opts) => call('retry', { id, ...(opts ?? {}) }),
-          fallbackGet: () => call('fallback', {}),
-          fallbackSet: (chain) => call('fallback', { chain }),
-          dispose() {
-            subs.clear();
-            if (timer != null) {
+      const flag = typeof window !== 'undefined' ? window.__zcodeDispatchDemo : null;
+      if (flag === 'builtin') return demoWire();
+      if (flag && typeof flag === 'object' && typeof flag.getSnapshot === 'function') return extWire(flag);
+      return offlineWire();
+    }
+
+    /* 外部数据源 wire（conn='ext'）：轮询注入的 window.__zcodeDispatchDemo 对象。 */
+    function extWire(ext) {
+      if (!ext || typeof ext.getSnapshot !== 'function') return null;
+      const subs = new Set();
+      let timer = null;
+      const call = async (name, ...args) => {
+        if (typeof ext[name] !== 'function') return { ok: false, error: `外部数据源未提供 ${name}()` };
+        try {
+          return await ext[name](...args);
+        } catch (e) {
+          return { ok: false, error: e?.message ?? String(e) };
+        }
+      };
+      return {
+        subscribe(cb) {
+          subs.add(cb);
+          const poll = () => {
+            try {
+              const bundle = {
+                conn: 'ext',
+                snapshot: ext.getSnapshot(),
+                quota: typeof ext.getQuota === 'function' ? ext.getQuota() : null,
+                planQuota: typeof ext.getPlanQuota === 'function' ? ext.getPlanQuota() : null,
+              };
+              for (const fn of subs) fn(bundle);
+            } catch { /* 外部源抖动一拍不致命 */ }
+          };
+          poll();
+          timer = setInterval(poll, 2000);
+          return () => {
+            subs.delete(cb);
+            if (subs.size === 0 && timer != null) {
               clearInterval(timer);
               timer = null;
             }
-          },
-        };
-      }
+          };
+        },
+        dispatch: (spec) => call('dispatch', spec),
+        kill: (id) => call('kill', id),
+        dismiss: (id) => call('dismiss', id),
+        tail: (id, n) => call('tail', id, n),
+        // Z6 增量：外部源未提供这些方法时 call() 返回 {ok:false,error}，UI 自行降级
+        channels: () => call('channels'),
+        channelGet: () => call('channel', {}),
+        channelSet: (c) => call('channel', c ?? {}),
+        retry: (id, opts) => call('retry', { id, ...(opts ?? {}) }),
+        fallbackGet: () => call('fallback', {}),
+        fallbackSet: (chain) => call('fallback', { chain }),
+        // Z12：外部源未提供时 call() 返回 {ok:false,error}，UI 自行降级为只读
+        switchGet: () => call('switchGet', {}),
+        switchSet: (next) => call('switchSet', next ?? {}),
+        dispose() {
+          subs.clear();
+          if (timer != null) {
+            clearInterval(timer);
+            timer = null;
+          }
+        },
+      };
+    }
 
-      // 内置 demo 引擎：3 个进程起步；派发 / kill / tail 均可交互（纯前端假数据）
-      const jobs = new Map();
+    /* 诚实空态 wire（conn='offline'，Z11）：远端与外部源都没有时不渲染任何假行——
+     * 同步发一包空快照（形状与 live 快照一致），无定时器；动作一律返回可读错误。
+     * 徽标「未连接」，进程区显示 emptyOffline 文案。 */
+    const offlineSnapshot = () => ({
+      counts: { running: 0, queued: 0, done: 0, failed: 0 },
+      jobs: [],
+      locks: {},
+      queue: [], // 数组与 live 快照同形（LockStatus 按 .length 取队列长度；任务包示例的 queue:0 会显示 undefined）
+    });
+    const OFFLINE_ERR = '未连接宿主（offline）：无进程数据，动作不可用';
+    function offlineWire() {
+      const subs = new Set();
+      const emit = () => {
+        const bundle = { conn: 'offline', snapshot: offlineSnapshot(), quota: null, planQuota: null };
+        for (const fn of subs) {
+          try {
+            fn(bundle);
+          } catch { /* 单个订阅者异常不影响其他 */ }
+        }
+      };
+      const denied = async () => ({ ok: false, error: OFFLINE_ERR });
+      return {
+        subscribe(cb) {
+          if (typeof cb !== 'function') throw new TypeError('subscribe(cb): cb 必须是函数');
+          subs.add(cb);
+          emit(); // 同步一包：UI 首帧即空态，无需等轮询
+          return () => subs.delete(cb);
+        },
+        dispatch: denied,
+        kill: denied,
+        dismiss: denied,
+        retry: denied,
+        tail: async (id) => ({ ok: true, id, lines: [] }),
+        channels: async () => ({ ok: true, channels: [], warnings: [] }),
+        channelGet: denied,
+        channelSet: denied,
+        fallbackGet: denied,
+        fallbackSet: denied,
+        // Z12：offline 无真值可读（浏览器也读不到宿主文件），动作拒绝 → UI 只读 + 提示走终端
+        switchGet: denied,
+        switchSet: denied,
+        dispose() {
+          subs.clear();
+        },
+      };
+    }
+
+    // 内置演示引擎（conn='demo'，默认关）：3 个进程起步；派发 / kill / dismiss / tail 均可交互（纯前端假数据）
+    function demoWire() {
       const seed = () => {
         const s = {
           generatedAt: '', workRoot: '(demo)', maxConcurrent: 1,
@@ -555,7 +698,8 @@ window.__ModuleLoader__.load({
         };
         const mk = (id, tag, state, model, body, extra) => ({
           id, tag, state, lock: state === 'running' ? 'repo+memory' : null,
-          spec: { kind: 'prompt', body, model, provider: 'plan', mode: 'edit', lock: 'both', timeoutMin: 15, memoryBench: false, tag },
+          // Z11：带 kind 同名字段（spec.prompt），与 core/真实 spec 形状一致（UI 详情区读 spec.body ?? spec[kind]）
+          spec: { kind: 'prompt', body, prompt: body, model, provider: 'plan', mode: 'edit', lock: 'both', timeoutMin: 15, memoryBench: false, tag },
           queuedAt: new Date().toISOString(), startedAt: state === 'queued' ? null : new Date().toISOString(),
           finishedAt: state === 'done' ? new Date().toISOString() : null,
           elapsedSec: state === 'running' ? 42 : state === 'done' ? 7.7 : null,
@@ -731,7 +875,7 @@ window.__ModuleLoader__.load({
           const tag = spec.tag ?? `demo-new-${seq}`;
           const nj = {
             id, tag, state: 'queued', lock: null,
-            spec: { kind, body: String(body).slice(0, 80), model: spec.model ?? null, provider: spec.provider ?? null, mode: spec.mode ?? 'edit', lock: spec.lock ?? 'both', timeoutMin: spec.timeoutMin ?? null, memoryBench: Boolean(spec.memoryBench), tag },
+            spec: { kind, body: String(body).slice(0, 80), [kind]: String(body).slice(0, 80), model: spec.model ?? null, provider: spec.provider ?? null, mode: spec.mode ?? 'edit', lock: spec.lock ?? 'both', timeoutMin: spec.timeoutMin ?? null, memoryBench: Boolean(spec.memoryBench), tag },
             queuedAt: new Date().toISOString(), startedAt: null, finishedAt: null,
             elapsedSec: null, exitCode: null, signal: null, sessionId: null, provider: null,
             model: spec.model ?? null,
@@ -772,6 +916,17 @@ window.__ModuleLoader__.load({
           }
           emit();
           return { ok: true, job: { ...j } };
+        },
+        /* Z11：dismiss = 从列表移除（demo 的 kill 对 paused 有效，这里主要保形状一致） */
+        async dismiss(id) {
+          const j = job(id);
+          if (!j || !['paused', 'done', 'failed', 'killed', 'interrupted'].includes(j.state)) {
+            return { ok: false, error: `dismiss 失败：job 不存在或仍在 ${j?.state ?? '?'}（demo）` };
+          }
+          snap.jobs = snap.jobs.filter((x) => x.id !== id);
+          snap.counts = { ...snap.counts, [j.state]: Math.max(0, (snap.counts[j.state] ?? 0) - 1) };
+          emit();
+          return { ok: true, id };
         },
         async tail(id, n = 30) {
           const j = job(id);
@@ -866,6 +1021,13 @@ window.__ModuleLoader__.load({
           demoChain = arr.map((x) => String(x).trim()).filter(Boolean);
           return { ok: true, enabled: demoChain.length > 0, chain: [...demoChain] };
         },
+        // Z12：demo 不读/写真值文件（假数据不伪装开关状态，更不许写真值）
+        async switchGet() {
+          return { ok: false, error: '演示模式无真值文件（demo）' };
+        },
+        async switchSet() {
+          return { ok: false, error: '演示模式不写总开关（demo）' };
+        },
         dispose() {
           subs.clear();
           if (timer != null) {
@@ -878,17 +1040,18 @@ window.__ModuleLoader__.load({
       };
     }
 
-    /* ─────────────── wire 工厂（数据源三选一；同源：wire.client.mjs createClientWire）───────────────
+    /* ─────────────── wire 工厂（数据源四选一；同源：wire.client.mjs createClientWire）───────────────
      * 优先级与判据：MOD_CTX 上探测到远端面（resolveRemote 有 snapshot()）→ remoteWire
-     * （conn='live'，真数据）；否则 window.__zcodeDispatchDemo 外部源（conn='ext'）；
-     * 再否则内置 demo 引擎（conn='demo'）。MOD_CTX 为 null（apply 未跑过，如纯组件桩
-     * 浅渲染）等同远端缺席，走降级链，绝不抛错。 */
+     * （conn='live'，真数据）；否则 legacyWire 选择器：__zcodeDispatchDemo='builtin' → demoWire
+     * （conn='demo'，默认关）；外部源对象 → extWire（conn='ext'）；都没有 → offlineWire
+     * （conn='offline'，诚实空态）。MOD_CTX 为 null（apply 未跑过，如纯组件桩浅渲染）
+     * 等同远端缺席，走降级链，绝不抛错。 */
     function createWire() {
       try {
         const remote = MOD_CTX ? resolveRemote(MOD_CTX) : null;
         if (remote) return remoteWire(MOD_CTX, remote);
       } catch (e) {
-        try { console.warn('[zcode-dispatch] 远端 wire 初始化失败，降级 demo：', e && e.message); } catch { /* ignore */ }
+        try { console.warn('[zcode-dispatch] 远端 wire 初始化失败，降级 ext/offline：', e && e.message); } catch { /* ignore */ }
       }
       try {
         return legacyWire();
@@ -908,6 +1071,7 @@ window.__ModuleLoader__.load({
       dispose() {},
       dispatch: async () => ({ ok: false, error: 'wire 不可用' }),
       kill: async () => ({ ok: false, error: 'wire 不可用' }),
+      dismiss: async () => ({ ok: false, error: 'wire 不可用' }),
       retry: async () => ({ ok: false, error: 'wire 不可用' }),
       tail: async () => [],
       channels: async () => ({ channels: [] }),
@@ -915,6 +1079,8 @@ window.__ModuleLoader__.load({
       channelSet: async () => ({ ok: false, error: 'wire 不可用' }),
       fallbackGet: async () => ({}),
       fallbackSet: async () => ({ ok: false, error: 'wire 不可用' }),
+      switchGet: async () => ({}),
+      switchSet: async () => ({ ok: false, error: 'wire 不可用' }),
     };
 
     /* ─────────────── 组件 ─────────────── */
@@ -968,9 +1134,10 @@ window.__ModuleLoader__.load({
       }, [wire]);
       return {
         conn: state.conn, snapshot: state.snapshot, quota: state.quota, planQuota: state.planQuota,
-        dispatch: wire.dispatch, kill: wire.kill, tail: wire.tail,
+        dispatch: wire.dispatch, kill: wire.kill, dismiss: wire.dismiss, tail: wire.tail,
         channels: wire.channels, channelGet: wire.channelGet, channelSet: wire.channelSet,
         retry: wire.retry, fallbackGet: wire.fallbackGet, fallbackSet: wire.fallbackSet,
+        switchGet: wire.switchGet, switchSet: wire.switchSet,
       };
     }
 
@@ -995,8 +1162,63 @@ window.__ModuleLoader__.load({
         h('path', { d: 'M3 3 L9 9 M9 3 L3 9', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round' }));
     }
 
-    function Section({ title, children }) {
-      return h('div', { className: 'zcd-sec' }, h('div', { className: 'zcd-sec-title' }, title), children);
+    /* Z12：派发总开关徽标（标题栏）。sw 来自快照 snapshot.switch（host 读真值文件）；
+     * live=可点按钮（点击 switchSet 翻转，成功后 1s 轮询带回新快照）；
+     * 非 live=只读（浏览器读不到宿主文件，诚实提示走终端 CLI），状态未知时如实显示「未知」。 */
+    function SwitchBadge({ sw, live, onToggle }) {
+      const [busy, setBusy] = useState(false);
+      const enabled = sw ? sw.enabled !== false : null; // null=状态未知（无快照/数据源不带 switch）
+      const label = enabled === null ? t('switchUnknown') : enabled ? t('switchOn') : t('switchOff');
+      const dotStyle = enabled === null ? undefined : { background: enabled ? T.stDone : T.danger };
+      if (!live) {
+        return h('span', { className: 'zcd-conn zcd-switch', title: t('switchHintOffline') },
+          h('span', { className: 'zcd-dot', style: dotStyle }), label);
+      }
+      const flip = () => {
+        if (busy || enabled === null) return; // 状态未知时不猜方向，等下一拍快照
+        setBusy(true);
+        Promise.resolve(onToggle({ enabled: !enabled })).finally(() => setBusy(false));
+      };
+      return h('button', {
+        className: 'zcd-conn zcd-switch', title: t('switchTitle'), disabled: busy,
+        onPointerDown: (e) => e.stopPropagation(), onClick: flip,
+      }, h('span', { className: 'zcd-dot', style: dotStyle }), label);
+    }
+
+    /* 分区（Z11 可折叠）：collapsible 时整条标题栏可点击切换（倒三角指示），折叠态存
+     * localStorage['zcode-dispatch:section:<id>']。默认开闭表见 SEC_DEFAULT_OPEN。
+     * Z9 教训回扣：本标题栏不挂拖拽手势、head 内也不放 button——若将来加手势/按钮，
+     * 必须先 isInteractive()（closest）守卫并在按钮 onPointerDown 停冒泡，否则点击会被吃掉。 */
+    function Section({ id, title, collapsible, defaultOpen, children }) {
+      if (!collapsible) {
+        return h('div', { className: 'zcd-sec' }, h('div', { className: 'zcd-sec-title' }, title), children);
+      }
+      const [open, setOpen] = useState(() => {
+        const saved = loadJson(secKey(id), undefined);
+        return typeof saved === 'boolean' ? saved : (defaultOpen ?? SEC_DEFAULT_OPEN[id] ?? true);
+      });
+      const toggle = () => setOpen((prev) => {
+        const nv = !prev;
+        saveJson(secKey(id), nv);
+        return nv;
+      });
+      return h('div', { className: 'zcd-sec' },
+        h('div', {
+          className: 'zcd-sec-head', role: 'button', tabIndex: 0, 'aria-expanded': open,
+          title, onClick: toggle,
+          onKeyDown: (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              toggle();
+            }
+          },
+        },
+          h('span', { className: 'zcd-sec-title' }, title),
+          h('span', { className: 'zcd-spring' }),
+          h('span', { className: 'zcd-sec-caret', 'aria-hidden': true }, h(IconChevron, { up: open })),
+        ),
+        open ? children : null,
+      );
     }
 
     /* 通道分区：切换器（provider+model，不可用项置灰带原因）+ 自动降级链开关（二次确认）。 */
@@ -1096,7 +1318,7 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function DispatchBar({ snapshot, lastJobId, feedback, busy, channel, onSubmit }) {
+    function DispatchBar({ snapshot, lastJobId, feedback, busy, channel, swBlocked, onSubmit }) {
       const [kind, setKind] = useState('prompt');
       const [content, setContent] = useState('');
       const [mode, setMode] = useState('edit');
@@ -1144,13 +1366,14 @@ window.__ModuleLoader__.load({
             h('input', { type: 'checkbox', checked: bench, onChange: (e) => setBench(e.target.checked) }),
             h('span', { className: 'zcd-label' }, t('bench'))),
           h('span', { className: 'zcd-spring' }),
-          h('button', { className: 'zcd-btn', disabled: busy || active, onClick: submit }, label),
+          h('button', { className: 'zcd-btn', disabled: busy || active || swBlocked, title: swBlocked ? t('switchOffBlocked') : undefined, onClick: submit }, label),
         ),
+        swBlocked ? h('div', { className: 'zcd-note', role: 'alert' }, t('switchOffBlocked')) : null,
         feedback ? h('div', { className: `zcd-feedback${feedback.kind === 'err' ? ' zcd-err' : ''}`, role: 'status' }, feedback.text) : null,
       );
     }
 
-    function JobRow({ job, onKill, onTail, onRetry, channels, refreshKey }) {
+    function JobRow({ job, onKill, onDismiss, onTail, onRetry, channels, refreshKey }) {
       const [open, setOpen] = useState(false);
       const [tail, setTail] = useState(undefined); // undefined=未取 null=读取中 {...}=结果
       const [handoffOpen, setHandoffOpen] = useState(false); // 换通道交接重跑的选择器
@@ -1188,8 +1411,41 @@ window.__ModuleLoader__.load({
         });
         setHandoffOpen(false);
       };
+      /* Z11「关闭」：优先 kill；core 的 kill 对 paused 是空操作（子进程已退出、返回 ok 但状态
+       * 停在 paused，且返回值里带最新 job），故 ok 但 job.state 仍 paused、或直接失败时，
+       * 退回 dismiss（wire 层动作：把 job 从列表移除并落盘，不改 core 语义）。 */
+      const doClose = async () => {
+        setRetryFb(t('sending'));
+        let r = null;
+        try {
+          r = await Promise.resolve(onKill(job.id));
+        } catch { /* wire 已兜底信封，这里只防裸 reject */ }
+        if (r && r.ok && (!r.job || r.job.state !== 'paused')) {
+          setRetryFb(null); // kill 生效（live→killing/killed、demo→killed），快照随后刷新
+          return;
+        }
+        try {
+          const d = await Promise.resolve(onDismiss(job.id));
+          setRetryFb(d && d.ok ? null : `${t('errPrefix')}${(d && d.error) || 'unknown'}`);
+        } catch (e) {
+          setRetryFb(`${t('errPrefix')}${(e && e.message) ?? e}`);
+        }
+      };
+      const spec = job.spec ?? {};
+      const kindField = spec.kind === 'task' ? 'task' : spec.kind === 'target' ? 'target' : 'prompt';
+      const KIND_KEY = { prompt: 'kindPrompt', task: 'kindTask', target: 'kindTarget' };
+      const detailBody = spec.body ?? spec[kindField]; // live=slimJob 的 body；demo=body+kind 同名字段
+      const kvRow = (k, v) => (v == null || v === '' ? null : h('div', { className: 'zcd-kv' },
+        h('span', { className: 'zcd-kv-k' }, k), h('span', { className: 'zcd-kv-v' }, String(v))));
       return h('div', { className: 'zcd-job' },
-        h('div', { className: 'zcd-job-head' },
+        h('div', {
+          className: 'zcd-job-head',
+          onClick: (e) => {
+            // 行头点击切换展开；按钮/输入等交互子元素不切换（Z9 closest 守卫，防双重切换）
+            if (isInteractive(e.target)) return;
+            setOpen(!open);
+          },
+        },
           h(StatusDot, { state: job.state }),
           h('span', { className: 'zcd-job-tag', title: job.id }, job.tag ?? shortId(job.id)),
           h('span', { className: 'zcd-badge' }, job.model ?? '—'),
@@ -1211,6 +1467,7 @@ window.__ModuleLoader__.load({
             title: job.sessionId ? `${t('resumeSame')}（--resume）` : t('noSession'),
           }, t('resumeSame')),
           h('button', { className: 'zcd-btn2', onClick: () => setHandoffOpen(!handoffOpen), 'aria-expanded': handoffOpen }, t('retryHandoff')),
+          h('button', { className: 'zcd-btn2', onClick: doClose, 'aria-label': `${t('closeJob')} ${job.id}` }, t('closeJob')),
           retryFb ? h('span', { className: 'zcd-note', role: 'status' }, retryFb) : null,
         ) : null,
         paused && handoffOpen ? h('div', { className: 'zcd-row', style: { marginTop: 4 } },
@@ -1229,6 +1486,20 @@ window.__ModuleLoader__.load({
           h('span', { className: 'zcd-note', role: 'note' }, t('handoffConfirm')),
         ) : null,
         open ? h('div', { className: 'zcd-tailwrap' },
+          // Z11：派发要素详情——点行可区分「这个进程派发了什么」
+          h('div', { className: 'zcd-detail' },
+            kvRow(t('kind'), t(KIND_KEY[spec.kind] ?? 'kind')),
+            detailBody != null && detailBody !== '' ? h('div', { className: 'zcd-mono' }, clampText(detailBody, 1200)) : null,
+            kvRow(t('provider'), spec.provider ?? job.provider),
+            kvRow(t('model'), spec.model ?? job.model),
+            kvRow(t('mode'), spec.mode),
+            kvRow(t('cwd'), spec.cwd),
+            spec.timeoutMin != null ? kvRow(t('timeout'), String(spec.timeoutMin)) : null,
+            kvRow(t('createdAt'), job.queuedAt ? fmtTime(job.queuedAt) : null),
+            kvRow(t('sessionId'), job.sessionId),
+            job.pauseReason ? kvRow(t('paused'), pauseLabel(job.pauseReason)) : null,
+          ),
+          h('div', { className: 'zcd-note', style: { marginTop: 4 } }, t('tail')),
           h('div', { className: 'zcd-mono' },
             tail === null ? t('tailLoading')
               : tail === undefined ? t('tailEmpty')
@@ -1237,11 +1508,11 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function JobList({ snapshot, onKill, onTail, onRetry, channels, refreshKey }) {
+    function JobList({ snapshot, onKill, onDismiss, onTail, onRetry, channels, refreshKey, offline }) {
       const jobs = snapshot?.jobs ?? [];
-      if (jobs.length === 0) return h('div', { className: 'zcd-empty' }, t('noJobs'));
+      if (jobs.length === 0) return h('div', { className: 'zcd-empty' }, offline ? t('emptyOffline') : t('noJobs'));
       return h('div', { className: 'zcd-jobs' },
-        jobs.map((j) => h(JobRow, { key: j.id, job: j, onKill, onTail, onRetry, channels, refreshKey })));
+        jobs.map((j) => h(JobRow, { key: j.id, job: j, onKill, onDismiss, onTail, onRetry, channels, refreshKey })));
     }
 
     function QuotaCards({ quota, planQuota }) {
@@ -1293,8 +1564,9 @@ window.__ModuleLoader__.load({
       const [feedback, setFeedback] = useState(null);
       const [busy, setBusy] = useState(false);
       const {
-        conn, snapshot, quota, planQuota, dispatch, kill, tail,
+        conn, snapshot, quota, planQuota, dispatch, kill, dismiss, tail,
         channels, channelGet, channelSet, retry, fallbackGet, fallbackSet,
+        switchSet,
       } = useWire();
       const rootRef = useRef(null);
       // Z6：通道清单 / 默认通道 / 降级链（挂载时拉一次；切换即时回显，wire 返回后用权威值校正）
@@ -1329,6 +1601,10 @@ window.__ModuleLoader__.load({
           if (r && r.ok) setFallbackState({ enabled: !!r.enabled, chain: r.chain ?? [] });
         });
       }, [fallbackSet]);
+      // Z12：派发总开关切换（成功 → 1s 轮询带回新快照、徽标自动翻转；失败 → 错误进派发区反馈行）
+      const onSwitchToggle = useCallback((next) => Promise.resolve(switchSet(next)).then((r) => {
+        if (!r || !r.ok) setFeedback({ kind: 'err', text: `${t('errPrefix')}${(r && r.error) || 'unknown'}` });
+      }), [switchSet]);
 
       const onSubmit = useCallback(async (spec) => {
         if (!spec) {
@@ -1355,9 +1631,10 @@ window.__ModuleLoader__.load({
       const onKill = useCallback((id) => {
         Promise.resolve(kill(id)).catch(() => { /* wire 已兜底返回 {ok:false}，这里只防未捕获 rejection */ });
       }, [kill]);
+      const onDismiss = useCallback((id) => Promise.resolve(dismiss(id)), [dismiss]);
 
       // 交互元素上按下不启动拖动（否则标题栏的 setPointerCapture 会吃掉子按钮的 click）
-      const isInteractive = (el) => !!(el && typeof el.closest === 'function' && el.closest('button,input,select,textarea,a,[role="button"]'));
+      // （isInteractive 已上移模块级：与 JobRow 行头点击守卫共用）
       const startDrag = useCallback((e) => {
         if (e.button !== 0) return;
         if (isInteractive(e.target)) return;
@@ -1438,7 +1715,9 @@ window.__ModuleLoader__.load({
       }
 
       const runningNow = ((snapshot && snapshot.counts && snapshot.counts.running) || 0) > 0;
-      const connLabel = conn === 'demo' ? t('connDemo') : conn === 'ext' ? t('connExt') : conn === 'live' ? t('connLive') : t('connConnecting');
+      const connLabel = conn === 'demo' ? t('connDemo') : conn === 'ext' ? t('connExt') : conn === 'live' ? t('connLive') : conn === 'offline' ? t('connOffline') : t('connConnecting');
+      // Z12：开关状态只认 live 快照携带的 snapshot.switch（宿主读真值文件）；其他数据源如实显示「未知/只读」
+      const dispatchSwitch = snapshot && snapshot.switch ? snapshot.switch : null;
 
       return h('div', { ref: rootRef, className: 'zcd-root', style: rootStyle, role: 'region', 'aria-label': t('title') },
         h('style', null, CSS),
@@ -1446,6 +1725,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'zcd-titlebar', onPointerDown: startDrag },
             h(StatusDot, { state: runningNow ? 'running' : 'idle' }),
             h('span', { className: 'zcd-title' }, t('title')),
+            h(SwitchBadge, { sw: dispatchSwitch, live: conn === 'live', onToggle: onSwitchToggle }),
             h('span', { className: 'zcd-conn' }, connLabel),
             h('button', {
               className: 'zcd-iconbtn', title: t('collapse'), 'aria-label': t('collapse'), 'aria-expanded': !collapsed,
@@ -1459,15 +1739,15 @@ window.__ModuleLoader__.load({
             h('button', { className: 'zcd-iconbtn', title: t('minimize'), 'aria-label': t('minimize'), onPointerDown: (e) => e.stopPropagation(), onClick: () => setMinimized(true) }, h(IconMinus)),
           ),
           collapsed ? null : h('div', { className: 'zcd-body' },
-            h(Section, { title: t('secChannel') },
+            h(Section, { id: SEC.channel, title: t('secChannel'), collapsible: true },
               h(ChannelSection, { channelsInfo, channel, fallback, onSwitch, onFallbackSet })),
-            h(Section, { title: t('secDispatch') },
-              h(DispatchBar, { snapshot, lastJobId, feedback, busy, channel, onSubmit })),
-            h(Section, { title: t('secJobs') },
-              h(JobList, { snapshot, onKill, onTail: tail, onRetry, channels: channelsInfo.channels, refreshKey: (snapshot && snapshot.generatedAt) || '' })),
-            h(Section, { title: t('secQuota') },
+            h(Section, { id: SEC.dispatch, title: t('secDispatch'), collapsible: true },
+              h(DispatchBar, { snapshot, lastJobId, feedback, busy, channel, swBlocked: dispatchSwitch != null && dispatchSwitch.enabled === false, onSubmit })),
+            h(Section, { id: SEC.jobs, title: t('secJobs'), collapsible: true },
+              h(JobList, { snapshot, onKill, onDismiss, onTail: tail, onRetry, channels: channelsInfo.channels, refreshKey: (snapshot && snapshot.generatedAt) || '', offline: conn === 'offline' })),
+            h(Section, { id: SEC.quota, title: t('secQuota'), collapsible: true },
               h(QuotaCards, { quota, planQuota })),
-            h(Section, { title: t('secLocks') },
+            h(Section, { id: SEC.locks, title: t('secLocks'), collapsible: true },
               h(LockStatus, { snapshot })),
           ),
         ),

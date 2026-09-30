@@ -213,6 +213,8 @@ section('6. index.js Host 半边端到端（Z1 假 runner）');
     runnerPath: '(由 ZCD_FAKE_RUNNER 注入)',
     ledgerPath: join(tmp, 'ledger.jsonl'),
     workRoot: join(tmp, 'work'),
+    // Z12：开关真值文件指向临时路径（缺失=开启），e2e 不依赖真实开关状态（Z5-1 纪律：探针不读真值）
+    switchPath: join(tmp, 'switch.json'),
   };
   process.env.ZCD_FAKE_RUNNER = join(PKG, 'test', 'fixtures', 'fake-runner.mjs');
   process.env.FAKE_SLEEP_MS = '900';

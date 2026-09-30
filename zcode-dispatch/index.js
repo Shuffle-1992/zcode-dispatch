@@ -15,10 +15,18 @@
  *    registerZcodeDispatchTool() 按候选顺序防御式尝试；工具本体（动作实现）不受影响。
  */
 import { createDispatcher } from './core/dispatch-core.mjs';
-import { attachHostWire, createActionHandler } from './wire.host.mjs';
+import { DEFAULT_SWITCH_PATH, attachHostWire, createActionHandler, readSwitch, switchFileOf } from './wire.host.mjs';
 
 /** 插件 config 默认值（与 cordis.patch.yml 的 config 字段一一对应，均带默认值）。 */
-const DEFAULTS = { demo: false, maxConcurrent: 1, runnerPath: '', ledgerPath: '', workRoot: '' };
+const DEFAULTS = {
+  demo: false,
+  maxConcurrent: 1,
+  runnerPath: '',
+  ledgerPath: '',
+  workRoot: '',
+  // Z12：派发总开关真值文件（契约 宿主项目 collab/PROTOCOL.md §7）；缺省即契约真值
+  switchPath: DEFAULT_SWITCH_PATH,
+};
 
 /**
  * 无依赖降级：手写 Standard Schema v1（cordis 只认 Config['~standard'].validate）。
@@ -34,7 +42,7 @@ function fallbackConfig() {
         const cfg = { ...DEFAULTS, ...(raw && typeof raw === 'object' ? raw : {}) };
         cfg.demo = !!cfg.demo;
         cfg.maxConcurrent = Math.min(8, Math.max(1, Number(cfg.maxConcurrent) || 1));
-        for (const k of ['runnerPath', 'ledgerPath', 'workRoot']) cfg[k] = typeof cfg[k] === 'string' ? cfg[k] : '';
+        for (const k of ['runnerPath', 'ledgerPath', 'workRoot', 'switchPath']) cfg[k] = typeof cfg[k] === 'string' ? cfg[k] : '';
         return { value: cfg };
       },
     },
@@ -51,6 +59,7 @@ async function loadConfig() {
       runnerPath: z.string().default('').description('runner 脚本绝对路径（宿主仓库 scripts/collab/zcode-run.mjs，只读使用）；留空则不创建 dispatcher'),
       ledgerPath: z.string().default('').description('台账 zcode-runs.jsonl 绝对路径；留空则跳过台账回读与用量聚合'),
       workRoot: z.string().default('').description('派发器工作根目录（locks/、state/jobs.json、logs/ 落在这里）；留空则不创建 dispatcher'),
+      switchPath: z.string().default(DEFAULT_SWITCH_PATH).description('ZCode 派发总开关真值文件绝对路径（collab/zcode-dispatch.switch.json，契约见 宿主项目 PROTOCOL.md §7）；文件缺失/损坏视为开启'),
     });
   } catch {
     return fallbackConfig();
@@ -60,13 +69,17 @@ async function loadConfig() {
 /** 插件 config schema（Standard Schema v1；cordis resolveConfig 经 Config['~standard'].validate 取值）。 */
 export const Config = await loadConfig();
 
-const ACTIONS = ['dispatch', 'list', 'kill', 'tail', 'quota', 'channels', 'channel', 'retry', 'fallback'];
+/* Z12：ACTIONS 补 dismiss（Z11 漏列的既有动作）并新增 status / switch（派发总开关）。 */
+const ACTIONS = ['dispatch', 'list', 'kill', 'dismiss', 'tail', 'quota', 'status', 'switch', 'channels', 'channel', 'retry', 'fallback'];
 
 /** 工具参数 schema（JSON Schema；工具与 UI 共用 createActionHandler 的入参形状）。 */
 const TOOL_PARAMETERS = {
   type: 'object',
   properties: {
     action: { type: 'string', enum: ACTIONS, description: '操作类型' },
+    enabled: { type: 'boolean', description: 'switch：目标状态（true=开启派发 / false=关闭派发，写入真值文件）' },
+    by: { type: 'string', description: 'switch：操作者标识（写入 updatedAt/updatedBy，缺省 ui/tool）' },
+    note: { type: 'string', description: 'switch：切换原因备注（写入 note）' },
     kind: { type: 'string', enum: ['prompt', 'task', 'target'], description: 'dispatch：派发类型' },
     prompt: { type: 'string', description: 'dispatch(kind=prompt)：发给 ZCode 的提示词' },
     task: { type: 'string', description: 'dispatch(kind=task)：任务文件绝对路径' },
@@ -88,29 +101,41 @@ const TOOL_PARAMETERS = {
   required: ['action'],
 };
 
-const TOOL_DESCRIPTION = [
-  '操作「ZCode 派发台」：派发并监视 ZCode 无头进程（node zcode-run.mjs），与页面右下角悬浮窗是同一套操作（一操作两调用方）。',
-  '- action=dispatch：派发一个 run。kind=prompt|task|target 必须带对应内容字段 prompt|task|target（task 为任务文件绝对路径）。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、timeoutMin（正数分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|memory|both，默认 both）、cwd、resume。',
+const TOOL_DESCRIPTION_BODY = [
+  '- action=dispatch：派发一个 run。kind=prompt|task|target 必须带对应内容字段 prompt|task|target（task 为任务文件绝对路径）。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、timeoutMin（正数分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|memory|both，默认 both）、cwd、resume。总开关关闭时被拒绝（返回 ok:false + switch 状态），不创建 job。',
   '- action=list：列出全部 run（running/queued 优先，含状态/锁/用量/上下文占用；不含 tail 内容）。',
   '- action=kill：按 id 终止。queued 直接移除；running 发终止信号后落 killed。',
+  '- action=dismiss：把 paused/终态 job 从列表移除（queued/running 必须先 kill）。',
   '- action=tail：按 id 取最近输出，参数 n 默认 30（上限 200）。',
   '- action=quota：台账用量聚合（5 小时滚动 / 本周 / 今日）+ 套餐剩余额度适配器（当前恒 available:false，待接 app-server RPC）。',
+  '- action=status：读 ZCode 派发总开关状态（返回 switch={enabled, updatedAt, updatedBy, note, source}；文件缺失/损坏=开启）。',
+  '- action=switch：切换派发总开关（enabled 必填布尔；by=操作者、note=原因可选）。原子写真值文件（与 CLI zcode-switch.mjs 同一格式）；关闭后所有派发入口（zcode-run.mjs / 本工具 dispatch|retry / 面板 / bridge.mjs）一律拒绝。任何会话都可通过 status 查到最新状态。',
   '- action=channels：通道清单（含 enabled/原因/端点/模型；解析失败返回空数组+warnings，不猜）。',
   '- action=channel：读默认通道（无参）或设置（provider 必带，model 可选）——之后未显式指定通道的 dispatch 都用它。',
-  '- action=retry：同通道且有 sessionId → --resume 续跑（不要传 retryModel：--resume 带 --model 必失败）；换通道（或无 sessionId）→ 交接重跑（新会话+交接提示词），新 job 带 parentJobId/attempts。可用 provider / retryModel（或 model）。',
+  '- action=retry：同通道且有 sessionId → --resume 续跑（不要传 retryModel：--resume 带 --model 必失败）；换通道（或无 sessionId）→ 交接重跑（新会话+交接提示词），新 job 带 parentJobId/attempts。可用 provider / retryModel（或 model）。总开关关闭时同样被拒绝。',
   '- action=fallback：读降级链（无参）或设置 chain（通道 id 数组，空数组=关闭）。开启后额度耗尽/未开通/需签名会自动交接重跑到链上下一个可用通道（会消耗下游通道额度）。',
   '限制：单写者互斥（repo/memory 文件锁 + FIFO 队列，同锁串行，冲突只会排队不会报错）；memoryBench 仅 kind=prompt；timeoutMin 必须 >0；本工具不授予或确认任何权限。',
 ].join('\n');
+
+/**
+ * 工具描述：首行动态携带开关当前状态（注册时按 readSwitch() 生成一次；
+ * 运行中状态以 action=status 的实时返回为准——其他会话开工先 status 一次即知）。
+ */
+function buildToolDescription(switchFile) {
+  const sw = readSwitch(switchFile);
+  const state = sw.enabled ? '已开启' : '已关闭';
+  return `操作「ZCode 派发台」：把任务派发给 ZCode 子代理（当前：${state}）。action=status 查开关状态；action=switch 切换 enabled=true|false；action=dispatch 派发（关闭时会被拒绝）。与页面右下角悬浮窗是同一套操作（一操作两调用方）。\n${TOOL_DESCRIPTION_BODY}`;
+}
 
 /**
  * 防御式注册 agent 工具：注册 API 未经 inspection 确认，按候选顺序尝试，
  * 全部失败则打日志说明 creator 该怎么修（动作实现不受影响）。
  * @returns {(() => void)|null} 注销函数（若注册成功），否则 null
  */
-function registerZcodeDispatchTool(ctx, log, handleAction) {
+function registerZcodeDispatchTool(ctx, log, handleAction, switchFile) {
   const definition = {
     name: 'zcode_dispatch',
-    description: TOOL_DESCRIPTION,
+    description: buildToolDescription(switchFile),
     parameters: TOOL_PARAMETERS,
     async execute(args) {
       const params = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
@@ -183,7 +208,7 @@ export function apply(ctx, config = {}) {
 
   const handleAction = createActionHandler(dispatcher, config);
   const wire = attachHostWire(ctx, dispatcher, config);
-  const disposeTool = registerZcodeDispatchTool(ctx, log, handleAction);
+  const disposeTool = registerZcodeDispatchTool(ctx, log, handleAction, switchFileOf(config));
 
   const disposeAll = () => {
     try {

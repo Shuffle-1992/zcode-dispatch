@@ -22,9 +22,35 @@ for (const d of [INBOX, OUTBOX, ARCHIVE]) mkdirSync(d, { recursive: true });
 const isTask = (f) => f.endsWith('.md') && !f.startsWith('.') && !f.startsWith('README');
 const list = (dir) => (existsSync(dir) ? readdirSync(dir).filter(isTask).sort() : []);
 
+/* ---- ZCode 派发总开关（跨会话唯一真值来源）----
+ * 契约见 宿主仓库 collab/PROTOCOL.md §ZCode 派发总开关。
+ * 默认读该项目内的开关文件；别的项目用 ZCD_SWITCH_FILE 覆盖。
+ * 语义：enabled:false → 拒绝投放；文件缺失/损坏 → 视为开启（不误锁）。 */
+const SWITCH_FILE = process.env.ZCD_SWITCH_FILE || '<HOST_REPO>\\collab\\zcode-dispatch.switch.json';
+function readDispatchSwitch() {
+  try {
+    if (!existsSync(SWITCH_FILE)) return { enabled: true, source: 'default(无文件=开启)' };
+    const raw = JSON.parse(readFileSync(SWITCH_FILE, 'utf8'));
+    return { enabled: raw.enabled !== false, updatedAt: raw.updatedAt, updatedBy: raw.updatedBy, note: raw.note };
+  } catch (e) {
+    return { enabled: true, source: `default(读取失败: ${e.message})` };
+  }
+}
+function assertSwitchOn() {
+  const sw = readDispatchSwitch();
+  if (sw.enabled) return;
+  console.error('[bridge] ⛔ ZCode 派发总开关为「关闭」，拒绝投放任务（没有任务会被客户端执行）。');
+  console.error(`[bridge] 开关文件: ${SWITCH_FILE}`);
+  if (sw.updatedBy || sw.updatedAt) console.error(`[bridge] 最后修改: ${sw.updatedBy ?? '?'} @ ${sw.updatedAt ?? '?'}`);
+  if (sw.note) console.error(`[bridge] 备注: ${sw.note}`);
+  console.error('[bridge] 恢复: node "<HOST_REPO>\\scripts\\collab\\zcode-switch.mjs" on');
+  process.exit(3);
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 
 if (cmd === 'submit') {
+  assertSwitchOn();
   const src = rest.find((a) => !a.startsWith('--'));
   if (!src) {
     console.error('用法: node tools/bridge.mjs submit <任务包.md> [--name <名字>]');

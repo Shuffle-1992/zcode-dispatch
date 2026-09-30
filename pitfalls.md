@@ -2,6 +2,20 @@
 
 > 按全局规则维护：遇到踩坑问题登记于此，避免重复踩坑。新条目置顶。
 
+## 2026-09-30 Z12（派发总开关插件侧接入）
+
+1. **`new URL('.', import.meta.url).pathname` 在 Windows 不解码 `%20`**：路径含空格时得到 `F:\My%20Code\…`，再喂给 `pathToFileURL` 会二次编码（`%2520`）→ ERR_MODULE_NOT_FOUND。Z6-4 只记了正向（path → import 要用 `pathToFileURL(p).href`），反向（URL → path）必须用 `fileURLToPath(import.meta.url)`，别手搓 `.pathname` 替换。
+2. **给既有动作加门禁 = 给所有调用方（含验收探针）引入运行期真值依赖**：Z12 给 `dispatch` 加开关门禁后，`test/z2-verify.mjs` 的 e2e dispatch 隐式变成「真值文件为开才能过」——探针从密封变活体依赖，且静态跑探针时毫无征兆。修法：探针 cfg 显式 `switchPath` 指向临时文件（缺失=开启，恢复密封）。与 Z5-1「行为变更必须同步本地验收探针」同源：同步的不止断言，还有**探针的输入依赖面**。
+
+## 2026-09-30 Z11（UI 第二轮：空态/折叠/关闭/行展开）
+
+1. **core 的 `kill()` 对 `paused` 是「返回 true 的空操作」**：paused 时子进程已退出（close 处理器跑完即 `children.delete`），`kill()` 走默认分支只 `killRequested.add` + emit——返回 `{ok:true}` 但状态永停 paused，且 `killRequested` 条目永久残留。UI 判据：kill 返回的 `job.state` 仍是 `'paused'` 即视为无效，退回 dismiss（wire 层 `createActionHandler` 新动作，`state/dismissed.json` 落盘 + snapshot/list 过滤；core 零改动）。
+2. **本地 React 桩测试三坑**（test/z11-ui.test.mjs 已删，复现成本高，记下）：
+   ① `useState` 的 setter 闭包必须捕获**自己组件的 hooks 数组**——若引用共享可变变量，写入会落到「最后渲染的组件」，表现为状态永不更新/串台；
+   ② `createElement` 的 children 要同时放进 `props.children`（PanelBoundary 的 `this.props.children` 依赖它）且遍历器沿 render 产物走——沿 raw `props.children` 下降会漏掉所有函数组件内部；
+   ③ effect 桩要「每次渲染重跑、先执行上次 cleanup」——JobRow 的 tail effect 依赖 `open` 变化重跑，只跑一次会让展开区永远「读取中/无输出」。
+3. **test/z2-verify.mjs §7 是既有红、非 Z11 引入**：其 React 桩没有 `Component`，`PanelBoundary extends React.Component`（Z9 提交 e4cdb4c 引入）在 factory 即抛 `Class extends value undefined`。已用 `git stash` A/B 实证改动前后同红。该脚本不在任何现行验收门禁里（现行=tools/verify-plugin.mjs 20/20）；后续要么给它补 `Component` 桩、要么把 §7 断言改为跳过渲染冒烟。
+
 ## 2026-09-30 Z10（Config 换 Standard Schema）
 
 1. **cordis 的 Config 只认 Standard Schema v1，裸 JSON Schema 直接炸激活**：`resolveConfig` 取 `runtime.Config['~standard'].validate`（cordis lib/index.js:958），draft-07 JSON Schema 没有 `~standard` → `TypeError: Cannot read properties of undefined (reading 'validate')`。宿主随包出货的 schemastery 就是 Standard Schema（`Schema.prototype['~standard']` getter，vendor='schemastery'），官方插件一律 `import z from '@deepseek-ai/schemastery'` + `z.object({...})`。降级兜底写手写 `{'~standard':{version:1,vendor,validate}}`，validate 只归一不抛 issues——激活永不被配置打崩。

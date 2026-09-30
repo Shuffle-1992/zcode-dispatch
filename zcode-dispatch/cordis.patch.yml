@@ -7,3 +7,4 @@
         runnerPath: '<HOST_REPO>\scripts\collab\zcode-run.mjs'
         ledgerPath: '<HOST_REPO>\collab\logs\zcode-runs.jsonl'
         workRoot: 'F:\My Code\dsh-plugins\zcode-dispatch\.data'
+        switchPath: '<HOST_REPO>\collab\zcode-dispatch.switch.json'

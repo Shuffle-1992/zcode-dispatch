@@ -9,6 +9,7 @@
     "connDemo": "demo data",
     "connExt": "external",
     "connLive": "live",
+    "connOffline": "offline",
     "collapse": "Collapse / Expand",
     "minimize": "Minimize to pill",
     "restore": "Restore console",
@@ -45,6 +46,11 @@
     "tail": "Tail",
     "tailLoading": "Loading…",
     "tailEmpty": "(no output)",
+    "closeJob": "Close",
+    "cwd": "Workdir",
+    "createdAt": "Created",
+    "sessionId": "Session",
+    "emptyOffline": "Host not connected: no process data (live data needs the Remote wiring)",
     "usage5h": "5h window",
     "usageWeek": "This week",
     "usageToday": "Today",
@@ -88,6 +94,12 @@
     "fallbackOffBtn": "Disable fallback",
     "fallbackConfirm2": "Click again to confirm: downstream channel quota will be consumed",
     "fallbackSaved": "Fallback chain updated: ",
-    "fallbackEmptyErr": "At least one channel id is required"
+    "fallbackEmptyErr": "At least one channel id is required",
+    "switchOn": "Dispatch: on",
+    "switchOff": "Dispatch: off",
+    "switchUnknown": "Dispatch: ?",
+    "switchTitle": "ZCode dispatch master switch: click to toggle (writes collab/zcode-dispatch.switch.json, effective for all sessions)",
+    "switchHintOffline": "Host not connected: run zcode-switch.mjs in a terminal to toggle",
+    "switchOffBlocked": "Dispatch master switch is off: all dispatch entries are rejected; re-enable via the title-bar switch or zcode-switch.mjs"
   }
 }

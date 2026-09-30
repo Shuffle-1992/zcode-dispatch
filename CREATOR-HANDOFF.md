@@ -75,12 +75,24 @@
 → 若将来又"看不见面板"，现在页面会给出可见原因；把那段文字带回即可定位。
 
 ### P1（本单核心）：让面板显示**真数据**（徽标从「演示数据」变「已连接」）
-宿主半边**已激活**（`zcode-dispatch\.data\{locks,logs,state}` 已创建；无 `jobs.json` 是因为还没有 job 落盘）。
-缺的是**客户端能否拿到 `ctx.remote.zcodeDispatch`**。
-- `cordis_inspect_query` → **Service**：查 `zcodeDispatch`（`wire.host.mjs` 里 `ctx.provide(FACE_NAME, face)`，`FACE_NAME='zcodeDispatch'`）是否真的在服务表、由哪个 fiber 提供；
-- 若不合法/不可见：按官方形态改写 —— `refs/dsh-typert/protocol/README.zh.md`（`TypertRemoteService` + `Remote` 装饰器 / `bindTypertRemote()`；实现见 `protocol/lib/index.js:146-157`、`:248-268`），对照 `refs/dsh-typert/plugin-manager/lib/index.js`（官方 host 半边完整实现）；
+
+> ⛔ **写者占用提醒（2026-09-30 15:0x）**：标准模式会话正在跑 Z12（插件接总开关：`index.js` / `wire.host.mjs` / `wire.client.mjs` / `client.js` / `locale`）与随后的 Z13（`index.js` 工具注册）。
+> **在此之前请只做「只读侦查」并把结论写进 `tasks/CREATOR-RECON.md`；不要修改上述文件**，否则两方同写会互相覆盖。等 DSH 通知「Z12/Z13 已放行」后再进入实施阶段。
+
+**阶段 A（现在就能做，只读）**：
+1. `cordis_inspect_query` → **Slots**：导出本版本槽位表（尤其 `shell.overlay` 的 kind/scope/children）与**当前已注册项清单**；确认 `zcode-dispatch.console` 是否在其中。
+2. `cordis_inspect_query` → **Service**：导出服务表，查 `zcodeDispatch` 是否由本插件 fiber 提供（`wire.host.mjs` 的 `ctx.provide(FACE_NAME, face)`）。
+3. `cordis_inspect_query` → **Event** + Tool：记录官方工具注册面（`ctx.tools.register` 的实际可见性与 `defineTool` 契约位置），作为 Z13 的交叉验证。
+4. 结论落 `tasks/CREATOR-RECON.md`（含原始查询输出），**不改任何源码**。
+
+**阶段 B（等 DSH 放行后实施）**：
+宿主半边**已激活**（`zcode-dispatch\.data\{locks,logs,state}` 已创建；无 `jobs.json` 是因为还没有 job 落盘）。缺的是**客户端能否拿到 `ctx.remote.zcodeDispatch`**。
+- 若 phase A 结论是"服务未提供/形态不对"：按官方形态改写 —— `refs/dsh-typert/protocol/README.zh.md`（`TypertRemoteService` + `Remote` 装饰器 / `bindTypertRemote()`；实现见 `protocol/lib/index.js:146-157`、`:248-268`），对照 `refs/dsh-typert/plugin-manager/lib/index.js`（官方 host 半边完整实现）；
 - 客户端 `$mount(REMOTE_CONTRIBUTION)` 契约对齐 `refs/dsh-typert/registry/lib/client.js`；
-- 判据：徽标「演示数据」→「**已连接**」，且进程列表反映真实 job（空列表是正确的"无进程"）。
+- 判据：徽标「演示数据」→「**已连接**」，且进程列表反映真实 job（空列表 = 正确的"无进程"）。
+
+**阶段 C（已由标准模式完成，供参考）**：agent 工具注册的官方契约已挖到并存档于 `refs/dsh-tools/`：
+`import { defineTool } from '@deepseek-ai/dsh-tools'` + 插件导出 `inject = ['tools']` + `ctx.tools.register(defineTool({name, description, parameters, output, execute}))`（样例：`refs/dsh-tools/tool-fs-example/index.js:261`、`:1176`、`:1212`；契约：`refs/dsh-tools/schema.js:274-330`）。Z13 正据此改造 `index.js`，**别再重复验证**。
 
 本地已加两道"可见化"防护（提交 `e4cdb4c`）：`createWire()` 全程 try/catch、`DEAD_WIRE` 兜底、以及 **`PanelBoundary`（ErrorBoundary）** —— 任何渲染异常会显示一张「ZCode 派发台渲染失败：<msg>」卡片，而不是静默消失。
 

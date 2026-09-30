@@ -70,6 +70,8 @@ export const TYPERT_REMOTE = {
     ['tail', ['id', 'n'], 'tail(id, n?): Promise<string[]>', ['n'], 'string[]（{ok:false, error} 表示 job 不存在）'],
     ['setChannel', ['next'], 'setChannel(next): Promise<{ok, channel}|{ok:false, error}>', ['next'], '{ok:true, channel}|{ok:false, error}'],
     ['setFallbackChain', ['list'], 'setFallbackChain(list?): Promise<{ok, enabled, chain}|{ok:false, error}>', ['list'], '{ok:true, enabled, chain}|{ok:false, error}（null=清空）'],
+    ['switchGet', [], 'switchGet(): Promise<switch>', [], '派发总开关状态 {enabled, updatedAt, updatedBy, note, source}（读文件，永不抛）'],
+    ['switchSet', ['next'], 'switchSet(next): Promise<{ok, switch}|{ok:false, error}>', ['next'], '{ok:true, switch}|{ok:false, error}（next={enabled:boolean, by?, note?}）'],
     ['quota', [], 'quota(): Promise<{quota}>', [], '{quota} 本地台账三窗口'],
     ['quotaPlan', [], 'quotaPlan(): Promise<{planQuota}>', [], '{planQuota} 套餐剩余适配器（慢，客户端低频取）'],
     ['channels', [], 'channels(): Promise<{channels, warnings}>', [], '{channels, warnings}（5s 缓存）'],
@@ -260,6 +262,9 @@ export function createClientWire(ctx, config = {}) {
       tail: (id, n) => remote.call('tail', id, n),
       setChannel: (next) => remote.call('setChannel', next && typeof next === 'object' ? next : {}),
       setFallbackChain: (list) => remote.call('setFallbackChain', list == null ? null : list),
+      // Z12：派发总开关（switchGet 读状态；switchSet 走宿主唯一写入口）
+      switchGet: () => remote.call('switchGet'),
+      switchSet: (next) => remote.call('switchSet', next && typeof next === 'object' ? next : {}),
     };
     /* 旧名实现（setChannel/setFallbackChain 别名与 channelSet/fallbackSet 共用）：
      * 不能在对象字面量里互相引用方法名（属性不是作用域绑定），先落成局部函数。 */
@@ -375,6 +380,21 @@ export function createClientWire(ctx, config = {}) {
       /* ---- Z7 与宿主 face 同名对齐（转发旧实现，语义一致） ---- */
       setChannel: (c) => channelSetImpl(c),
       setFallbackChain: (l) => fallbackSetImpl(l),
+      /* ---- Z12：派发总开关（信封归一化：face 数据对象折成 {ok:true, switch}） ---- */
+      async switchGet() {
+        try {
+          return { ok: true, switch: await face.switchGet() };
+        } catch (e) {
+          return errOf(e);
+        }
+      },
+      async switchSet(next = {}) {
+        try {
+          return await face.switchSet(next);
+        } catch (e) {
+          return errOf(e);
+        }
+      },
       dispose() {
         subs.clear();
         if (pollTimer != null) {
@@ -438,6 +458,9 @@ export function createClientWire(ctx, config = {}) {
       // Z7 与宿主 face 同名对齐（转发旧实现，语义一致）
       setChannel: (c) => call('channel', c ?? {}),
       setFallbackChain: (chain) => call('fallback', { chain: chain ?? null }),
+      // Z12：派发总开关（外部源未提供时 call() 返回 {ok:false,error}，UI 自行降级为只读）
+      switchGet: () => call('switchGet', {}),
+      switchSet: (next) => call('switchSet', next ?? {}),
       dispose() {
         subs.clear();
         if (pollTimer != null) {
@@ -725,6 +748,13 @@ export function createClientWire(ctx, config = {}) {
     /* ---- Z7 与宿主 face 同名对齐（转发旧实现，语义一致） ---- */
     setChannel: (c) => legacyChannelSet(c),
     setFallbackChain: (l) => legacyFallbackSet(l),
+    /* ---- Z12：demo 不读/写真值文件（假数据不该伪装开关状态，也不许写真值） ---- */
+    async switchGet() {
+      return { ok: false, error: '演示模式无真值文件（demo）' };
+    },
+    async switchSet() {
+      return { ok: false, error: '演示模式不写总开关（demo）' };
+    },
     dispose() {
       subs.clear();
       if (tickTimer != null) {
