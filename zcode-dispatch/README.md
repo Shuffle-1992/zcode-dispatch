@@ -23,7 +23,7 @@ zcode-dispatch/
 ├─ bin/zcd.mjs           Z1 的独立 CLI（与插件同 core，可做对照排查）
 ├─ locale/{zh,en}.json   meta + 界面文案（ui 段与 client.js 内嵌 STRINGS 同源）
 ├─ icon.svg              插件图标（几何图形，≤256KiB）
-└─ test/                 Z1 core 自测 + Z2 验收脚本（z2-verify.mjs）+ Z6 通道/续跑自测（channel-retry.test.mjs），可复跑
+└─ test/                 可复跑自测与验收（清单见「可复跑自测清单」一节）
 ```
 
 ## 运行期数据（不随包分发）
@@ -192,6 +192,17 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 5. 控制台不得有 `slot entry crashed in '<slot>'`；跑完恢复动过的任何设置/状态。
 6. 安装前可先跑本地静态验收（无需安装）：
    `node test/z2-verify.mjs`（语法/清单/YAML/纪律 grep/桩加载渲染冒烟/Host e2e/越界检查）。
+
+### 可复跑自测清单
+
+| 脚本 | 项数 | 覆盖 |
+|---|---|---|
+| `node test/core.test.mjs` | 12 | 派发核心：调度/锁/状态/持久化/淘汰回收 |
+| `node test/channel-retry.test.mjs` | 9 | 通道切换、续跑（含 `--resume` 不得带 `--model` 的 F2 回归） |
+| `node test/quota-rpc.test.mjs` | 16 | 额度 RPC 与聚合 |
+| `node test/tail-scroll.test.mjs` | 13 | 输出框滚动决策（ZB-05：不闪烁、不弹回、底部跟随） |
+| `node test/pill.test.mjs` | 16 | 最小化胶囊（ZB-06：保留标题字样、locale 对称） |
+| `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 ## 已知限制
 

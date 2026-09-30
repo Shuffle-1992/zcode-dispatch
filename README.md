@@ -152,7 +152,9 @@ node tools/verify-switch.mjs      # 派发总开关独立复现（8 项，用临
 cd zcode-dispatch
 node test/core.test.mjs           # 派发核心自测（12 项）
 node test/channel-retry.test.mjs  # 通道 / 续跑 / 降级链自测（9 项）
-node test/quota-rpc.test.mjs      # 额度 RPC 自测
+node test/quota-rpc.test.mjs      # 额度 RPC 自测（16 项）
+node test/tail-scroll.test.mjs    # 输出框滚动决策（13 项：不闪烁 / 不弹回 / 底部跟随）
+node test/pill.test.mjs           # 最小化胶囊（16 项：标题字样 / locale 对称）
 Z2_HOST_REPO=<宿主项目> node test/z2-verify.mjs   # 端到端验收（不设则跳过越界检查并如实标注）
 ```
 
