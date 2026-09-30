@@ -2958,3 +2958,84 @@ lock-model **8/8**；lock-ui **26/26**；lock-priority **4/4**；
 
 改了 `wire.host.mjs`（**Host 半边**）+ `client.js`（UI）
 ⇒ **完全退出 DSH 再启动**（UI 部分刷新即可，但 wire 改了，一并重启更稳）。
+
+---
+
+## 42. ZB-19：重启后复核暴露的「删 memory 漏改 4 处」（ZB-16 的技术债）
+
+### 42.1 缘起：用户重启后按纪律复核 Host 是否真的重载
+
+用 `cordis_inspect_query(platform=host, provider=Tool, method=listTools)` 读**活体工具 schema**，
+确认 Host 重启已生效：
+
+| 检查项 | 实测 |
+|---|---|
+| `lock` enum | **`["repo","none"]`** ✅（memory/both 已删） |
+| `lock` 描述 | 「…（memory/both 已于 ZB-16 删除）」✅ |
+| `write` 参数 | 存在 ✅ |
+| 记忆禁令段 | 「派发时**默认注入提示词**…」✅ |
+
+**但同一份活体 schema 里暴露出两处旧文案**，顺着查下去发现了更大的问题。
+
+### 42.2 发现：ZB-16 删 memory 时，我只改了 core 的 `locksFor`，漏了 **4 处** `?? 'both'` 默认值
+
+| 位置 | 性质 | 后果 |
+|---|---|---|
+| `wire.host.mjs` `slimJob` | 快照默认值 | 未显式传 lock 的 job 在快照里仍显示 `'both'`（ZB-18 已修） |
+| **`bin/zcd.mjs` `cmdDispatch`** | **CLI 派发默认值** | **直接把 `'both'` 传给 core ⇒ 抛 `TypeError`（枚举校验）** |
+| **`client.js` retry/fallback 路径** | **续跑/交接默认值** | **同上，抛 `TypeError`** |
+| **`wire.client.mjs` 降级 wire** | **Host face 未就绪时面板实际走的 wire** | 演示/降级数据仍产生 `'both'` 与 memory 锁 |
+
+外加三处**演示数据/演示快照**：
+- `wire.client.mjs` 三条 demo job 的 `lock: 'both'`、新建 job 的 `?? 'both'`
+- `wire.client.mjs` 演示快照 `locks.memory` 条目（显示已删除的锁）
+- `client.js` 内置 demo 引擎新建 job 的 `?? 'both'`
+
+**性质判定**：前两条是**真实故障**（会把非法枚举传给 core 而抛错），后几条是**显示不一致**。
+全部在本轮修掉。
+
+> 教训（已写进测试）：**删除一个枚举值，必须全仓扫描所有"默认值/兜底值"位置** ——
+> 只改语义核心（`locksFor`）是不够的，散落在 CLI / wire / UI 的 `?? 'both'` 同样是生效路径。
+> 这类"删了 A 却留下 `?? A`"的漏改，静态类型检查与单测都抓不到（类型是 string），
+> **必须靠全仓文本扫描 + 断言**。
+
+### 42.3 顺带修掉的旧文案
+
+| 位置 | 原 | 现 |
+|---|---|---|
+| `index.js` `write` 参数描述 | 「不声明则回退 lock 的**粗粒度锁**」 | 「不声明则**锁整个仓库**」 |
+| `index.js` 工具描述「限制」行 | 「单写者互斥（**repo/memory 文件锁** + **FIFO 队列**…）」 | 「仓库写锁互斥（同锁排队；**文件锁任务优先放行**，同类内保持 FIFO）」 |
+| `core` 头注释 | 「至多一个 run 持有 repo 锁、至多一个持有 memory 锁；请求不满足锁条件时进 FIFO 队列等待（head-of-line）」 | 「至多一个持有整仓库锁；文件锁按文件集判定…**文件锁任务优先放行**（ZB-17），同类内保持 FIFO」 |
+| `core` 安全底线注释 | 「一律回退到 repo/memory 粗粒度锁」 | 「一律**锁整个仓库**（repo.lock）」 |
+| `core` 参数注释 | 「repoLockPath / memoryLockPath」 | 「repoLockPath…memory 锁已于 ZB-16 删除」 |
+
+### 42.4 新增防复发机制（本轮最重要的产出）
+
+`test/lock-badge.test.mjs` 新增 **H 组：全仓扫描**
+
+```js
+walk('zcode-dispatch')  // 排除 .data / node_modules / test
+  → 逐行匹配 /lock\s*[:=]\s*'both'|lock\s*\?\?\s*'both'|lock:\s*'memory'|memory:\s*\{/
+  → 跳过注释行（提及历史是允许的）
+  → 命中即失败，并报出「文件:行号」
+```
+
+实测：**扫描 8 个生效源码文件，命中 0 处**。
+
+**反向验证**：把 `bin/zcd.mjs` 的默认值改回 `'both'` ⇒ 测试报红且**精确指出位置**：
+`H2 生效代码里无 'both'/'memory' 锁残留（命中 1 处：\bin\zcd.mjs:145）` ⇒ 机制有效。
+
+### 42.5 门禁（全绿）
+
+`node --check` 零失败（含 `bin/zcd.mjs`、`wire.client.mjs`）；verify-plugin **20/20**；
+verify-switch **8/8**；core **12/12**；channel-retry **9/9**；quota-rpc **16/16**；
+tail-scroll **13/13**；pill **16/16**；pill-position **16/16**；section-order **9/9**；
+panel-anchor **22/22**；panel-reclamp **9/9**；elapsed-format **15/15**；ctx-format **23/23**；
+lock-model **8/8**；lock-ui **26/26**；lock-priority **4/4**；
+**lock-badge 34/34**（含新增全仓扫描）；file-lock **9/9**；wait-action **6/6**。
+
+### 42.6 生效条件
+
+改了 `bin/zcd.mjs`（CLI）、`wire.client.mjs`（降级 wire）、`index.js`（Host 描述）、
+`core/dispatch-core.mjs`（注释）、`client.js`（UI 演示引擎）
+⇒ **完全退出 DSH 再启动**。

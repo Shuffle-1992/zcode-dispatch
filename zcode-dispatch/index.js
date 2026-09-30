@@ -218,7 +218,7 @@ const TOOL_PARAMETERS = {
   write: {
     type: 'array',
     items: { type: 'string' },
-    description: 'dispatch：该任务预计会写入的文件绝对路径列表（声明后按文件级加锁，不冲突即可并发；不声明则回退 lock 的粗粒度锁）',
+    description: 'dispatch：该任务预计会写入的文件绝对路径列表（声明后按文件级加锁，不冲突即可并发；不声明则锁整个仓库）',
   },
   id: { type: 'string', description: 'kill/tail/retry：job id（形如 j-xxxx）' },
   n: { type: 'integer', description: 'tail：行数（≥ 1，默认 30，上限 200）' },
@@ -245,7 +245,7 @@ const TOOL_DESCRIPTION_BODY = [
   '- action=channel：读默认通道（无参）或设置（provider 必带，model 可选）——之后未显式指定通道的 dispatch 都用它。',
   '- action=retry：同通道且有 sessionId → --resume 续跑（不要传 retryModel：--resume 带 --model 必失败）；换通道（或无 sessionId）→ 交接重跑（新会话+交接提示词），新 job 带 parentJobId/attempts。可用 provider / retryModel（或 model）。总开关关闭时同样被拒绝。',
   '- action=fallback：读降级链（无参）或设置 chain（通道 id 数组，空数组=关闭）。开启后额度耗尽/未开通/需签名会自动交接重跑到链上下一个可用通道（会消耗下游通道额度）。',
-  '限制：单写者互斥（repo/memory 文件锁 + FIFO 队列，同锁串行，冲突只会排队不会报错）；memoryBench 仅 kind=prompt；timeoutMin 必须 >0；本工具不授予或确认任何权限。',
+  '限制：仓库写锁互斥（同锁排队、不报错；**文件锁任务优先放行**，同类内保持 FIFO）；memoryBench 仅 kind=prompt；timeoutMin 必须 >0；本工具不授予或确认任何权限。',
 ].join('\n');
 
 /**

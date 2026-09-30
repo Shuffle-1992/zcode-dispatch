@@ -18,8 +18,8 @@
  * 为什么删除 memory 锁：它保护的是 ZCode 自己的记忆库（~/.zcode），与仓库写入互不相干；
  * 而 ZCode 记忆写入本身改用**默认注入的提示词禁令**约束（见 buildSpecPrompt），
  * 不再需要一把进程间互斥锁（用户决定：派发任务默认要求子代理不写 ZCode 记忆）。
- *   同一时刻至多一个 run 持有 repo 锁、至多一个 run 持有 memory 锁；
- *   请求不满足锁条件时进 FIFO 队列等待（head-of-line，保证排队顺序），不报错。
+ *   同一时刻至多一个 run 持有整仓库锁（repo.lock）；文件锁按文件集判定，不同文件集可并发；
+ *   请求拿不到锁时进队列等待，**文件锁任务优先放行**（ZB-17），同类内保持 FIFO，不报错。
  *   锁 = 文件锁（跨进程互斥，内容含 jobId/pid/at；过期 >2h 或 pid 已死即清理）
  *      + 进程内队列（同进程公平排队）双保险。
  *
@@ -297,7 +297,7 @@ const LOCK_MODES = new Set(['repo', 'none']); // ZB-16：删除 memory；none = 
  * 改造：派发方可**显式声明写入集** `spec.write: string[]`；core 只为这些路径加锁。
  * 冲突判定落到文件级：A 写 a.ts、B 写 b.md ⇒ 可并行；A 与 B 都写 a.ts ⇒ 后者排队。
  *
- * ⚠️ 安全底线（本设计的第一约束）：**未声明 write 的任务，一律回退到 repo/memory 粗粒度锁**。
+ * ⚠️ 安全底线（本设计的第一约束）：**未声明 write 的任务，一律锁整个仓库（repo.lock）**。
  * 细粒度是"声明了才生效的可选优化"，绝不是"默认放宽"——否则不声明的任务会失去互斥保护，
  * 多个 ZCode 进程同时改同一个仓库，那正是单写者语义要防的事故。
  *
@@ -342,7 +342,7 @@ function fileLockPath(dirLocks, p) {
  *   ledgerPath    台账 zcode-runs.jsonl（缺省则跳过台账回读）
  *   workRoot      工作根目录（locks/state/logs 都在它下面）
  *   maxConcurrent 最大并发（默认 1）
- *   repoLockPath / memoryLockPath  锁文件路径（默认 <workRoot>/locks/{repo,memory}.lock）
+ *   repoLockPath  整仓库锁文件路径（默认 <workRoot>/locks/repo.lock）；memory 锁已于 ZB-16 删除
  *   timeoutGraceSec  dispatcher 看门狗在 runner 自身超时之后的宽限秒数（默认 120）
  *   spawnImpl / now  测试注入
  */

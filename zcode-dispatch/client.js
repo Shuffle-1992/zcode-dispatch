@@ -1137,7 +1137,7 @@ window.__ModuleLoader__.load({
           const tag = spec.tag ?? `demo-new-${seq}`;
           const nj = {
             id, tag, state: 'queued', lock: null,
-            spec: { kind, body: String(body).slice(0, 80), [kind]: String(body).slice(0, 80), model: spec.model ?? null, provider: spec.provider ?? null, mode: spec.mode ?? 'edit', lock: spec.lock ?? 'both', timeoutMin: spec.timeoutMin ?? null, memoryBench: Boolean(spec.memoryBench), tag },
+            spec: { kind, body: String(body).slice(0, 80), [kind]: String(body).slice(0, 80), model: spec.model ?? null, provider: spec.provider ?? null, mode: spec.mode ?? 'edit', lock: spec.lock ?? 'repo', timeoutMin: spec.timeoutMin ?? null, memoryBench: Boolean(spec.memoryBench), tag },
             queuedAt: new Date().toISOString(), startedAt: null, finishedAt: null,
             elapsedSec: null, exitCode: null, signal: null, sessionId: null, provider: null,
             model: spec.model ?? null,
@@ -1244,7 +1244,7 @@ window.__ModuleLoader__.load({
                 model: targetModel,
                 provider: targetProvider ?? origProvider,
                 mode: j.spec.mode ?? 'edit',
-                lock: j.spec.lock ?? 'both',
+                lock: j.spec.lock ?? 'repo', // ZB-18 补漏：默认由 'both' 改为 'repo'（memory 已删除）
                 timeoutMin: j.spec.timeoutMin ?? null,
                 memoryBench: false,
                 tag: `${j.tag}-${suffix}`,

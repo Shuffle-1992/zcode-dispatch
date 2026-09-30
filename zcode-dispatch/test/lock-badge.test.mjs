@@ -4,7 +4,8 @@
 //
 // lockKindOf 是纯函数（从源码抽出来测），输入是**已持久化的 job** —— 可能来自旧版本
 // （如 lock='repo+memory' 的 ZB-15 记录），故必须容错且不假装成新模型。
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { strict as assert } from 'node:assert';
 
 const SRC = 'F:\\My Code\\dsh-plugins\\zcode-dispatch\\client.js';
@@ -87,6 +88,36 @@ console.log('\nslimJob 默认值修正（ZB-16 漏改）');
   const wire = readFileSync('F:\\My Code\\dsh-plugins\\zcode-dispatch\\wire.host.mjs', 'utf8');
   ok(/lock: spec\?\.lock \?\? 'repo'/.test(wire), "G1 slimJob 的 lock 默认值已由 'both' 改为 'repo'");
   ok(!/lock: spec\?\.lock \?\? 'both'/.test(wire), "G2 旧的 'both' 默认值已清除");
+}
+
+console.log('\n★ 全仓防复发扫描（ZB-18 实测：删 memory 时我连漏 4 处默认值）');
+{
+  /* 教训：ZB-16 删 memory 时只改了 core 的 locksFor，漏掉 wire.host / wire.client / bin/zcd / client
+   * 共 4 处 `?? 'both'` 默认值 —— 其中 bin/zcd 与 client 的 retry 路径**会直接把 'both' 传给 core
+   * 而抛 TypeError**（枚举校验），属真实故障。故在此做全仓扫描，防止再漏。 */
+  const dir = 'F:\\My Code\\dsh-plugins\\zcode-dispatch';
+  const files = [];
+  const walk = (d) => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (['.data', 'node_modules', 'test'].includes(e.name)) continue;
+      const p = join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(js|mjs)$/.test(e.name)) files.push(p);
+    }
+  };
+  walk(dir);
+  ok(files.length > 0, `H1 扫描到 ${files.length} 个生效源码文件`);
+  const hits = [];
+  for (const f of files) {
+    const lines = readFileSync(f, 'utf8').split(/\r?\n/);
+    lines.forEach((l, i) => {
+      if (/^\s*(\*|\/\/|\/\*)/.test(l)) return; // 注释里提及历史是允许的
+      if (/lock\s*[:=]\s*'both'|lock\s*\?\?\s*'both'|lock:\s*'memory'|memory:\s*\{/.test(l)) {
+        hits.push(`${f.replace(dir, '')}:${i + 1}`);
+      }
+    });
+  }
+  ok(hits.length === 0, `H2 生效代码里无 'both'/'memory' 锁残留（命中 ${hits.length} 处${hits.length ? '：' + hits.join(', ') : ''}）`);
 }
 
 console.log(`\n===== ZB-18：${pass} PASS / 0 FAIL =====`);

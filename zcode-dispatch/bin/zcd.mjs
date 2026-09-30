@@ -142,7 +142,7 @@ function awaitJob(d, id) {
 
 async function cmdDispatch() {
   const kind = opt.kind ?? 'prompt';
-  const spec = { kind, lock: opt.lock ?? 'both' };
+  const spec = { kind, lock: opt.lock ?? 'repo' }; // ZB-18 补漏：默认由 'both' 改为 'repo'（memory 已删除，'both' 会报错）
   if (kind === 'task') spec.task = opt.task;
   else if (kind === 'target') spec.target = opt.target;
   else spec.prompt = opt.prompt;

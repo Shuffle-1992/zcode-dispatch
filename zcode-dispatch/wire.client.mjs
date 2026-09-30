@@ -116,13 +116,13 @@ function demoSnapshot() {
     counts: { running: 1, queued: 1, done: 1 },
     locks: {
       repo: { jobId: 'j-demo-run', pid: 4242, at: nowIso(), lock: 'repo' },
-      memory: { jobId: 'j-demo-run', pid: 4242, at: nowIso(), lock: 'memory' },
+      /* ZB-18：演示快照不再含 memory 锁（已于 ZB-16 删除），避免演示模式显示不存在的锁。 */
     },
     queue: ['j-demo-wait'],
     jobs: [
       {
         id: 'j-demo-run', tag: 'demo-running', state: 'running', lock: 'repo+memory',
-        spec: { kind: 'prompt', body: '（演示）正在整理 collab 目录的周报…', model: 'GLM-5.3', provider: 'plan', mode: 'edit', lock: 'both', timeoutMin: 15, memoryBench: false, tag: 'demo-running' },
+        spec: { kind: 'prompt', body: '（演示）正在整理 collab 目录的周报…', model: 'GLM-5.3', provider: 'plan', mode: 'edit', lock: 'repo', timeoutMin: 15, memoryBench: false, tag: 'demo-running' },
         queuedAt: nowIso(), startedAt: nowIso(), finishedAt: null,
         elapsedSec: 42, exitCode: null, signal: null, sessionId: null,
         provider: 'plan:bigmodel-coding-plan', model: 'GLM-5.3',
@@ -132,7 +132,7 @@ function demoSnapshot() {
       },
       {
         id: 'j-demo-done', tag: 'demo-done', state: 'done', lock: null,
-        spec: { kind: 'prompt', body: '只回答 OK', model: 'GLM-5.3-Flash', provider: 'plan', mode: 'edit', lock: 'both', timeoutMin: 5, memoryBench: false, tag: 'demo-done' },
+        spec: { kind: 'prompt', body: '只回答 OK', model: 'GLM-5.3-Flash', provider: 'plan', mode: 'edit', lock: 'repo', timeoutMin: 5, memoryBench: false, tag: 'demo-done' },
         queuedAt: nowIso(), startedAt: nowIso(), finishedAt: nowIso(),
         elapsedSec: 7.7, exitCode: 0, signal: null, sessionId: 'sess_demo-0000',
         provider: 'plan:bigmodel-coding-plan', model: 'GLM-5.3-Flash',
@@ -142,7 +142,7 @@ function demoSnapshot() {
       },
       {
         id: 'j-demo-wait', tag: 'demo-queued', state: 'queued', lock: null,
-        spec: { kind: 'prompt', body: '（演示）排队中的代码评审任务', model: 'GLM-5.3', provider: 'plan', mode: 'edit', lock: 'both', timeoutMin: 15, memoryBench: false, tag: 'demo-queued' },
+        spec: { kind: 'prompt', body: '（演示）排队中的代码评审任务', model: 'GLM-5.3', provider: 'plan', mode: 'edit', lock: 'repo', timeoutMin: 15, memoryBench: false, tag: 'demo-queued' },
         queuedAt: nowIso(), startedAt: null, finishedAt: null,
         elapsedSec: null, exitCode: null, signal: null, sessionId: null,
         provider: null, model: 'GLM-5.3',
@@ -618,7 +618,7 @@ export function createClientWire(ctx, config = {}) {
         tag: spec.tag ?? `demo-new-${seq}`,
         state: 'queued',
         lock: null,
-        spec: { kind, body: String(body).slice(0, 80), model: spec.model ?? null, provider: spec.provider ?? null, mode: spec.mode ?? 'edit', lock: spec.lock ?? 'both', timeoutMin: spec.timeoutMin ?? null, memoryBench: Boolean(spec.memoryBench), tag: spec.tag ?? `demo-new-${seq}` },
+        spec: { kind, body: String(body).slice(0, 80), model: spec.model ?? null, provider: spec.provider ?? null, mode: spec.mode ?? 'edit', lock: spec.lock ?? 'repo', timeoutMin: spec.timeoutMin ?? null, memoryBench: Boolean(spec.memoryBench), tag: spec.tag ?? `demo-new-${seq}` },
         queuedAt: nowIso(),
         startedAt: null,
         finishedAt: null,
@@ -694,7 +694,7 @@ export function createClientWire(ctx, config = {}) {
             model: targetModel,
             provider: targetProvider ?? origProvider,
             mode: job.spec.mode ?? 'edit',
-            lock: job.spec.lock ?? 'both',
+            lock: job.spec.lock ?? 'repo', // ZB-18 补漏：默认由 'both' 改为 'repo'（memory 已于 ZB-16 删除）
             timeoutMin: job.spec.timeoutMin ?? null,
             memoryBench: false,
             tag: `${job.tag}-${suffix}`,
