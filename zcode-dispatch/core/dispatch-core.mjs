@@ -41,7 +41,7 @@ import {
   closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync,
   statSync, unlinkSync, writeFileSync, writeSync,
 } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 
@@ -393,6 +393,29 @@ export function createDispatcher(options = {}) {
    * 原子持久化全部 job。写前采纳磁盘上本进程不认识的记录（缓解多进程共用 workRoot 互相覆盖）；
    * 超容量时淘汰最老的终态 job（内存与文件同步收缩）。
    */
+  /**
+   * ZB-05：淘汰 job 时删除它**专属**的捕获日志（logs/<id>.{out,err}.log）。
+   *
+   * 语义自洽（不是新策略）：记录被淘汰后，`tail()` 再也找不到它（上层只会得到"找不到 job"），
+   * 这两个文件因此**没有任何读取方** = 纯垃圾。不删则每任务留 2 个文件、永不复用，
+   * 是全包唯一无界增长的目录；删除后插件侧日志与 jobs.json 一起被 JOBS_FILE_CAP 封顶。
+   * （面板「✕」(dismiss) 只是隐藏、记录仍在，tail 仍可用 ⇒ **不在此删除**。）
+   *
+   * ⚠️ 安全：`jobs.json` 是**可被手工编辑**的外部输入，`captureOut/captureErr` 属不可信数据，
+   * 必须校验目标确实落在 `dirLogs` 内 —— 绝不让淘汰逻辑变成任意路径删除。
+   * 任何失败都只是"没删掉"，绝不影响淘汰与写盘本身。
+   */
+  function dropCaptureFiles(job) {
+    for (const f of [job.captureOut, job.captureErr]) {
+      if (typeof f !== 'string' || f === '') continue;
+      try {
+        const rel = relative(dirLogs, resolve(f));
+        if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) continue; // 越界或目录本身：拒绝
+        unlinkSync(f);
+      } catch { /* 不存在/被占用：忽略 */ }
+    }
+  }
+
   function persist() {
     if (existsSync(jobsFile)) {
       try {
@@ -406,6 +429,7 @@ export function createDispatcher(options = {}) {
     if (all.length > JOBS_FILE_CAP) {
       for (const j of all.slice(0, all.length - JOBS_FILE_CAP)) {
         if (!isTerminal(j)) continue; // 只淘汰终态
+        dropCaptureFiles(j); // ZB-05：连它的捕获日志一起回收（否则该目录无界增长）
         jobs.delete(j.id);
         tails.delete(j.id);
         evicted.add(j.id);
@@ -1011,7 +1035,12 @@ export function createDispatcher(options = {}) {
     validateSpec(spec);
     const effSpec = { ...spec };
     if (effSpec.provider == null && channel.provider) effSpec.provider = channel.provider;
-    if (effSpec.model == null && channel.model) effSpec.model = channel.model;
+    /* F2（机制事实，2026-09-30 现场复现）：`--resume` 带 `--model` 必失败
+     * （runner 侧报 `Error: Model creation failed`，exit=1，resultFile 不产出）。
+     * 故**续接时绝不注入通道默认 model** —— 与 retry 里的 `delete spec.model`（:1101）同一条纪律。
+     * 显式传入的 model 不在此拦截（那是调用方的选择，由 runner 的报错兜底）；这里只保证
+     * 「没显式传就不注入」。曾经的缺口：dispatch + resume 会注入通道默认 model → 必然失败。 */
+    if (effSpec.model == null && channel.model && !effSpec.resume) effSpec.model = channel.model;
     return dispatchRaw(effSpec);
   }
 

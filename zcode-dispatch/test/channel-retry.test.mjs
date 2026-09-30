@@ -165,6 +165,30 @@ test('retry 同通道带 sessionId → 命令行含 --resume 且不含 --model�
   assert.equal(d.get(a.id).resumedBy, child.id, 'd.get(parent).resumedBy 应指向续跑 job');
 });
 
+test('dispatch 直接带 resume → 命令行含 --resume 且不含 --model（F2 的另一条入口）', async () => {
+  /* 背景（2026-09-30 现场复现）：F2 原先只在 retry 路径被守住（retry 里 delete spec.model），
+   * 而公共入口 dispatch() 会把**通道默认 model 注入** spec → dispatch + resume 组合必然
+   * `Error: Model creation failed`（exit=1，resultFile 不产出）。本用例双向锁定：
+   *   ① 普通 dispatch 未指定 model → 仍须注入通道默认 model（否则通道默认值失效）；
+   *   ② dispatch + resume → 绝不能注入（F2）。 */
+  const cap = spawnCapture();
+  const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot: newWorkRoot(), spawnImpl: cap.impl });
+  d.setChannel({ provider: 'plan', model: 'GLM-5.3-Flash' });
+
+  const plain = d.dispatch({ kind: 'prompt', prompt: '普通派发（对照组①）' });
+  await waitForState(d, plain.id, ['done', 'failed'], 'plain 终态');
+  assert.equal(d.get(plain.id).spec.model, 'GLM-5.3-Flash', '① 未指定 model 时仍应注入通道默认 model');
+  assert.ok(cap.calls[0].includes('--model'), '① 对照组：普通派发命令行应带 --model');
+
+  const res = d.dispatch({ kind: 'prompt', prompt: '续接新指令', resume: 'sess_direct_R' });
+  const args = cap.calls[cap.calls.length - 1];
+  assert.ok(args.includes('--resume'), '② dispatch + resume 应带 --resume');
+  assert.ok(args.includes('sess_direct_R'), '② --resume 值应为传入的 sessionId');
+  assert.equal(args.includes('--model'), false, '② F2：dispatch + resume 时绝不能带 --model');
+  assert.equal(d.get(res.id).spec.model, undefined, '② resume 的 spec 里不得有被注入的 model');
+  assert.equal(d.get(res.id).spec.resume, 'sess_direct_R', '② resume 必须原样写入 spec');
+});
+
 test('retry 换通道 → 无 --resume，prompt 含交接五要素；簿记从 d.get()/d.list() 读回', async () => {
   const cap = spawnCapture();
   const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot: newWorkRoot(), spawnImpl: cap.impl });

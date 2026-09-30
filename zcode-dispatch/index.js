@@ -17,8 +17,15 @@
  *    import 解析（与 loadConfig 同款降级），宿主缺包或 ctx.tools 不可用时只 warn 不抛——
  *    激活安全第一，UI 与派发核心不受影响。
  */
+import { createRequire } from 'node:module';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDispatcher } from './core/dispatch-core.mjs';
 import { DEFAULT_SWITCH_PATH, attachHostWire, createActionHandler, readSwitch, switchFileOf } from './wire.host.mjs';
+
+/** 本文件所在目录（激活信标的兜底落点；config.workRoot 缺席时用）。 */
+const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
 
 /** 插件 config 默认值（与 cordis.patch.yml 的 config 字段一一对应，均带默认值）。 */
 const DEFAULTS = {
@@ -72,20 +79,104 @@ async function loadConfig() {
 /** 插件 config schema（Standard Schema v1；cordis resolveConfig 经 Config['~standard'].validate 取值）。 */
 export const Config = await loadConfig();
 
+/* ─────────────── 官方 defineTool 的解析（ZB-01：裸 import 在本包必然失败）───────────────
+ * 事实（2026-09-30 实测 + asar 头解析，见 tasks/ZB-01-delivery.md）：
+ *   - 本包位于 F:\My Code\dsh-plugins，**不在 DSH 安装目录内**；profile 的 node_modules 只有
+ *     @local / dsh-plugin-whale-pet，**没有 @deepseek-ai 作用域**；
+ *   - 故裸 import('@deepseek-ai/dsh-tools') 从本文件向上逐级找 node_modules 必然
+ *     ERR_MODULE_NOT_FOUND → loadDefineTool() 返回 null → 工具静默不注册（Z13 现场症状）；
+ *   - 反例（真实可用的第三方插件）：refs/plugin-whale-pet/lib_index.js 的宿主半边
+ *     **完全不 import 任何 @deepseek-ai/***（只用注入的 agents 服务）——第三方目录下裸 import 无先例。
+ * 修法：裸 import 之后追加「绝对路径回退」（env 覆盖 → process.resourcesPath 推导 → 硬编码安装路径），
+ * 每个候选先试 ESM import()、再试 CJS require()（Node 24 支持 require(esm)；asar 的 fs 补丁对两者
+ * 都生效，双策略让「asar 内 ESM 装载」这一不确定性有兜底）。全失败再降级 null——激活安全第一。
+ * 路径证据：asar 头 JSON 解析确认 dsh/node_modules/@deepseek-ai/dsh-tools/lib/index.js 存在
+ * （157954 字节，与 refs/dsh-tools/lib/index.js 同尺寸）。 */
+const DSH_TOOLS_REL = ['dsh', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js'];
+
+/** 绝对路径候选表（顺序即优先级；source 仅用于信标/日志，不参与逻辑）。 */
+function dshToolsCandidates() {
+  const out = [];
+  const env = process.env.ZCD_DSH_TOOLS;
+  if (typeof env === 'string' && env) out.push({ source: 'env:ZCD_DSH_TOOLS', path: env });
+  const res = typeof process.resourcesPath === 'string' ? process.resourcesPath : '';
+  if (res) {
+    out.push({ source: 'resourcesPath/app.asar', path: join(res, 'app.asar', ...DSH_TOOLS_REL) });
+    out.push({ source: 'resourcesPath/app.asar.unpacked', path: join(res, 'app.asar.unpacked', ...DSH_TOOLS_REL) });
+  }
+  out.push({ source: 'abs:D:/DeepSeek/resources/app.asar', path: join('D:/DeepSeek/resources/app.asar', ...DSH_TOOLS_REL) });
+  out.push({ source: 'abs:D:/DeepSeek/resources/app.asar.unpacked', path: join('D:/DeepSeek/resources/app.asar.unpacked', ...DSH_TOOLS_REL) });
+  return out;
+}
+
+/** 解析尝试记录（写进激活信标；任何时刻只追加，绝不抛）。 */
+const DEFINE_TOOL_PROBE = [];
+const probeErr = (e) => (e && e.code ? `${e.code}: ${e.message}` : String((e && e.message) || e));
+const accept = (mod) => (mod && typeof mod.defineTool === 'function' ? mod.defineTool : null);
+
 /**
  * 官方工具定义器：随 dsh 出货的 @deepseek-ai/dsh-tools（包导出面见 refs/dsh-tools/lib/index.js:3714，
- * defineTool 实现同文件 :838）。动态 import + 失败降级 null——与 loadConfig 同款：宿主缺包时
- * 模块照常加载、激活不受影响，只在注册处降级为「不注册工具 + warn」。
+ * defineTool 实现同文件 :838）。解析不到时降级 null——模块照常加载、激活不受影响。
+ * @returns {Promise<{defineTool: Function|null, source: string|null}>}
  */
 async function loadDefineTool() {
   try {
-    const mod = await import('@deepseek-ai/dsh-tools');
-    return typeof mod?.defineTool === 'function' ? mod.defineTool : null;
-  } catch {
-    return null;
+    const fn = accept(await import('@deepseek-ai/dsh-tools'));
+    if (fn) {
+      DEFINE_TOOL_PROBE.push({ source: 'bare', strategy: 'import', ok: true });
+      return { defineTool: fn, source: 'bare|import' };
+    }
+    DEFINE_TOOL_PROBE.push({ source: 'bare', strategy: 'import', ok: false, error: '导入成功但无 defineTool 导出' });
+  } catch (e) {
+    DEFINE_TOOL_PROBE.push({ source: 'bare', strategy: 'import', ok: false, error: probeErr(e) });
   }
+  const require = createRequire(import.meta.url);
+  for (const cand of dshToolsCandidates()) {
+    try {
+      const fn = accept(await import(pathToFileURL(cand.path).href));
+      if (fn) {
+        DEFINE_TOOL_PROBE.push({ source: cand.source, strategy: 'import', ok: true, path: cand.path });
+        return { defineTool: fn, source: `${cand.source}|import` };
+      }
+      DEFINE_TOOL_PROBE.push({ source: cand.source, strategy: 'import', ok: false, path: cand.path, error: '导入成功但无 defineTool 导出' });
+    } catch (e) {
+      DEFINE_TOOL_PROBE.push({ source: cand.source, strategy: 'import', ok: false, path: cand.path, error: probeErr(e) });
+    }
+    try {
+      const fn = accept(require(cand.path));
+      if (fn) {
+        DEFINE_TOOL_PROBE.push({ source: cand.source, strategy: 'require', ok: true, path: cand.path });
+        return { defineTool: fn, source: `${cand.source}|require` };
+      }
+      DEFINE_TOOL_PROBE.push({ source: cand.source, strategy: 'require', ok: false, path: cand.path, error: '加载成功但无 defineTool 导出' });
+    } catch (e) {
+      DEFINE_TOOL_PROBE.push({ source: cand.source, strategy: 'require', ok: false, path: cand.path, error: probeErr(e) });
+    }
+  }
+  return { defineTool: null, source: null };
 }
-const defineTool = await loadDefineTool();
+const DEFINE_TOOL_RESOLVED = await loadDefineTool();
+const defineTool = DEFINE_TOOL_RESOLVED.defineTool;
+const DEFINE_TOOL_SOURCE = DEFINE_TOOL_RESOLVED.source;
+
+/**
+ * 激活信标：把「defineTool 是否解析到 / 工具是否注册 / 远端面是否注册」落成一个 JSON 文件，
+ * 供重启后一眼定位（ZB-01 §2.1）。路径 = config.workRoot/state/activation.json
+ * （默认即 zcode-dispatch/.data/state/activation.json）；写失败**绝不抛**。
+ */
+function beaconFile(config) {
+  const root = config && typeof config.workRoot === 'string' && config.workRoot ? config.workRoot : join(PLUGIN_DIR, '.data');
+  return join(root, 'state', 'activation.json');
+}
+function writeActivationBeacon(config, patch) {
+  try {
+    const file = beaconFile(config);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), name: 'zcode-dispatch', ...patch }, null, 2)}\n`, 'utf8');
+  } catch { /* 信标只是诊断，写不了不影响激活 */ }
+}
+/** 工具注册失败原因（供信标；不改变 registerZcodeDispatchTool 的返回值语义）。 */
+let TOOL_REGISTER_ERROR = null;
 
 /** cordis 插件名（loader 诊断用；官方插件同款导出，refs/dsh-tools/tool-fs-example/index.js:1174）。 */
 export const name = 'zcode-dispatch';
@@ -167,13 +258,16 @@ function buildToolDescription(switchFile) {
  */
 function registerZcodeDispatchTool(ctx, log, handleAction, switchFile) {
   if (!ctx?.tools || typeof ctx.tools.register !== 'function') {
+    TOOL_REGISTER_ERROR = 'ctx.tools.register 不可用（inject=[\'tools\'] 未满足？）';
     log('warn', 'ctx.tools.register 不可用：agent 工具 zcode_dispatch 未注册（非致命，UI 与派发核心不受影响）');
     return null;
   }
   if (typeof defineTool !== 'function') {
+    TOOL_REGISTER_ERROR = '@deepseek-ai/dsh-tools 未解析（defineTool 为 null；候选见激活信标 defineToolAttempts）';
     log('warn', '@deepseek-ai/dsh-tools 不可用（defineTool 未解析）：agent 工具 zcode_dispatch 未注册（非致命，UI 与派发核心不受影响）');
     return null;
   }
+  TOOL_REGISTER_ERROR = null;
   try {
     const registered = ctx.tools.register(defineTool({
       name: 'zcode_dispatch',
@@ -209,6 +303,7 @@ function registerZcodeDispatchTool(ctx, log, handleAction, switchFile) {
       }
     };
   } catch (e) {
+    TOOL_REGISTER_ERROR = `defineTool/register 抛错：${e?.message ?? e}`;
     log('warn', `agent 工具 zcode_dispatch 注册失败：${e?.message ?? e}（非致命，UI 与派发核心不受影响）`);
     return null;
   }
@@ -248,6 +343,24 @@ export function apply(ctx, config = {}) {
   const handleAction = createActionHandler(dispatcher, config);
   const wire = attachHostWire(ctx, dispatcher, config);
   const disposeTool = registerZcodeDispatchTool(ctx, log, handleAction, switchFileOf(config));
+
+  /* ZB-01 激活信标（§2.1）：重启后读 .data/state/activation.json 一眼定位
+   * 「包没解析到」还是「register 没成功」还是「远端面没注册」。 */
+  if (typeof defineTool === 'function') log('info', `defineTool 已解析（来源 ${DEFINE_TOOL_SOURCE}）`);
+  else log('warn', `defineTool 未解析；失败候选=${DEFINE_TOOL_PROBE.filter((p) => !p.ok).map((p) => `${p.source}/${p.strategy}`).join(', ')}`);
+  writeActivationBeacon(config, {
+    dispatcherReady: !!dispatcher,
+    workRoot: dispatcher ? dispatcher.workRoot : null,
+    switchPath: switchFileOf(config),
+    ctxToolsRegisterAvailable: !!(ctx?.tools && typeof ctx.tools.register === 'function'),
+    defineToolResolved: typeof defineTool === 'function',
+    defineToolSource: DEFINE_TOOL_SOURCE,
+    defineToolAttempts: DEFINE_TOOL_PROBE,
+    toolRegistered: typeof disposeTool === 'function',
+    toolRegisterError: TOOL_REGISTER_ERROR,
+    remote: (wire && wire.diagnostics) || null,
+    switchEnabled: readSwitch(switchFileOf(config)).enabled,
+  });
 
   const disposeAll = () => {
     try {

@@ -597,10 +597,11 @@ export const TYPERT = {
 /**
  * 把推送能力与 Remote 面装到 Host ctx 上，并把 face 注册为 cordis 服务
  * （typertGateway SRC 路径的接收器；文件头 B 路径）。
- * @returns {{ handleAction, subscribe, getSnapshot, dispose, face, registered }}
+ * @returns {{ handleAction, subscribe, getSnapshot, dispose, face, registered, diagnostics }}
  *   - face：createRemoteFace() 产物（RemoteFace 实例；registry/SRC 两路派发的同一终点）
  *   - subscribe(fn)：fn 收到 { snapshot, quota }；订阅即回一份当前态，返回退订函数
  *   - registered：face 是否已注册为 cordis 服务（false = ctx 上无 provide，如测试桩）
+ *   - diagnostics：ZB-01 注册留痕 { available, strategy, ok, error, visibleAfter, matchedFace, fallbackTried }
  *   - dispose()：插件卸载时由 index.js 的 ctx.effect 调用
  */
 export function attachHostWire(ctx, dispatcher, config = {}) {
@@ -610,14 +611,48 @@ export function attachHostWire(ctx, dispatcher, config = {}) {
   /* ---- 最后一跳·宿主侧：face 注册为 cordis 服务 `zcodeDispatch` ----
    * ctx.provide 即官方注册口（cordis reflect.provide：登记进共享 props 表、
    * 实现由当前 fiber 的 effect 持有，插件卸载自动撤销）。provide 缺席/重名时
-   * 降级为仅进程内 face（agent 工具不受影响，远端面不可达 → 客户端走 demo）。 */
+   * 降级为仅进程内 face（agent 工具不受影响，远端面不可达 → 客户端走降级链）。
+   * ZB-01（阶段 A 侦查 §6 的 E1 实验）：注册过程全程留痕——策略 / 错误 / 注册后
+   * 可见性写进激活信标。「服务到底有没有登记进 ctx.reflect.props」在阶段 A 无法
+   * 观测（Service 目录是静态声明目录，答不了这个问题），此处把它变成可查事实。 */
+  const provideDiag = { available: false, strategy: null, ok: false, error: null, visibleAfter: false, matchedFace: false, fallbackTried: null };
   let disposeProvide = null;
-  try {
-    if (ctx && typeof ctx.provide === 'function') {
-      disposeProvide = ctx.provide(FACE_NAME, face) ?? null;
+  const tryProvide = (label, fn) => {
+    if (typeof fn !== 'function') return false;
+    provideDiag.available = true;
+    try {
+      disposeProvide = fn() ?? null;
+      provideDiag.strategy = label;
+      provideDiag.ok = true;
+      provideDiag.error = null;
+      return true;
+    } catch (e) {
+      provideDiag.strategy = provideDiag.strategy ?? label;
+      provideDiag.error = e?.message ?? String(e);
+      return false;
     }
-  } catch {
-    disposeProvide = null; // 服务名已被占用等注册失败：不抛、不白屏，走降级
+  };
+  if (!tryProvide('ctx.provide', ctx && typeof ctx.provide === 'function' ? () => ctx.provide(FACE_NAME, face) : null)) {
+    /* 退化路径：官方客户端插件同款写法（refs/extracted/dsh-client-ui-layout/lib/client.js:600）。
+     * 仅在前一策略真正失败时才调用——同名二次 provide 会抛「already registered」。 */
+    if (ctx && ctx.reflect && typeof ctx.reflect.provide === 'function') {
+      provideDiag.fallbackTried = 'ctx.reflect.provide';
+      tryProvide('ctx.reflect.provide', () => ctx.reflect.provide(FACE_NAME, face));
+    }
+  }
+  /* 注册后可见性自检：ctx.get(FACE_NAME) 能取回即为登记成功（cordis 会包 traced proxy，
+   * 故用形状判据；恒等比较另记 matchedFace）。 */
+  try {
+    const got = ctx && typeof ctx.get === 'function' ? ctx.get(FACE_NAME) : undefined;
+    if (got !== undefined && got !== null) {
+      provideDiag.visibleAfter = true;
+      provideDiag.matchedFace = got === face || got.service === face || typeof got.snapshot === 'function';
+    }
+  } catch { /* 自检失败不改变注册判定 */ }
+  if (disposeProvide == null) {
+    try {
+      console.warn('[zcode-dispatch] 宿主远端面未注册（客户端将走降级链）：', provideDiag.error ?? 'provide 不可用');
+    } catch { /* 连 console 都不可用则静默 */ }
   }
 
   const subscribers = new Set();
@@ -684,6 +719,8 @@ export function attachHostWire(ctx, dispatcher, config = {}) {
       if (latestSnapshot == null && dispatcher) latestSnapshot = snapFiltered(dispatcher.snapshot());
       return latestSnapshot;
     },
+    /** ZB-01 诊断（写进激活信标）：provide 是否可用/成功、注册后 ctx.get 是否可见。 */
+    diagnostics: provideDiag,
     dispose() {
       try {
         disposeProvide?.(); // fiber effect 之外的双保险；幂等

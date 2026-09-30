@@ -308,6 +308,49 @@ test('restore()：上次残留 running/queued → interrupted（记录原因）�
   assert.equal(done.state, 'done');
 });
 
+test('JOBS_FILE_CAP 淘汰终态时回收其捕获日志；越界路径被拒绝（ZB-05）', async () => {
+  /* 背景：logs/<jobId>.{out,err}.log 每任务 2 个、原先淘汰时只删内存条目不删文件 ⇒ 无界增长。
+   * 本用例锁两件事：① 淘汰即删（记录没了 → tail 再也指不到 → 文件是垃圾）；
+   * ② jobs.json 可被手工编辑，captureOut 属不可信输入，越界路径必须被拒绝。 */
+  const work = newWorkRoot();
+  mkdirSync(join(work, 'state'), { recursive: true });
+  mkdirSync(join(work, 'logs'), { recursive: true });
+
+  const inLogs = join(work, 'logs', 'j-oldest.out.log');
+  const inLogsErr = join(work, 'logs', 'j-oldest.err.log');
+  writeFileSync(inLogs, 'captured stdout');
+  writeFileSync(inLogsErr, 'captured stderr');
+  const outside = join(work, 'OUTSIDE-must-survive.txt'); // 在 logs/ 之外
+  writeFileSync(outside, 'do not delete me');
+
+  const filler = [];
+  for (let i = 0; i < 999; i++) {
+    filler.push({ id: `j-fill-${i}`, state: 'done', queuedAt: `2026-01-01T00:00:${String(i % 60).padStart(2, '0')}.000Z`, spec: {} });
+  }
+  writeFileSync(join(work, 'state', 'jobs.json'), JSON.stringify({
+    version: 1,
+    savedAt: '2026-01-01T00:00:00.000Z',
+    jobs: [
+      // 两条最老 → 必然被优先淘汰
+      { id: 'j-oldest', state: 'done', queuedAt: '2025-12-31T00:00:00.000Z', spec: {}, captureOut: inLogs, captureErr: inLogsErr },
+      { id: 'j-evil', state: 'done', queuedAt: '2025-12-31T00:00:01.000Z', spec: {}, captureOut: outside },
+      ...filler,
+    ],
+  }));
+
+  const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot: work });
+  assert.ok(existsSync(inLogs), '前置：捕获日志已就位');
+  // 派发会触发 persist：磁盘 1001 条 + 新 job > 1000 ⇒ 淘汰最老的终态
+  const j = d.dispatch({ kind: 'prompt', prompt: 'trigger-eviction', tag: 'evict' });
+  await waitForTerminal(d, j.id);
+
+  assert.equal(existsSync(inLogs), false, '① 被淘汰 job 的捕获日志必须回收');
+  assert.equal(existsSync(inLogsErr), false, '① .err.log 同样回收');
+  assert.equal(existsSync(outside), true, '② 越界路径（logs/ 之外）必须原样保留');
+  assert.ok(!d.get('j-oldest'), '被淘汰的 job 不应再在内存中（get() 对未知 id 返回 null）');
+  assert.ok(existsSync(join(work, 'state', 'jobs.json')), 'jobs.json 仍正常写盘');
+});
+
 test('snapshot() 纯 JSON 可序列化（无循环引用），终态后依旧', async () => {
   const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot: newWorkRoot(), maxConcurrent: 1 });
   const j = d.dispatch({ kind: 'prompt', prompt: 'snap', tag: 'snap' });
