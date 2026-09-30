@@ -156,6 +156,8 @@ node test/quota-rpc.test.mjs      # 额度 RPC 自测（16 项）
 node test/tail-scroll.test.mjs    # 输出框滚动决策（13 项：不闪烁 / 不弹回 / 底部跟随）
 node test/pill.test.mjs           # 最小化胶囊（16 项：标题字样 / locale 对称）
 node test/pill-position.test.mjs  # 胶囊定位与视口钳制（15 项：固定右下角 / 脏 pos 不出屏）
+node --test test/file-lock.test.mjs    # 细粒度文件锁（9 项：write 声明 / 回退底线 / 归一化 / 防死锁）
+node --test test/wait-action.test.mjs  # wait 动作（6 项：等终态 / paused 也返回 / 超时不谎报）
 Z2_HOST_REPO=<宿主项目> node test/z2-verify.mjs   # 端到端验收（不设则跳过越界检查并如实标注）
 ```
 

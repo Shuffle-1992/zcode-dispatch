@@ -185,7 +185,8 @@ export const name = 'zcode-dispatch';
 export const inject = ['tools'];
 
 /* Z12：ACTIONS 补 dismiss（Z11 漏列的既有动作）并新增 status / switch（派发总开关）。 */
-const ACTIONS = ['dispatch', 'list', 'kill', 'dismiss', 'tail', 'quota', 'status', 'switch', 'channels', 'channel', 'retry', 'fallback'];
+/* ZB-08：新增 wait（等待 job 落地，让调用方不必轮询）。追加在尾部保持既有顺序稳定。 */
+const ACTIONS = ['dispatch', 'list', 'kill', 'dismiss', 'tail', 'quota', 'status', 'switch', 'channels', 'channel', 'retry', 'fallback', 'wait'];
 
 /**
  * 工具参数 spec（@deepseek-ai/dsh-tools 官方 DSL，非 JSON Schema）：逐字段 {type, required?, description?}，
@@ -212,6 +213,13 @@ const TOOL_PARAMETERS = {
   lock: { type: 'string', enum: ['repo', 'memory', 'both'], description: 'dispatch：单写者锁集合，默认 both' },
   cwd: { type: 'string', description: 'dispatch：runner 工作目录' },
   resume: { type: 'string', description: 'dispatch：要续跑的 sessionId' },
+  /* ZB-08：细粒度文件锁。声明 ⇒ 只锁这些文件（与别的任务不冲突即可并行）；
+   * 不声明 ⇒ 回退 lock 的粗粒度 repo/memory 锁（安全语义不变）。 */
+  write: {
+    type: 'array',
+    items: { type: 'string' },
+    description: 'dispatch：该任务预计会写入的文件绝对路径列表（声明后按文件级加锁，不冲突即可并发；不声明则回退 lock 的粗粒度锁）',
+  },
   id: { type: 'string', description: 'kill/tail/retry：job id（形如 j-xxxx）' },
   n: { type: 'integer', description: 'tail：行数（≥ 1，默认 30，上限 200）' },
   retryModel: { type: 'string', description: 'retry：目标模型（同通道续跑时不允许传——--resume 带 --model 必失败）' },
@@ -219,7 +227,13 @@ const TOOL_PARAMETERS = {
 };
 
 const TOOL_DESCRIPTION_BODY = [
-  '- action=dispatch：派发一个 run。kind=prompt|task|target 必须带对应内容字段 prompt|task|target（task 为任务文件绝对路径）。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、timeoutMin（正数分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|memory|both，默认 both）、cwd、resume。总开关关闭时被拒绝（返回 ok:false + switch 状态），不创建 job。',
+  '- action=dispatch：派发一个 run。**立即返回**，不等任务跑完（返回时 state 通常是 queued；拿结果请用 action=list/tail 轮询，或 action=wait）。kind=prompt|task|target 必须带对应内容字段 prompt|task|target（task 为任务文件绝对路径）。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、timeoutMin（正数分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|memory|both，默认 both）、write（预计写入的文件列表，见下「并发」）、cwd、resume。总开关关闭时被拒绝（返回 ok:false + switch 状态），不创建 job。',
+  /* ZB-08：并发语义 —— 实测得出、此前文档未说明的关键点。
+   * 并发数 = min(maxConcurrent, 锁闸)。锁闸通常更严：lock=both（默认）的任务彼此互斥串行，
+   * 即使把 maxConcurrent 调到 8 也一样。想并发，要么用跨锁任务（repo / memory 各一 ⇒ 最多 2 路），
+   * 要么声明 write（按文件判冲突，不冲突即可并行 —— 这是提升并发的正道）。 */
+  '- **并发**：并发数 = min(配置 maxConcurrent, 单写者锁闸)，**锁闸通常更严**。lock=both（默认）的任务彼此串行；lock=repo 与 lock=memory 可并行（最多 2 路）。想让多个任务同时推进，请给它们声明 write（预计写入的文件列表）：只有写同一文件的任务才互斥，写不同文件的可并发。',
+  '- action=wait：等待 job 落到终态或 paused（id 必填，timeoutSec 可选，缺省取该任务 timeoutMin 的秒数）。paused 也返回（不干等，让调用方决定 retry 续跑还是换通道交接）；超时返回 timedOut:true 与当前状态，不谎报完成。',
   '- action=list：列出全部 run（running/queued 优先，含状态/锁/用量/上下文占用；不含 tail 内容）。',
   '- action=kill：按 id 终止。queued 直接移除；running 发终止信号后落 killed。',
   '- action=dismiss：把 paused/终态 job 从列表移除（queued/running 必须先 kill）。',

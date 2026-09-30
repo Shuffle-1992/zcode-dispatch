@@ -47,7 +47,7 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 | 字段 | 类型/默认 | 说明 |
 |---|---|---|
 | `demo` | boolean / `false` | UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher |
-| `maxConcurrent` | integer / `1` | 同时运行的 run 上限（单写者互斥下的并发度） |
+| `maxConcurrent` | integer / `1` | 同时运行的 run 上限。**注意：它与单写者锁是两道独立的闸，实际并发 = min(两者)**，见下节 |
 | `runnerPath` | string / `''` | runner 绝对路径（宿主项目 `scripts/collab/zcode-run.mjs`，只读使用）。**与 `workRoot` 任一为空则不创建 dispatcher**（UI 走 demo 降级，工具动作返回可读错误） |
 | `ledgerPath` | string / `''` | 台账 `zcode-runs.jsonl` 绝对路径；留空则跳过台账回读与用量聚合 |
 | `workRoot` | string / `''` | 派发器工作根目录（`locks/`、`state/jobs.json`、`logs/` 落在这里）。留空即落到本包 `.data/` |
@@ -71,7 +71,7 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 
 ## agent 工具 `zcode_dispatch`
 
-一个工具 + `action` 参数：`dispatch | list | kill | dismiss | tail | quota | status | switch | channels | channel | retry | fallback`，
+一个工具 + `action` 参数：`dispatch | list | kill | dismiss | tail | quota | status | switch | channels | channel | retry | fallback | wait`，
 与 UI 悬浮窗操作一一对应
 （同一实现：`wire.host.mjs` 的 `createActionHandler`，references/user-actions.md「一个操作两个调用方」）。
 
@@ -85,6 +85,61 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
   （子进程已退出），UI「关闭」按钮因此先 `kill`、kill 无效时退回 `dismiss`。
 - `channels` / `channel set` / `retry(jobId, {provider?, model?})` / `fallback`：Z6 通道与续跑，见下节。
 - 限制：单写者互斥（同锁 FIFO 排队，不报错）；`memoryBench` 仅 prompt；工具不授予/确认任何权限。
+
+## 并发语义（ZB-08：实测得出，此前文档未说明）
+
+**实际并发 = min(`maxConcurrent`, 单写者锁闸)**，而**锁闸通常更严**：
+
+| 任务的 `lock` / `write` | 行为 |
+|---|---|
+| `lock=both`（默认，**未声明 `write`**） | 彼此**完全串行** —— 即使把 `maxConcurrent` 调到 8 也一样 |
+| `lock=repo` 与 `lock=memory` 各一 | 可并行（**最多 2 路**，锁只有两把） |
+| 声明了 `write: [...]` | **按文件判冲突**：写不同文件的可并行；写同一文件的后排队 |
+
+> 实测（2026-09-30）：T18（`lock=both`）跑 27 分钟期间，一个只要 `repo`、
+> 一个只要 `memory` 的任务全程干等，三者 `started`/`finished` 首尾相接、**无一毫秒重叠** ——
+> 因为 `maxConcurrent=1` 是总闸。故 `maxConcurrent` 已提到 4（profile 配置）。
+>
+> 但**粗粒度锁仍是最严的那道闸**：`lock=both` 的任务彼此串行与 `maxConcurrent` 无关。
+> **想真正提升并发，正确做法是声明 `write`**（细粒度文件锁），而不是放宽锁。
+
+### 细粒度文件锁（`write`）
+
+派发时声明「这个任务预计写哪些文件」，core 就只为这些路径加锁：
+
+```
+dispatch(write: ['F:\\proj\\src\\a.ts'])   # 只锁 a.ts
+```
+
+- **写不同文件 ⇒ 可并行**（这是本机制的全部收益）
+- **写同一文件 ⇒ 后者排队**（细粒度互斥仍成立）
+- **路径归一化**：Windows 上大小写不敏感，`F:\proj\src\a.ts` 与 `F:\PROJ\SRC\A.TS`
+  视为**同一文件**（否则会产出多把锁、同一文件被并发写 —— 这是开发中实测抓到并修掉的 bug）
+- **防死锁**：多文件按归一化路径**排序后**依次加锁，所有任务加锁顺序一致
+- **加锁留痕**：锁体回存 `paths`，UI「单写者 / 文件锁」分区展示**哪个文件被哪个进程锁着、锁了多久**
+
+> ⚠️ **安全底线**：**未声明 `write` 的任务一律回退到 `repo`/`memory` 粗粒度锁**。
+> 细粒度是「声明了才生效的可选优化」，**不是默认放宽** —— 否则不声明的任务会失去互斥保护，
+> 多个 ZCode 进程同时改同一个仓库，那正是单写者语义要防的事故。
+> 测试 `test/file-lock.test.mjs` 的第一条就是这个底线。
+
+### `wait`：让会话不必轮询
+
+`dispatch` 是 **fire-and-forget**（实测：返回时 `state=queued`、无回调），会话拿结果得自己轮询。
+`wait` 补上这个缺口：
+
+```
+dispatch(...)            → { ok:true, job:{ id, state:'queued' } }
+wait(id, timeoutSec)     → { ok:true, job:{…终态…}, waitedSec, timedOut:false }
+```
+
+语义取舍（与 CLI 的 `awaitJob` 一致）：
+
+- **终态返回** `done|failed|killed|interrupted`
+- **`paused` 也返回** —— 不干等：paused 需要调用方决定 `retry` 续跑还是换通道交接
+- **超时返回 `timedOut:true` + 当前状态 + `note`**，**绝不谎报完成**
+- `timeoutSec` 缺省取该任务 `timeoutMin` 的秒数（再缺省 600s）
+
 - 注册方式（Z13）：官方契约 `ctx.tools.register(defineTool({...}))`（`index.js` 导出
   `inject = ['tools']` 取得服务；`defineTool` 来自随 dsh 出货的 `@deepseek-ai/dsh-tools`，
   动态 import，缺包时降级为不注册 + warn，不影响激活与 UI）。
@@ -203,7 +258,12 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/tail-scroll.test.mjs` | 13 | 输出框滚动决策（ZB-05：不闪烁、不弹回、底部跟随） |
 | `node test/pill.test.mjs` | 16 | 最小化胶囊（ZB-06：保留标题字样、locale 对称） |
 | `node test/pill-position.test.mjs` | 15 | 胶囊定位与面板位置视口钳制（ZB-07：胶囊固定右下角、脏 pos 不出屏） |
+| `node test/file-lock.test.mjs` | 9 | 细粒度文件锁（ZB-08：声明 write 才生效、未声明回退粗粒度、路径归一化、防死锁、无泄漏） |
+| `node test/wait-action.test.mjs` | 6 | `wait` 动作（ZB-08：等终态 / paused 也返回 / 超时不谎报 / 参数校验） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
+
+> `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），
+> 退出码 0 = 全过；其余为自实现的极简断言框架。
 
 ## 已知限制
 

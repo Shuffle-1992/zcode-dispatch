@@ -225,6 +225,12 @@ window.__ModuleLoader__.load({
       '.zcd-pill-title{font-weight:600;white-space:nowrap;}',
       '.zcd-pill-n{flex:none;min-width:16px;text-align:center;font-size:10px;font-weight:600;padding:0 4px;border-radius:999px;background:' + T.hover + ';color:' + T.text + ';}',
       '.zcd-pill-state{color:' + T.text3 + ';white-space:nowrap;}',
+      /* ZB-08：文件锁列表（哪个文件被哪个进程锁着、锁了多久） */
+      '.zcd-locks{display:flex;flex-direction:column;gap:6px;}',
+      '.zcd-filelocks{display:flex;flex-direction:column;gap:3px;}',
+      '.zcd-filelock{display:flex;align-items:center;gap:6px;font-size:10.5px;min-width:0;}',
+      '.zcd-filelock-f{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:' + T.text2 + ';}',
+      '.zcd-filelock-who{flex:none;font-weight:600;color:' + T.text + ';}',
       '@keyframes zcd-in{from{opacity:0;transform:translateY(6px) scale(.98);}}',
       '@keyframes zcd-pulse{50%{opacity:.35;}}',
     ].join('\n');
@@ -237,7 +243,8 @@ window.__ModuleLoader__.load({
         collapse: '折叠 / 展开', minimize: '最小化为胶囊', restore: '展开派发台', grip: '拖拽调整宽高（自动保存）',
         pillRunning: '运行中', pillQueued: '排队中', pillIdle: '空闲',
         pin: '固定位置（固定后不可拖动）', unpin: '取消固定（恢复可拖动）',
-        secDispatch: '派发', secJobs: '进程', secQuota: '用量', secLocks: '单写者',
+        secDispatch: '派发', secJobs: '进程', secQuota: '用量', secLocks: '单写者 / 文件锁',
+        noFileLocks: '（当前没有文件级锁：任务未声明 write，走 repo/memory 粗粒度锁）',
         kind: '类型', kindPrompt: '提示词', kindTask: '任务文件', kindTarget: '目标',
         phPrompt: '输入要发给 ZCode 的提示词…', phTask: '任务文件绝对路径…', phTarget: '要达成的目标…',
         model: '模型', provider: '通道', providerPlan: '套餐', providerPersonal: '个人 Key',
@@ -280,7 +287,8 @@ window.__ModuleLoader__.load({
         collapse: 'Collapse / Expand', minimize: 'Minimize to pill', restore: 'Restore console', grip: 'Drag to resize (saved automatically)',
         pillRunning: 'running', pillQueued: 'queued', pillIdle: 'idle',
         pin: 'Pin position (no dragging while pinned)', unpin: 'Unpin (allow dragging again)',
-        secDispatch: 'Dispatch', secJobs: 'Processes', secQuota: 'Usage', secLocks: 'Single writer',
+        secDispatch: 'Dispatch', secJobs: 'Processes', secQuota: 'Usage', secLocks: 'Writer / file locks',
+        noFileLocks: '(no file-level locks: jobs did not declare write, using coarse repo/memory locks)',
         kind: 'Kind', kindPrompt: 'Prompt', kindTask: 'Task file', kindTarget: 'Target',
         phPrompt: 'Prompt to send to ZCode…', phTask: 'Absolute path of task file…', phTarget: 'Goal to achieve…',
         model: 'Model', provider: 'Channel', providerPlan: 'Plan', providerPersonal: 'Personal key',
@@ -1912,13 +1920,26 @@ window.__ModuleLoader__.load({
         const j = (snapshot?.jobs ?? []).find((x) => x.id === rec.jobId);
         return (j && j.tag) ?? shortId(rec.jobId);
       };
-      return h('div', { className: 'zcd-row' },
-        h('span', { className: 'zcd-label' }, t('repoLock')),
-        h('span', { className: 'zcd-badge' }, holderOf(snapshot && snapshot.locks && snapshot.locks.repo)),
-        h('span', { className: 'zcd-label' }, t('memoryLock')),
-        h('span', { className: 'zcd-badge' }, holderOf(snapshot && snapshot.locks && snapshot.locks.memory)),
-        h('span', { className: 'zcd-label' }, t('queueLen')),
-        h('span', { className: 'zcd-badge' }, String((snapshot && snapshot.queue ? snapshot.queue.length : 0))),
+      /* ZB-08：用户要求「显示被单写锁的文件和对应的进程」——
+       * 文件锁表来自 core 的 listFileLocks()（细粒度）；粗粒度 repo/memory 与队列长度仍保留，
+       * 因为大量任务没声明 write，走的正是粗粒度锁，不能从面板上消失。 */
+      const fileLocks = (snapshot && Array.isArray(snapshot.fileLocks)) ? snapshot.fileLocks : [];
+      return h('div', { className: 'zcd-locks' },
+        h('div', { className: 'zcd-row' },
+          h('span', { className: 'zcd-label' }, t('repoLock')),
+          h('span', { className: 'zcd-badge' }, holderOf(snapshot && snapshot.locks && snapshot.locks.repo)),
+          h('span', { className: 'zcd-label' }, t('memoryLock')),
+          h('span', { className: 'zcd-badge' }, holderOf(snapshot && snapshot.locks && snapshot.locks.memory)),
+          h('span', { className: 'zcd-label' }, t('queueLen')),
+          h('span', { className: 'zcd-badge' }, String((snapshot && snapshot.queue ? snapshot.queue.length : 0))),
+        ),
+        fileLocks.length === 0
+          ? h('div', { className: 'zcd-note' }, t('noFileLocks'))
+          : h('div', { className: 'zcd-filelocks' },
+            fileLocks.map((lk) => h('div', { key: `${lk.jobId}:${lk.file}`, className: 'zcd-filelock' },
+              h('span', { className: 'zcd-filelock-f', title: lk.file }, clampText(lk.file.replace(/^.*[\\/]/, ''), 40)),
+              h('span', { className: 'zcd-filelock-who' }, lk.tag ?? shortId(lk.jobId)),
+              h('span', { className: 'zcd-dim' }, fmtSec(lk.heldSec))))),
       );
     }
 

@@ -2163,3 +2163,121 @@ tail-scroll **13/13**；pill **16/16**；pill-position **15/15**。
 ### 33.6 生效条件
 
 只改 `client.js` ⇒ **刷新页面即可**（无需重启 DSH）。
+
+---
+
+## 34. ZB-08：细粒度文件锁 + `wait` 动作（并发优化）
+
+### 34.0 用户问题与实测依据
+
+用户先问「进程完成后会话能自动捕获继续任务么」，再问「只能 1 个并发么？探索下」，
+最终提出方案：**「能不能按需只锁文件？A 要写文件 A 就先查有没有别的进程在写，有则等待；
+派发台的单写者改成文件锁列表，显示被锁的文件与对应进程。」**
+
+**实测（决定性证据）**：T18（`lock=both`，跑 27 分钟）期间，我派发了一个只要 `repo`、
+一个只要 `memory` 的任务 —— 三者 `started`/`finished` **首尾相接，无一毫秒重叠**：
+
+```
+T18         lock=repo+memory  started 15:17:41  → finished 15:45:03  (1641.8s)
+wait-probe  lock=repo+memory  started 15:45:03  → finished 15:45:11  (7.8s)
+par-a       lock=repo         started 15:45:11  → finished 15:45:17  (6.4s)
+par-b       lock=memory       started 15:45:17  → finished 15:45:24  (6.9s)
+```
+
+⇒ **并发 = min(maxConcurrent, 锁闸)**，而锁闸通常更严。用户的观察成立：
+单写者锁锁住**整个进程**，但进程 27 分钟里大部分时间在思考/调 API/读文件，**并非一直在写**。
+
+### 34.1 改动一：`maxConcurrent` 1 → 4（profile patch，仓库外）
+
+`maxConcurrent=1` 是**总闸**：即便两个任务锁不冲突（repo vs memory）也无并行机会。
+提到 4。**安全性不受影响** —— 单写者语义由锁独立保证，`lock=both` 仍互斥串行。
+
+### 34.2 改动二：细粒度文件锁（`spec.write`）
+
+派发方**显式声明写入集**，core 只为这些路径加锁：
+
+| 声明 | 行为 |
+|---|---|
+| `write: [...]` | 按文件判冲突：写不同文件可并行，写同一文件后者排队 |
+| 未声明 / 空数组 | **回退 `repo`/`memory` 粗粒度锁**（安全语义不变） |
+
+实现要点：
+
+- 锁文件落 `locks/files/<sha256前16>.lock`（绝对路径含冒号/反斜杠，不能直接做文件名）；
+  **锁体回存 `paths`**，供 UI 展示「哪个文件被谁锁着」；
+- **路径归一化**：统一分隔符 + 去尾斜杠；**Windows 上整体小写**（文件系统大小写不敏感）；
+- **防死锁**：多文件按归一化路径**排序后**依次加锁，所有任务加锁顺序一致；
+- **过期清理**：`sweepFileLocks()` 沿用 repo/memory 同一套判据（2h 或持有进程已死）；
+- `snapshot.fileLocks` + `lockBlockersFor(spec)` 供 UI 与「为什么在排队」提示。
+
+> ⚠️ **安全底线（第一约束）**：**未声明 `write` 的任务一律回退粗粒度锁**。
+> 细粒度是「声明了才生效的可选优化」，**不是默认放宽** —— 否则不声明的任务失去互斥保护，
+> 多个 ZCode 进程同时改同一仓库，那正是单写者语义要防的事故。
+> `test/file-lock.test.mjs` 的第一条测试就是这个底线。
+
+### 34.3 改动三：`wait` 动作
+
+补上「派发后拿结果」的缺口（实测确认 `dispatch` 是 fire-and-forget：返回时 `state=queued`、无回调）。
+
+```
+wait(id, timeoutSec) → { ok:true, job:{…终态…}, waitedSec, timedOut:false }
+```
+
+- **终态返回**；**`paused` 也返回**（不干等 —— 需要调用方决定 retry 续跑还是换通道交接，与 CLI 的 `awaitJob` 同判据）；
+- **超时返回 `timedOut:true` + 当前状态 + `note`，绝不谎报完成**；
+- `timeoutSec` 缺省取该任务 `timeoutMin` 的秒数，再缺省 600s。
+
+### 34.4 改动四：UI「单写者」→「单写者 / 文件锁」
+
+`LockStatus` 由「repo/memory/队列」三格，扩为**三格 + 文件锁列表**：
+每行显示 `文件名 … 持有进程 tag … 已持有时长`。无文件锁时如实说明
+「任务未声明 write，走 repo/memory 粗粒度锁」（不假装有）。
+
+### 34.5 ⚠️ 开发中实测抓到的两个真 bug（都靠探针/测试抓出，非猜）
+
+**① 路径归一化不彻底 ⇒ 同一文件被并发写（严重）**
+
+初版 `normalizeForLock` **只小写了盘符**。探针实测 5 种写法：
+
+```
+原始 F:\proj\src\a.ts        -> running
+全大写 F:\PROJ\SRC\A.TS      -> running   ← 本应排队！
+大小写混合 F:\Proj\Src\a.Ts   -> running   ← 本应排队！
+fileLocks = ["f:/PROJ/SRC/A.TS","f:/Proj/Src/a.Ts","f:/proj/src/a.ts"]   ← 3 把锁！
+```
+
+⇒ 同一文件的 3 种写法产出 3 把锁，**三个任务并发写同一文件** —— 正是细粒度锁要防的事故。
+修复：**Windows 上整体小写**（POSIX 保持区分大小写）。复验：5 种写法只产出 1 把锁，后 4 个正确排队。
+
+**② 多文件锁折叠成一个键 ⇒ 文件被永久锁死（严重）**
+
+`tryAcquire` 里 `job.lockPaths = Object.fromEntries(locks.map(l => [l.name, l.path]))` ——
+文件锁的 `name` **都是 `'file'`** ⇒ 多把文件锁**折叠成一个键**，只记住最后一把，
+`releaseLocks` 漏放其余 ⇒ 那些文件**永久锁死**，后续写同一文件的任务永远排队。
+实测：任务 `done` 后仍残留一把锁（`残留文件 = ["f:/proj/src/a.ts"]`）。
+表现为「加锁顺序固定」用例 **20s 超时**。
+修复：键必须唯一（文件锁用 `file:<path>`，粗粒度用名字）。复验：残留 0，该用例
+**20s 超时 → 796ms**。
+
+> 这两条都是**我自己的实现缺陷**，靠探针打印实际值（而非猜测）定位。
+> 与 §33.4 的教训一脉相承：**测试失败/探针报绿，都要先怀疑工具本身**。
+
+### 34.6 门禁（全绿）
+
+`node --check` **11 文件**零失败；verify-plugin **20/20**；verify-switch **8/8**；
+core **12/12**；channel-retry **9/9**；quota-rpc **16/16**；
+tail-scroll **13/13**；pill **16/16**；pill-position **15/15**；
+**file-lock 9/9**（新增）；**wait-action 6/6**（新增）。
+
+### 34.7 生效条件
+
+| 改动 | 生效方式 |
+|---|---|
+| `core/dispatch-core.mjs`、`wire.host.mjs`、`index.js`（Host 半边） | **完全退出 DSH 再启动** |
+| profile patch 的 `maxConcurrent`（仓库外） | 同上 |
+| `client.js`（UI 文件锁列表） | 刷新页面（但宿主改了，仍建议重启） |
+
+**重启后验证三条**：
+1. `zcode_dispatch{action:'list'}` → 任一 job 的 `spec.write` 字段存在（未声明则为 `[]`）；
+2. 派发两个写不同文件的 `write` 任务 → 两者应**同时 running**（细粒度并发生效）；
+3. 面板「单写者 / 文件锁」分区 → 显示被锁文件与持有进程 tag。

@@ -38,12 +38,12 @@
  */
 import { spawn as nodeSpawn } from 'node:child_process';
 import {
-  closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync,
-  statSync, unlinkSync, writeFileSync, writeSync,
+  closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync,
+  renameSync, statSync, unlinkSync, writeFileSync, writeSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto'; // ZB-08：createHash 供文件锁路径哈希用
 
 const LOCK_STALE_MS = 2 * 60 * 60 * 1000; // 锁过期阈值：2h（任务包规定）
 const LOCK_ACQUIRE_RETRIES = 5;
@@ -278,6 +278,53 @@ const TERMINAL_STATES = new Set(['done', 'failed', 'killed', 'interrupted']);
 const KINDS = new Set(['task', 'prompt', 'target']);
 const LOCK_MODES = new Set(['repo', 'memory', 'both']);
 
+/* ==================== ZB-08：细粒度文件锁表 ====================
+ *
+ * 背景（用户观察 + 实测）：单写者锁把**整个进程**锁住，但一个进程 27 分钟里大部分时间在
+ * 思考 / 调 API / 读文件，并非一直在写。粗粒度锁让"锁不冲突"的任务也被迫干等 ——
+ * 实测 T18（lock=both，27 分钟）期间，只要 repo 与只要 memory 的两个任务全程排队，
+ * 三者的 started/finished 首尾相接、无一毫秒重叠。
+ *
+ * 改造：派发方可**显式声明写入集** `spec.write: string[]`；core 只为这些路径加锁。
+ * 冲突判定落到文件级：A 写 a.ts、B 写 b.md ⇒ 可并行；A 与 B 都写 a.ts ⇒ 后者排队。
+ *
+ * ⚠️ 安全底线（本设计的第一约束）：**未声明 write 的任务，一律回退到 repo/memory 粗粒度锁**。
+ * 细粒度是"声明了才生效的可选优化"，绝不是"默认放宽"——否则不声明的任务会失去互斥保护，
+ * 多个 ZCode 进程同时改同一个仓库，那正是单写者语义要防的事故。
+ *
+ * 锁文件命名：绝对路径无法直接做文件名（含冒号、反斜杠），故用 sha256 前 16 位哈希；
+ * 锁体里回存原始 paths，供 UI 展示「哪个文件被谁锁着」。
+ */
+const FILE_LOCK_DIR = 'files'; // <workRoot>/locks/files/
+
+function hashPath(p) {
+  return createHash('sha256').update(normalizeForLock(p)).digest('hex').slice(0, 16);
+}
+
+/** 归一化：统一分隔符 + 大小写（Windows 文件系统大小写不敏感）+ 去末尾斜杠。
+ *
+ * ⚠️ ZB-08 实测修正：初版**只小写了盘符**，没小写路径其余部分 —— 结果
+ * `F:\proj\src\a.ts` / `F:\PROJ\SRC\A.TS` / `F:\Proj\Src\a.Ts` 三种写法产出
+ * **3 把不同的锁**，三个任务同时写同一个文件（正是细粒度锁要防的事故，探针实测确认）。
+ * Windows 上路径整体大小写不敏感，故按平台决定：Windows 整体小写，POSIX 保持原样。 */
+function normalizeForLock(p) {
+  let s = resolve(String(p)).replace(/\\/g, '/');
+  // 去末尾斜杠（目录写法统一）
+  s = s.replace(/\/+$/, '');
+  if (process.platform === 'win32') {
+    // Windows：盘符与路径均不区分大小写 ⇒ 整体小写，保证同一文件只对应一把锁
+    s = s.toLowerCase();
+  } else if (/^[a-zA-Z]:\//.test(s)) {
+    // 非 Windows 上出现盘符写法（如 WSL 路径）时至少统一盘符大小写
+    s = `${s[0].toLowerCase()}${s.slice(1)}`;
+  }
+  return s;
+}
+
+function fileLockPath(dirLocks, p) {
+  return join(dirLocks, FILE_LOCK_DIR, `${hashPath(p)}.lock`);
+}
+
 /**
  * 创建派发器。
  * @param {object} options
@@ -319,6 +366,7 @@ export function createDispatcher(options = {}) {
   };
 
   for (const d of [dirLocks, dirState, dirLogs]) mkdirSync(d, { recursive: true });
+  mkdirSync(join(dirLocks, FILE_LOCK_DIR), { recursive: true }); // ZB-08：细粒度文件锁表落点
 
   /* ---------- 内存态：job 本体保持纯 JSON；child/watchdog 等不可序列化对象放侧表 ---------- */
   const jobs = new Map(); // id -> job（公开字段，纯 JSON）
@@ -468,7 +516,14 @@ export function createDispatcher(options = {}) {
   }
 
   /* ---------- 锁与队列 ---------- */
+  /* ZB-08：锁集合的计算。
+   *   · spec.write 非空（且文件路径合法）⇒ 细粒度：只锁这些文件
+   *   · 否则                            ⇒ 粗粒度 repo/memory（沿用既有语义，不退化安全） */
   function locksFor(spec) {
+    const decl = normalizeWriteSet(spec && spec.write);
+    if (decl.length > 0) {
+      return decl.map((p) => ({ name: 'file', path: fileLockPath(dirLocks, p), file: p }));
+    }
     if (spec.lock === 'repo') return [{ name: 'repo', path: repoLockPath }];
     if (spec.lock === 'memory') return [{ name: 'memory', path: memoryLockPath }];
     return [ // 默认 both；固定顺序 repo→memory，防死锁
@@ -477,18 +532,107 @@ export function createDispatcher(options = {}) {
     ];
   }
 
+  /** 归一化声明的写入集：去空、去重（归一化后）、排序（保证加锁顺序一致 ⇒ 防死锁）。
+   *  返回绝对路径数组；非法输入（非数组/空数组）返回 []，调用方据此回退粗粒度锁。 */
+  function normalizeWriteSet(write) {
+    if (!Array.isArray(write)) return [];
+    const out = [];
+    const seen = new Set();
+    for (const raw of write) {
+      if (typeof raw !== 'string') continue;
+      const s = raw.trim();
+      if (!s) continue;
+      const norm = normalizeForLock(s);
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      out.push(norm);
+    }
+    // 排序 ⇒ 所有任务对同一组文件的加锁顺序一致，避免 A 等 B、B 等 A 的循环等待
+    out.sort();
+    return out;
+  }
+
+  /** 当前全部文件锁（供 UI 与诊断）。返回 [{file, jobId, tag, at, pid, heldSec}] */
+  function listFileLocks() {
+    const dir = join(dirLocks, FILE_LOCK_DIR);
+    if (!existsSync(dir)) return [];
+    const out = [];
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.lock')) continue;
+      const f = join(dir, name);
+      const rec = readLockFile(f);
+      if (!rec) continue;
+      const heldSec = Math.max(0, Math.round((nowMs() - (Date.parse(rec.at) || nowMs())) / 1000));
+      const owner = jobs.get(rec.jobId);
+      out.push({
+        file: Array.isArray(rec.paths) && rec.paths[0] ? rec.paths[0] : '(unknown)',
+        paths: Array.isArray(rec.paths) ? rec.paths : [],
+        jobId: rec.jobId,
+        tag: owner ? owner.tag ?? null : null,
+        at: rec.at ?? null,
+        pid: rec.pid ?? null,
+        heldSec,
+      });
+    }
+    return out.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+  }
+
+  /** 清理过期的文件锁（与 repo/memory 锁同一套过期判据：2h 或持有进程已死）。 */
+  function sweepFileLocks() {
+    const dir = join(dirLocks, FILE_LOCK_DIR);
+    if (!existsSync(dir)) return;
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.lock')) continue;
+      const f = join(dir, name);
+      const rec = readLockFile(f);
+      if (rec && isStaleLock(rec, f, nowMs())) {
+        try {
+          unlinkSync(f);
+        } catch { /* 竞争失败无妨，下一轮再清 */ }
+      }
+    }
+  }
+
+  /** 判断某任务此刻能否拿到锁（只判不锁），用于「为什么在排队」的提示。 */
+  function lockBlockersFor(spec) {
+    const locks = locksFor(spec);
+    const blockers = [];
+    for (const l of locks) {
+      if (!existsSync(l.path)) continue;
+      const rec = readLockFile(l.path);
+      if (!rec || rec.jobId === spec.__jobId) continue;
+      if (isStaleLock(rec, l.path, nowMs())) continue;
+      blockers.push(l.name === 'file' ? `file:${l.file}` : l.name);
+    }
+    return blockers;
+  }
+
   function tryAcquire(job, locks) {
     const got = [];
+    const at = new Date(nowMs()).toISOString();
     for (const l of locks) {
-      const ok = acquireLockFile(l.path, { jobId: job.id, pid: process.pid, at: new Date(nowMs()).toISOString(), lock: l.name }, nowMs());
+      // ZB-08：文件锁的锁体回存 paths，让 UI 能显示「哪个文件被谁锁着」
+      const info = {
+        jobId: job.id,
+        pid: process.pid,
+        at,
+        lock: l.name,
+        ...(l.name === 'file' ? { paths: locks.map((x) => x.file).filter(Boolean) } : {}),
+      };
+      const ok = acquireLockFile(l.path, info, nowMs());
       if (!ok) {
         for (const g of got.reverse()) releaseLockFile(g.path, job.id); // 拿不全则全放
         return false;
       }
       got.push(l);
     }
-    job.lock = locks.map((l) => l.name).join('+');
-    job.lockPaths = Object.fromEntries(locks.map((l) => [l.name, l.path]));
+    job.lock = locks.map((l) => (l.name === 'file' ? `file:${l.file}` : l.name)).join('+');
+    /* ⚠️ ZB-08 实测修正：初版用 `Object.fromEntries(locks.map(l => [l.name, l.path]))`，
+     * 而文件锁的 name 都是 'file' ⇒ 多把文件锁**折叠成一个键**，只记住最后一把，
+     * releaseLocks 于是漏放其余文件锁 ⇒ 那些文件被**永久锁死**（实测：任务 done 后仍残留
+     * 一把锁，后续写同一文件的任务永远排队等待 —— 表现为 20s 超时）。
+     * 键必须唯一：文件锁用路径，粗粒度锁用名字。 */
+    job.lockPaths = Object.fromEntries(locks.map((l) => [l.name === 'file' ? `file:${l.file}` : l.name, l.path]));
     return true;
   }
 
@@ -971,6 +1115,14 @@ export function createDispatcher(options = {}) {
     const body = { task: spec.task, prompt: spec.prompt, target: spec.target }[spec.kind];
     if (body == null || body === '') throw new TypeError(`dispatch(spec): kind=${spec.kind} 需要对应的 ${spec.kind} 字段`);
     if (spec.lock != null && !LOCK_MODES.has(spec.lock)) throw new TypeError('dispatch(spec): spec.lock 必须是 repo|memory|both');
+    /* ZB-08：write 是可选项（声明 ⇒ 细粒度文件锁；不声明 ⇒ 回退粗粒度）。
+     * 只校验"是字符串数组"，不强制非空——空数组按未声明处理（回退，安全）。 */
+    if (spec.write != null) {
+      if (!Array.isArray(spec.write)) throw new TypeError('dispatch(spec): spec.write 必须是文件路径数组');
+      for (const p of spec.write) {
+        if (typeof p !== 'string' || !p.trim()) throw new TypeError('dispatch(spec): spec.write 里不能有空路径或非字符串');
+      }
+    }
     if (spec.memoryBench && spec.kind !== 'prompt') throw new TypeError('dispatch(spec): memoryBench 仅支持 kind=prompt（runner 限制）');
     if (spec.timeoutMin != null && !(Number(spec.timeoutMin) > 0)) throw new TypeError('dispatch(spec): timeoutMin 必须为正数');
   }
@@ -1240,13 +1392,16 @@ export function createDispatcher(options = {}) {
         repo: existsSync(repoLockPath) ? readLockFile(repoLockPath) : null,
         memory: existsSync(memoryLockPath) ? readLockFile(memoryLockPath) : null,
       },
+      /* ZB-08：细粒度文件锁列表（UI「单写者」分区改展示它：哪个文件被哪个进程锁着） */
+      fileLocks: listFileLocks(),
       queue: [...queue],
       jobs: list(),
     };
   }
 
-  // 启动：清过期锁 → 恢复上次状态（可再次显式调用 restore()，幂等）→ 读通道/降级链持久化
+  // 启动：清过期锁（含 ZB-08 文件锁表）→ 恢复上次状态（可再次显式调用 restore()，幂等）→ 读通道/降级链持久化
   sweepStaleLocks([repoLockPath, memoryLockPath], nowMs);
+  sweepFileLocks();
   restore();
   loadChannelState();
   loadFallbackState();
@@ -1255,6 +1410,7 @@ export function createDispatcher(options = {}) {
     workRoot,
     jobsFile,
     lockPaths: { repo: repoLockPath, memory: memoryLockPath },
+    fileLockDir: join(dirLocks, FILE_LOCK_DIR), // ZB-08
     dispatch,
     list,
     get,
@@ -1263,6 +1419,8 @@ export function createDispatcher(options = {}) {
     snapshot,
     subscribe,
     restore,
+    listFileLocks, // ZB-08：文件锁表（UI「单写者」分区改为展示它）
+    lockBlockersFor, // ZB-08：某 spec 此刻被什么挡住（「为什么在排队」）
     // Z6：通道 / 续跑 / 降级链
     getChannel,
     setChannel,

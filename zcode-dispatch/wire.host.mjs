@@ -188,6 +188,8 @@ export function slimJob(job) {
       timeoutMin: spec?.timeoutMin ?? null,
       memoryBench: Boolean(spec?.memoryBench),
       tag: spec?.tag ?? null,
+      /* ZB-08：声明的写入集（细粒度文件锁）。null/[] = 未声明 ⇒ 走 repo/memory 粗粒度锁。 */
+      write: Array.isArray(spec?.write) ? spec.write.filter((x) => typeof x === 'string' && x.trim()) : [],
     },
     usage: { ...(usage ?? {}) },
     tailCount: Array.isArray(tailLines) ? tailLines.length : 0,
@@ -250,6 +252,9 @@ export function createActionHandler(dispatcher, config = {}) {
           for (const k of ['model', 'provider', 'mode', 'tag', 'cwd', 'resume']) {
             if (p[k] != null && p[k] !== '') spec[k] = p[k];
           }
+          /* ZB-08：细粒度文件锁 —— 调用方声明写入集，只为这些路径加锁。
+           * 不声明（null/空数组）⇒ core 回退到 repo/memory 粗粒度锁，安全语义不变。 */
+          if (Array.isArray(p.write) && p.write.length > 0) spec.write = p.write.filter((x) => typeof x === 'string' && x.trim());
           if (p.lock != null && p.lock !== '') spec.lock = p.lock;
           if (p.timeoutMin != null && p.timeoutMin !== '') spec.timeoutMin = Number(p.timeoutMin);
           if (p.memoryBench != null) spec.memoryBench = Boolean(p.memoryBench);
@@ -265,6 +270,52 @@ export function createActionHandler(dispatcher, config = {}) {
           return ok
             ? { ok: true, job: slimJob(dispatcher.get(id)) }
             : { ok: false, error: `kill 失败：job 不存在或已是终态（id=${id}）` };
+        }
+        /* ZB-08：wait —— 让调用方能「派发 → 等结果 → 接着干」。
+         * 注意语义取舍：**paused 也返回**（不干等），因为 paused 需要人/调用方决定
+         * 是 retry 续跑还是换通道交接 —— 与 CLI 的 awaitJob（:120）保持同一判据。
+         * 超时返回 timedOut:true + 当前状态，**绝不谎报完成**。 */
+        case 'wait': {
+          const id = p.id ?? p.jobId;
+          if (!id) return { ok: false, error: 'wait 需要参数 id' };
+          const job = dispatcher.get(id);
+          if (!job) return { ok: false, error: `wait 失败：job 不存在（id=${id}）` };
+          const DONE = ['done', 'failed', 'killed', 'interrupted'];
+          const started = Date.now();
+          if (job.state === 'paused' || DONE.includes(job.state)) {
+            return { ok: true, job: slimJob(job), waitedSec: 0, timedOut: false };
+          }
+          // 超时：优先用调用方给的 timeoutSec，否则取该任务 timeoutMin（分钟→秒），都没有则 10 分钟
+          const specSec = job.spec?.timeoutMin != null ? Number(job.spec.timeoutMin) * 60 : null;
+          const sec = p.timeoutSec != null ? Number(p.timeoutSec) : (specSec ?? 600);
+          if (!Number.isFinite(sec) || sec <= 0) return { ok: false, error: 'wait 的 timeoutSec 必须为正数' };
+          const settled = await new Promise((done) => {
+            const t0 = Date.now();
+            const finish = (j, timedOut) => {
+              try { un?.(); } catch { /* 已退订 */ }
+              done({ j, timedOut, waitedSec: Math.round((Date.now() - t0) / 1000) });
+            };
+            let un = null;
+            const check = (j) => {
+              if (j && (j.state === 'paused' || DONE.includes(j.state))) finish(j, false);
+            };
+            check(dispatcher.get(id)); // 可能已在我订阅前就落地
+            un = dispatcher.subscribe((ev) => {
+              if (ev.type === 'job-updated' && ev.job?.id === id) check(dispatcher.get(id));
+            });
+            setTimeout(() => {
+              const cur = dispatcher.get(id);
+              if (cur && (cur.state === 'paused' || DONE.includes(cur.state))) finish(cur, false);
+              else finish(cur ?? null, true);
+            }, sec * 1000).unref?.();
+          });
+          return {
+            ok: true,
+            job: settled.j ? slimJob(settled.j) : null,
+            waitedSec: settled.waitedSec,
+            timedOut: settled.timedOut,
+            ...(settled.timedOut ? { note: `等待超时（${sec}s），job 仍在 ${settled.j?.state ?? 'unknown'}；可继续 wait 或稍后 list 查看` } : {}),
+          };
         }
         /* Z11：dismiss = 把 paused/终态 job 从列表移除并落盘（queued/running 必须先 kill）。
          * 返回 {ok:true, id, state}；UI 的「关闭」按钮先 kill、kill 无效（paused）时退回本动作。 */
