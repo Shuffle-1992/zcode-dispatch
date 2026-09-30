@@ -1946,3 +1946,42 @@ git push --force-with-lease=main:1efaa4b0d96f2ce0d2775afd75c2fe960d6a8632 origin
 - **本地残留**：`~\.dsh\storages\session_projcache\sessions\session-e47365d1-….json`（会话投影缓存）1 处
   —— 成因是密钥被贴进对话内容。`~\.dsh\sessions` 无命中。
   该 PAT **用户已撤销** ⇒ 残留为死密钥，无利用价值；**决定不清理**（改 JSON 有损坏会话记录的风险，收益为零）。
+
+---
+
+## 31. ZB-04：修 GitHub 仓库「About」描述乱码
+
+**症状**：仓库 About 显示 `DSH ??:ZCode ??? -- ? DeepSeek Harness ?????/?? ZCode ????…`（中文全成 `?`）。
+
+**根因**：建仓库时用 **PowerShell 5.1 的 `Invoke-RestMethod` 传字符串 body** —— PS 5.1 对 string body
+按非 UTF-8 编码发送，中文字节被替换为 `0x3F`('?')。**不可逆**：不是显示层问题，存进去就是问号，
+只能整条重写。
+
+**两次无效尝试（记录以免重犯）**：
+
+| 尝试 | 结果 |
+|---|---|
+| 加 `-ContentType 'application/json; charset=utf-8'` | ❌ 无效 —— 问题在 **body 编码**，不在声明 |
+| `-InFile <utf8.json>`（文件是 UTF-8 无 BOM） | ❌ 同样无效 —— PS 5.1 读 `-InFile` 也走默认（ANSI）编码 |
+
+**正确修法**：把 body 作为**字节数组**传，PS 5.1 对 `byte[]` 不做任何编码转换：
+
+```powershell
+$json  = '{"description":' + (ConvertTo-Json $desc -Compress) + '}'
+$bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($json)
+Invoke-RestMethod -Method Patch -Uri … -Body $bytes -ContentType 'application/json' …
+```
+
+**自检**（先证明 body 本身是对的，再谈远端）：打印字节，确认是 UTF-8 多字节序列
+（`E6 8F 92`=插、`E4 BB B6`=件、`EF BC 9A`=：）且 `0x3F` 计数 **= 0**。
+
+**验证**：免认证 GET 独立回读，与期望串 `-ceq` **逐字符一致** ✅；
+`homepage` / `topics` 均为空 ⇒ 无其它元数据受影响。
+
+> **仓库内容未受影响**：此前从 GitHub 全新克隆已通过 git 对象哈希校验；README 本地字节数
+> 与 `git cat-file -s HEAD:README.md` 均为 **8906** ✅。
+>
+> **附带自查（我的探针缺陷）**：初查时我报「README 中文匹配失败 ❌」，实为 PS 5.1 的
+> `Invoke-WebRequest.Content` 返回 **Byte[]**（8906 是**字节数**不是字符数），拿字节数组去
+> `-match` 字符串必然失败。**是我的探针错，不是仓库有问题** —— 又一次印证本轮反复出现的教训：
+> 验证工具本身也要被验证。
