@@ -76,8 +76,8 @@
 
 ### P1（本单核心）：让面板显示**真数据**（徽标从「演示数据」变「已连接」）
 
-> ⛔ **写者占用提醒（2026-09-30 15:0x）**：标准模式会话正在跑 Z12（插件接总开关：`index.js` / `wire.host.mjs` / `wire.client.mjs` / `client.js` / `locale`）与随后的 Z13（`index.js` 工具注册）。
-> **在此之前请只做「只读侦查」并把结论写进 `tasks/CREATOR-RECON.md`；不要修改上述文件**，否则两方同写会互相覆盖。等 DSH 通知「Z12/Z13 已放行」后再进入实施阶段。
+> ⛔ **写者占用状态（2026-09-30 15:4x 更新：已放行 ✅）**：Z12（总开关）/ Z13（工具注册）/ Z14（pointer-events）均已收尾并通过 DSH 独立验收；交接单此前要求的「阶段 A 只读侦查」已由创造模式完成（交付 `tasks/CREATOR-RECON.md`，568 行，结论见其 §4）。
+> **→ 现在可以进入阶段 B 实施，写者为创造模式会话（独占）。**
 
 **阶段 A（现在就能做，只读）**：
 1. `cordis_inspect_query` → **Slots**：导出本版本槽位表（尤其 `shell.overlay` 的 kind/scope/children）与**当前已注册项清单**；确认 `zcode-dispatch.console` 是否在其中。
@@ -85,14 +85,28 @@
 3. `cordis_inspect_query` → **Event** + Tool：记录官方工具注册面（`ctx.tools.register` 的实际可见性与 `defineTool` 契约位置），作为 Z13 的交叉验证。
 4. 结论落 `tasks/CREATOR-RECON.md`（含原始查询输出），**不改任何源码**。
 
-**阶段 B（等 DSH 放行后实施）**：
-宿主半边**已激活**（`zcode-dispatch\.data\{locks,logs,state}` 已创建；无 `jobs.json` 是因为还没有 job 落盘）。缺的是**客户端能否拿到 `ctx.remote.zcodeDispatch`**。
-- 若 phase A 结论是"服务未提供/形态不对"：按官方形态改写 —— `refs/dsh-typert/protocol/README.zh.md`（`TypertRemoteService` + `Remote` 装饰器 / `bindTypertRemote()`；实现见 `protocol/lib/index.js:146-157`、`:248-268`），对照 `refs/dsh-typert/plugin-manager/lib/index.js`（官方 host 半边完整实现）；
-- 客户端 `$mount(REMOTE_CONTRIBUTION)` 契约对齐 `refs/dsh-typert/registry/lib/client.js`；
-- 判据：徽标「演示数据」→「**已连接**」，且进程列表反映真实 job（空列表 = 正确的"无进程"）。
+**阶段 B（已放行：Z12/Z13/Z14 均已收尾，当前无其他写者）**：
+
+> 🎁 **现成可用的第三方插件模板**（本轮最重要的发现）：profile 里已安装并正常工作的 **`dsh-plugin-whale-pet`**（v0.2.8，GitHub 开源）做的是**和我们完全一样的事** —— 自定义 `remote.<ns>` 命名空间 + typert。
+> 已归档为只读参考：`refs/plugin-whale-pet/{package.json,cordis.patch.yml,lib_index.js,lib_typert.host.js,lib_remote.js}`（gitignored）。
+
+| 步骤 | 官方可用形态（whale-pet 实证） | 我们的现状 |
+|---|---|---|
+| ① 宿主暴露远端面 | `service.typertRemote = Object.freeze({ service, serviceKey: name, namespace: name }); ctx.provide(name, service);`（`refs/plugin-whale-pet/lib_index.js:101-109`） | ✅ `ctx.provide` 已有；❌ **缺 `typertRemote` 标记**（这极可能就是 H1/H2 之争的答案） |
+| ② 宿主描述符 | `exports["./typert"]` → `{ package, face:'host', schemas:[{name,create}], invocations:[…], model:{ services:[{ key, exportName, description, summary, tags, members:[{kind:'method',name,signature}], types:[] }], events:[], objects:[] } }`（`refs/plugin-whale-pet/lib_typert.host.js`，仅 847B） | ⚠️ 我们 Z7 手写的 `TYPERT` 需按此对齐（尤其 `model.services[].members`） |
+| ③ 客户端调用命名空间 | 顶层 `inject: ['slots','sessions','connection','locale','remote']`，再用 **子 fiber**：`ctx.inject(['remote.whalePet'], scope => …)`（`refs/plugin-whale-pet/lib_client.js`） | ❌ 我们现在是"运行时探测" —— 正解是改成子 fiber 注入（**既有序又不阻塞条目激活**，这正是此前 boot 死锁的解） |
+| ④ 客户端侧制品 | `exports["./remote"]` → 携带 descriptor/schema 的客户端制品（whale-pet `lib/remote.js`，41KB，内含 Zod） | ⚠️ 我们的 `wire.client.mjs` 需按此形态产出/对齐 |
+
+- `.data\{locks,logs,state}` 已创建 → 宿主半边**激活成功**；无 `jobs.json` 只是因为还没有 job 落盘。
+- 判据（不变）：徽标「演示数据」→「**已连接**」。
+- 若 ① 完成后仍不通：做侦查报告 §6 的 **E1 实验**（在 `attachHostWire` 的 catch 里补 `log('warn', …)` + 把 `wire.registered` 写进启动日志），重启后读日志即可分 H1/H2。
 
 **阶段 C（已由标准模式完成，供参考）**：agent 工具注册的官方契约已挖到并存档于 `refs/dsh-tools/`：
-`import { defineTool } from '@deepseek-ai/dsh-tools'` + 插件导出 `inject = ['tools']` + `ctx.tools.register(defineTool({name, description, parameters, output, execute}))`（样例：`refs/dsh-tools/tool-fs-example/index.js:261`、`:1176`、`:1212`；契约：`refs/dsh-tools/schema.js:274-330`）。Z13 正据此改造 `index.js`，**别再重复验证**。
+`import { defineTool } from '@deepseek-ai/dsh-tools'` + 插件导出 `inject = ['tools']` + `ctx.tools.register(defineTool({name, description, parameters, output, execute}))`（样例：`refs/dsh-tools/tool-fs-example/index.js:261`、`:1176`、`:1212`；契约：`refs/dsh-tools/schema.js:274-330`）。Z13 已据此改造完成，DSH 独立复现 **13/13**（`tools/` 内的探针 + 桩模块路径）。
+
+> ⚠️ **留给创造模式核实的一个真机风险**：`@deepseek-ai/dsh-tools` 是**裸 import**，而我们的包位于 `F:\My Code\dsh-plugins`（不在 DSH 安装目录内），profile 的 `node_modules` 里也**没有** `@deepseek-ai` 作用域 —— 本地复现必须用解析钩子把它指向桩模块才能走通。
+> whale-pet 的宿主半边**不 import 任何 `@deepseek-ai/*`**（只用注入的 `agents` 服务），所以第三方插件能否裸 import 宿主包**没有先例证据**。
+> 请用 `Tool.listTools` 核实 `zcode_dispatch` 是否真的出现；若**缺席**，修法是给 `loadDefineTool()` 增加**绝对路径回退**（候选：`process.resourcesPath`、`D:\DeepSeek\resources\app.asar\dsh\node_modules\@deepseek-ai\dsh-tools\lib\index.js`、env 覆盖），而不是继续猜。
 
 本地已加两道"可见化"防护（提交 `e4cdb4c`）：`createWire()` 全程 try/catch、`DEAD_WIRE` 兜底、以及 **`PanelBoundary`（ErrorBoundary）** —— 任何渲染异常会显示一张「ZCode 派发台渲染失败：<msg>」卡片，而不是静默消失。
 
