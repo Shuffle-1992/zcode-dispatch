@@ -77,3 +77,14 @@
 3. **本地自证的两条路径**（写单必带）
    - 主路径：`node -e "import('./zcode-dispatch/index.js')"` → `Config['~standard'].validate({})` 应有 5 个默认值；
    - 降级路径：`node --import <block-hook>`（resolve 钩子对该包抛 ERR_MODULE_NOT_FOUND）→ 仍须有 `~standard` 且归一脏值。
+
+## 2026-09-30：DSH 崩溃对话框的「禁用第三方插件、备份 profile patch 并重启」会重置配置（务必知晓）
+
+- 它**保留备份**（`~/.dsh/profiles/desktop/cordis.patch.yml.bak-<ts>`），但会把 `cordis.patch.yml` 与
+  `dsh.profile.bundles` **重置为出厂默认**（web 模板 = `dsh-base` + `dsh-web-app`）。
+- 后果：用户自定义项全部消失 —— 默认模型（`agent-default-model`）、权限预设（`permission-presets`）、
+  `ui-settings.enabled`、`ui-chat.performanceUsage`、以及自行开启的官方实验 bundle
+  （agent-team-profile / auto-review / schedule-bundle）。
+- 还原：`profile-backup/README-RECOVERY.md`（含三态留档与两条恢复命令）。
+- **教训**：让插件进入启动路径前，先用常驻判据挡住"会阻塞启动"的写法（本轮已加：
+  「inject 不自声明 remote 命名空间」+「apply 全兜底」），否则一次启动失败就要用户点救援按钮 = 配置被重置。
