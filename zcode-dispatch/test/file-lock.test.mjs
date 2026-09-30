@@ -56,16 +56,18 @@ const FILE_A = join('F:', 'proj', 'src', 'a.ts');
 const FILE_B = join('F:', 'proj', 'docs', 'b.md');
 const FILE_A2 = join('F:', 'proj', 'src', 'A.TS'); // 大小写不同 ⇒ Windows 上应视为同一文件
 
-test('安全底线：未声明 write 的任务仍走 repo/memory 粗粒度锁（不退化互斥）', async () => {
+test('安全底线：未声明 write 的任务仍走整仓库粗粒度锁（不退化互斥）', async () => {
   const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot: newWorkRoot(), maxConcurrent: 8 });
-  const a = d.dispatch({ kind: 'prompt', prompt: 'a', lock: 'both', tag: 'A' });
-  const b = d.dispatch({ kind: 'prompt', prompt: 'b', lock: 'both', tag: 'B' });
-  // maxConcurrent 已放到 8，但 lock=both 彼此互斥 ⇒ B 必须排队
+  /* ZB-16：lock 枚举改为 repo|none；不传 write 时默认锁整仓库 ⇒ 彼此互斥。 */
+  const a = d.dispatch({ kind: 'prompt', prompt: 'a', lock: 'repo', tag: 'A' });
+  const b = d.dispatch({ kind: 'prompt', prompt: 'b', lock: 'repo', tag: 'B' });
+  // maxConcurrent 已放到 8，但整仓库锁彼此互斥 ⇒ B 必须排队
   assert.equal(d.get(b.id).state, 'queued', 'B 应与 A 串行（粗粒度锁未被绕过）');
   const ja = await waitTerminal(d, a.id);
   await waitTerminal(d, b.id);
   assert.ok(TERMINAL.includes(ja.state));
-  assert.ok(!existsSync(d.lockPaths.repo) && !existsSync(d.lockPaths.memory), '结束后粗粒度锁应释放');
+  assert.ok(!existsSync(d.lockPaths.repo), '结束后 repo 锁应释放');
+  assert.ok(!existsSync(join(d.workRoot, 'locks', 'memory.lock')), 'memory 锁已删除，不应出现');
   assert.equal(d.listFileLocks().length, 0, '未声明 write ⇒ 不产生文件锁');
 });
 
@@ -144,12 +146,17 @@ test('write 声明的加锁顺序固定（防死锁：多任务交叉声明同�
 
 test('lockBlockersFor：能报出被什么挡住（"为什么在排队"）', async () => {
   const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot: newWorkRoot(), maxConcurrent: 4 });
-  const a = d.dispatch({ kind: 'prompt', prompt: 'a', lock: 'both', tag: 'A' });
-  const blockers = d.lockBlockersFor({ kind: 'prompt', prompt: 'b', lock: 'both' });
-  assert.ok(blockers.includes('repo') && blockers.includes('memory'), `both 被 repo/memory 挡住，实际=${JSON.stringify(blockers)}`);
+  const a = d.dispatch({ kind: 'prompt', prompt: 'a', lock: 'repo', tag: 'A' });
+  const blockers = d.lockBlockersFor({ kind: 'prompt', prompt: 'b', lock: 'repo' });
+  assert.ok(blockers.includes('repo'), `应报出被 repo 挡住，实际=${JSON.stringify(blockers)}`);
+  /* ZB-16：整仓库锁持有期间，**文件锁任务也应排队**（跨层级冲突，实测缺口已修）。
+   * 故这里不再断言"直接跑"，而是断言被 cross 挡住。 */
+  const blocked2 = d.lockBlockersFor({ kind: 'prompt', prompt: 'b', write: [FILE_B] });
+  assert.ok(blocked2.some((b) => b.startsWith('cross:')), `文件锁任务应被整仓库锁挡住，实际=${JSON.stringify(blocked2)}`);
   const b = d.dispatch({ kind: 'prompt', prompt: 'b', write: [FILE_B], tag: 'B' });
-  assert.equal(d.get(b.id).state, 'running', '写不冲突文件 ⇒ 不受粗粒度锁影响，直接跑');
-  await Promise.all([waitTerminal(d, a.id), waitTerminal(d, b.id)]);
+  assert.equal(d.get(b.id).state, 'queued', '整仓库锁持有期间，文件锁任务排队（保守：无法证明无交集）');
+  await waitTerminal(d, a.id);
+  await waitTerminal(d, b.id);
 });
 
 test('文件锁目录与快照：fileLocks 出现在 snapshot 里（UI 展示来源）', async () => {

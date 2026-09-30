@@ -210,11 +210,11 @@ const TOOL_PARAMETERS = {
   timeoutMin: { type: 'number', description: 'dispatch：超时分钟（必须 > 0）' },
   memoryBench: { type: 'boolean', description: 'dispatch：附加 --memory-bench（仅 kind=prompt 支持）' },
   tag: { type: 'string', description: 'dispatch：台账 tag（缺省由 runner 生成）' },
-  lock: { type: 'string', enum: ['repo', 'memory', 'both'], description: 'dispatch：单写者锁集合。默认 repo（= 仓库文件写权限，单写者纪律本义）；任务确实会写 ZCode 记忆库（~/.zcode）时才需要 both' },
+  lock: { type: 'string', enum: ['repo', 'none'], description: 'dispatch：仓库写锁。repo（默认）= 锁仓库；none = 明确不取锁。**锁哪些文件用 write 指定**（memory/both 已于 ZB-16 删除）' },
   cwd: { type: 'string', description: 'dispatch：runner 工作目录' },
   resume: { type: 'string', description: 'dispatch：要续跑的 sessionId' },
-  /* ZB-08：细粒度文件锁。声明 ⇒ 只锁这些文件（与别的任务不冲突即可并行）；
-   * 不声明 ⇒ 回退 lock 的粗粒度 repo/memory 锁（安全语义不变）。 */
+  /* ZB-08/16：**仓库锁的粒度**。声明 ⇒ 只锁这些文件（不同文件集可并发 —— 这正是用户要的）；
+   * 不声明 ⇒ 锁整个仓库（粗粒度；单写者纪律本义）。 */
   write: {
     type: 'array',
     items: { type: 'string' },
@@ -227,12 +227,12 @@ const TOOL_PARAMETERS = {
 };
 
 const TOOL_DESCRIPTION_BODY = [
-  '- action=dispatch：派发一个 run。**立即返回**，不等任务跑完（返回时 state 通常是 queued；拿结果请用 action=list/tail 轮询，或 action=wait）。kind=prompt|task|target 必须带对应内容字段 prompt|task|target（task 为任务文件绝对路径）。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、timeoutMin（正数分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|memory|both，**默认 repo**）、write（预计写入的文件列表，见下「并发」）、cwd、resume。总开关关闭时被拒绝（返回 ok:false + switch 状态），不创建 job。',
-  /* ZB-08/15：并发语义 —— 实测得出、此前文档未说明的关键点。
-   * ZB-15 起默认锁由 both 收窄为 repo：单写者纪律的本义是"仓库文件写权限"，
-   * 而 memory 锁保护的是 ZCode 自己的记忆库（~/.zcode），与仓库写入互不相干 ——
-   * 原先默认 both 让每个任务都白占一把 memory 锁，任何两个任务都互斥，多并发无从谈起。 */
-  '- **并发**：并发数 = min(配置 maxConcurrent, 单写者锁闸)。默认 lock=repo ⇒ 只锁仓库写权限，**多个任务可并行**（互不阻塞）；若任务确实会写 ZCode 记忆库（~/.zcode），才需显式 lock=both。想让并发更精确，请声明 write（预计写入的文件列表）：只有写同一文件的任务才互斥，写不同文件的可并发。',
+  '- action=dispatch：派发一个 run。**立即返回**，不等任务跑完（返回时 state 通常是 queued；拿结果请用 action=list/tail 轮询，或 action=wait）。kind=prompt|task|target 必须带对应内容字段 prompt|task|target（task 为任务文件绝对路径）。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、timeoutMin（正数分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|none，默认 repo）、**write（本任务要写的文件列表 —— 锁的粒度就是它）**、cwd、resume。总开关关闭时被拒绝（返回 ok:false + switch 状态），不创建 job。',
+  /* ZB-16：锁模型（本轮重设计）。
+   * 仓库锁的**粒度由 write 决定**：声明 write ⇒ 只锁那些文件（不同文件集可并发）；
+   * 不声明 ⇒ 锁整个仓库（粗粒度）。memory 锁已删除。 */
+  '- **锁与并发**：并发数 = min(配置 maxConcurrent, 锁闸)。锁闸按**文件集**判定：**声明 write 的任务只锁它要写的文件** —— 不同文件集可并发，写同一文件（或与"整仓库锁"重叠）才排队。**不声明 write ⇒ 锁整个仓库**，与其它任务互斥。想让多个任务真正并发，就为每个任务声明它要写的文件。lock=none 表示明确不取锁（确认无竞写关系时用）。',
+  '- **记忆写入（默认约束）**：派发时**默认注入提示词**，要求子代理不执行 ZCode 记忆写入/自动 Memory 提取（不写 ~/.zcode）。注意 kind=task 的任务包内容由宿主 runner 读取内联，插件注入不进去 ⇒ 该任务的 job.memoryBanApplied=false（如实标记，未受禁令保护）。',
   '- action=wait：等待 job 落到终态或 paused（id 必填，timeoutSec 可选，缺省取该任务 timeoutMin 的秒数）。paused 也返回（不干等，让调用方决定 retry 续跑还是换通道交接）；超时返回 timedOut:true 与当前状态，不谎报完成。',
   '- action=list：列出全部 run（running/queued 优先，含状态/锁/用量/上下文占用；不含 tail 内容）。',
   '- action=kill：按 id 终止。queued 直接移除；running 发终止信号后落 killed。',

@@ -2670,3 +2670,120 @@ panel-reclamp **9/9**；elapsed-format **15/15**；ctx-format **23/23**；
 ### 38.8 生效条件
 
 改了 `core/dispatch-core.mjs` 与 `index.js`（**Host 半边**）⇒ **完全退出 DSH 再启动**才生效。
+
+---
+
+## 39. ZB-16：锁模型重设计（删 memory 锁 / repo 锁=明确文件集 / 派发流程显式化）
+
+### 39.0 用户要求（原话拆解）
+
+> 「repo 和 memory 也改成中文名显示，memory 改成 Zcode 记忆锁。完善下派发流程，派发可以明确是否
+> repo 锁，明确 repo 锁哪些文件，是否执行 Zcode 记忆锁，是否执行 Zcode 记忆更新。repo 锁是要
+> 明确锁哪些文件，哪个进程要锁哪些文件，不同进程锁不同文件，没有竞写关系的，可以允许并发执行。
+> 「单写者/文件锁」改成「文件锁/记忆锁」。」
+>
+> 追加（对"记忆更新开关"的答复）：「要不就删除 memory 相关的。派发 Zcode 的任务中，默认加入
+> 提示词，子代理不执行 Zcode 相关的记忆写入。」
+
+### 39.1 先查清 runner 能力（决定"记忆更新开关"能做成什么）
+
+`scripts/collab/zcode-run.mjs` 只有 `--memory-bench`，其注释语义是
+**"开启自动 Memory 提取并等待完成后再退出（需 Memory 已开启）"** —— 它**不能开关记忆写入**。
+故"是否执行记忆更新"无法做成真正的强制开关；用户据此决定**直接删除 memory 锁**，
+改为**默认注入提示词禁令**。
+
+### 39.2 锁模型：repo 锁的粒度由 `write` 决定
+
+```js
+function locksFor(spec) {
+  const decl = normalizeWriteSet(spec && spec.write);
+  if (decl.length > 0) return decl.map(…);   // ① 声明 write ⇒ 只锁这些文件
+  if (spec.lock === 'none') return [];        // ② 明确不取锁
+  return [{ name: 'repo', path: repoLockPath }]; // ③ 默认 ⇒ 锁整个仓库
+}
+```
+
+- `LOCK_MODES` 由 `repo|memory|both` 改为 **`repo|none`**；传入 `memory`/`both` 直接报错
+  （**不静默降级** —— 旧调用方立刻暴露）
+- 启动时仍清理历史遗留的 `memory.lock`（`legacyMemoryLockPath`），避免升级后那个文件永远躺着、
+  被旧快照误当成"有人持锁"
+- `snapshot.locks` 不再有 `memory` 字段；`lockPaths` 只剩 `repo`
+
+**用户要求"不同进程锁不同文件、没有竞写关系的允许并发"** —— 实测三路并行：
+
+```
+三个任务分别 write a.ts / b.ts / c.ts ⇒ 同时 running 峰值 = 3 ✅
+```
+
+### 39.3 默认注入「不写 ZCode 记忆」禁令
+
+`buildRunnerArgs` 对 `kind=prompt`/`target` 追加禁令文案（要求子代理不写 `~/.zcode` 记忆库、
+不触发 memory 工具；并声明本条优先于任务内容里冲突的指示）。
+
+**覆盖面如实标注（不假装全覆盖）**：
+- `kind=prompt` / `kind=target` ⇒ 内容由本插件传入，可拼接 ✅
+- **`kind=task` ⇒ 任务包内容由宿主 runner 读取并内联**（`zcode-run.mjs` 里写死的模板），
+  本插件注入不进去 ⇒ **不注入**，并在 `job.memoryBanApplied=false` 上如实标记
+
+> 另注：该禁令是**提示词层面**的约束（LLM 遵循），**不是进程级强制**。真正的强制需要宿主
+> runner 支持关闭 Memory（当前无此参数）。文档与注释里都按此措辞，不夸大为"禁止"。
+
+### 39.4 开发中实测抓到的两个**真实缺口**（都不是测试问题）
+
+**① 跨层级锁互不感知（安全缺口）**
+`repo.lock`（整仓库）与 `files/*.lock`（某几个文件）是两套互不知情的锁文件 ——
+实测：一个任务持整仓库锁时，另一个锁某文件的任务**照常 running**。
+但"整仓库写"**涵盖所有文件** ⇒ 必然竞写。
+修复：新增 `crossLevelBlocked()` —— 想拿文件锁时检查整仓库锁，反之检查所有文件锁；
+**保守原则**：无法证明无交集即视为冲突。`lockBlockersFor` 也把跨层级阻塞计入
+（否则面板"为什么在排队"会漏报）。
+
+**② 多文件任务的锁体 paths 重复（UI 显示错误）**
+`tryAcquire` 把**整组** `paths` 写进**每一把**文件锁，而 `listFileLocks` 取 `rec.paths[0]`
+⇒ 锁 `{a.ts, b.ts}` 的任务在面板上**显示 a.ts 两次、b.ts 永不出现**（实测确认）。
+修复：每把锁只记录**它自己**那个文件。
+
+### 39.5 UI 改动
+
+| 项 | 改动 |
+|---|---|
+| 分区名 | 「单写者 / 文件锁」→ **「文件锁 / 记忆锁」**（用户要求） |
+| 锁名中文化 | `repo 锁` → **「仓库锁」**；`lockHeld` → 「持有仓库锁」 |
+| memory 那一格 | **删除**（`LockStatus` 不再渲染） |
+| 派发区 | 新增「**仓库文件锁**」复选框 + 「**要写的文件**」输入框（逗号/换行/分号分隔，留空=锁整个仓库）+ 作用域提示 |
+| 不勾选 | 明确传 `lock:'none'`（不是静默不传） |
+| 演示数据 | demo 引擎的 `lock:'both'`/`'repo+memory'` 同步改为 `'repo'`（否则演示模式显示已删除的锁名） |
+
+### 39.6 验证
+
+- **新增 `test/lock-model.test.mjs`（8 项）**：memory/both 传入报错 / 默认锁整仓库 /
+  **★ 不同文件集三路并发** / 同文件集排队 / 部分重叠 / `lock=none` / 锁体记录"谁锁哪些文件" /
+  整仓库锁与文件锁互斥
+- **新增 `test/lock-ui.test.mjs`（26 项）**：分区名 / 中文锁名 / memory 已删除 /
+  派发区三个控件 / `parseFiles` 八种输入 / locale 中英对称
+- **改写**：`core.test.mjs` 的锁互斥用例（原用 `both`，改为文件级锁等价语义）；
+  `file-lock.test.mjs` 两处（安全底线与 `lockBlockersFor` —— 后者原来断言"文件锁任务直接跑"，
+  现在按修好的跨层级语义断言"排队"）
+- **删除**：`min-lock.test.mjs`（其语义已被 `lock-model.test.mjs` 取代）
+- **真实组件树实测**：分区顺序 5 项含「文件锁 / 记忆锁」；派发区标签含「仓库文件锁」、
+  文件输入框 placeholder 正确；锁分区标签 = `["仓库锁","队列"]`，无英文 `repo 锁`/`memory 锁`
+
+**测试开发中自曝三处**（均为我的问题，非产品缺陷）：
+① 探针未展开默认折叠的分区 ⇒ 取不到子元素（改用 localStorage 预置展开态）；
+② 探针用 `textOf.includes('文件锁')` 定位锁分区，**先命中了派发区**（它含"仓库文件锁"字样）
+   ⇒ 改用分区标题精确匹配；
+③ `new Function('return (expr)')` 求值得到**箭头函数本身**，我直接当函数用 ⇒ 断言拿到
+   `[Function]`；且 `parseFiles` 是单行、文件为 CRLF，我用 `;\n` 正则假失败 ⇒ 改为按行截取。
+
+### 39.7 门禁（全绿）
+
+`node --check` 零失败；verify-plugin **20/20**；verify-switch **8/8**；core **12/12**；
+channel-retry **9/9**；quota-rpc **16/16**；tail-scroll **13/13**；pill **16/16**；
+pill-position **16/16**；section-order **9/9**；panel-anchor **22/22**；
+panel-reclamp **9/9**；elapsed-format **15/15**；ctx-format **23/23**；
+**lock-model 8/8**（新增）；**lock-ui 26/26**（新增）；file-lock **9/9**；wait-action **6/6**。
+
+### 39.8 生效条件
+
+改了 `core/dispatch-core.mjs` 与 `index.js`（**Host 半边**）+ `client.js`（UI）
+⇒ **完全退出 DSH 再启动**（UI 部分刷新即可，但宿主改了，一并重启更稳）。

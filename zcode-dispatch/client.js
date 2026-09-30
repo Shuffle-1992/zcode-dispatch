@@ -243,8 +243,8 @@ window.__ModuleLoader__.load({
         collapse: '折叠 / 展开', minimize: '最小化为胶囊', restore: '展开派发台', grip: '拖拽调整宽高（自动保存）',
         pillRunning: '运行中', pillQueued: '排队中', pillIdle: '空闲',
         pin: '固定位置（固定后不可拖动）', unpin: '取消固定（恢复可拖动）',
-        secDispatch: '派发', secJobs: '进程', secQuota: '用量', secLocks: '单写者 / 文件锁',
-        noFileLocks: '（当前没有文件级锁：任务未声明 write，走 repo/memory 粗粒度锁）',
+        secDispatch: '派发', secJobs: '进程', secQuota: '用量', secLocks: '文件锁 / 记忆锁',
+        noFileLocks: '（当前没有文件锁：任务未声明 write，走仓库整锁）',
         kind: '类型', kindPrompt: '提示词', kindTask: '任务文件', kindTarget: '目标',
         phPrompt: '输入要发给 ZCode 的提示词…', phTask: '任务文件绝对路径…', phTarget: '要达成的目标…',
         model: '模型', provider: '通道', providerPlan: '套餐', providerPersonal: '个人 Key',
@@ -265,7 +265,10 @@ window.__ModuleLoader__.load({
         localNote: '本地用量（可核对）：台账聚合的 5 小时 / 本周 / 今日窗口',
         engineWeekUsed: '引擎本周已用（引擎本地库合计，非套餐已用）',
         planQuotaPending: '套餐剩余额度：未接入 —— CLI RPC 面无此方法（app-server usage/stats 语义是「本地已用」）；以 ZCode 客户端为准',
-        repoLock: 'repo 锁', memoryLock: 'memory 锁', queueLen: '队列', idle: '空闲', lockHeld: '持有单写者锁',
+        repoLock: '仓库锁', memoryLock: 'Zcode 记忆锁', queueLen: '队列', idle: '空闲', lockHeld: '持有仓库锁',
+        repoLockCb: '仓库文件锁', writePh: '要写的文件（逗号或换行分隔；留空=锁整个仓库）', writeHint: '只锁这些文件 ⇒ 与写其它文件的任务可并发执行',
+        writeFiles: '要写入的文件列表', lockNoneHint: '不取锁（确认无竞写关系时才用）',
+        lockScopeHint: '只锁上面列出的文件；留空则锁整个仓库（与其它任务互斥）',
         secChannel: '通道', chanNewTask: '新任务将使用：', chanDisabled: '不可用', chanLoadFail: '通道清单加载失败',
         chanOfflineHint: '未连接宿主：通道/模型来自宿主远端面，连接后这两个下拉才可选',
         chanDefaultModel: '（通道默认模型）',
@@ -287,8 +290,8 @@ window.__ModuleLoader__.load({
         collapse: 'Collapse / Expand', minimize: 'Minimize to pill', restore: 'Restore console', grip: 'Drag to resize (saved automatically)',
         pillRunning: 'running', pillQueued: 'queued', pillIdle: 'idle',
         pin: 'Pin position (no dragging while pinned)', unpin: 'Unpin (allow dragging again)',
-        secDispatch: 'Dispatch', secJobs: 'Processes', secQuota: 'Usage', secLocks: 'Writer / file locks',
-        noFileLocks: '(no file-level locks: jobs did not declare write, using coarse repo/memory locks)',
+        secDispatch: 'Dispatch', secJobs: 'Processes', secQuota: 'Usage', secLocks: 'File locks / Memory lock',
+        noFileLocks: '(no file locks: jobs did not declare write, using whole-repo lock)',
         kind: 'Kind', kindPrompt: 'Prompt', kindTask: 'Task file', kindTarget: 'Target',
         phPrompt: 'Prompt to send to ZCode…', phTask: 'Absolute path of task file…', phTarget: 'Goal to achieve…',
         model: 'Model', provider: 'Channel', providerPlan: 'Plan', providerPersonal: 'Personal key',
@@ -309,7 +312,10 @@ window.__ModuleLoader__.load({
         localNote: 'Local usage (verifiable): ledger-aggregated 5h / week / today windows',
         engineWeekUsed: 'Engine week used (engine-local DB total, not plan usage)',
         planQuotaPending: 'Plan quota remaining: not wired — no such method on the CLI RPC surface (app-server usage/stats is local-used only); defer to the ZCode client',
-        repoLock: 'repo lock', memoryLock: 'memory lock', queueLen: 'queue', idle: 'idle', lockHeld: 'holds the single-writer lock',
+        repoLock: 'Repo lock', memoryLock: 'Zcode memory lock', queueLen: 'queue', idle: 'idle', lockHeld: 'holds the repo lock',
+        repoLockCb: 'Repo file lock', writePh: 'files to write (comma/newline separated; empty = whole repo)', writeHint: 'locks only these files, so tasks writing other files can run in parallel',
+        writeFiles: 'files to write', lockNoneHint: 'no lock (only when no write conflict is possible)',
+        lockScopeHint: 'locks only the files listed above; empty locks the whole repo (exclusive)',
         secChannel: 'Channels', chanNewTask: 'New tasks will use: ', chanDisabled: 'unavailable', chanLoadFail: 'Failed to load channels',
         chanOfflineHint: 'Host not connected: channel/model come from the host Remote face and unlock once connected',
         chanDefaultModel: '(channel default model)',
@@ -910,9 +916,11 @@ window.__ModuleLoader__.load({
           counts: {}, locks: { repo: null, memory: null }, queue: [], jobs: [],
         };
         const mk = (id, tag, state, model, body, extra) => ({
-          id, tag, state, lock: state === 'running' ? 'repo+memory' : null,
+          /* ZB-16：锁名同步新模型 —— memory 已删除，演示数据也不该再出现 'repo+memory'/'both'，
+           * 否则演示模式下 UI 会显示已不存在的锁（与真实语义不一致）。 */
+          id, tag, state, lock: state === 'running' ? 'repo' : null,
           // Z11：带 kind 同名字段（spec.prompt），与 core/真实 spec 形状一致（UI 详情区读 spec.body ?? spec[kind]）
-          spec: { kind: 'prompt', body, prompt: body, model, provider: 'plan', mode: 'edit', lock: 'both', timeoutMin: 15, memoryBench: false, tag },
+          spec: { kind: 'prompt', body, prompt: body, model, provider: 'plan', mode: 'edit', lock: 'repo', timeoutMin: 15, memoryBench: false, tag },
           queuedAt: new Date().toISOString(), startedAt: state === 'queued' ? null : new Date().toISOString(),
           finishedAt: state === 'done' ? new Date().toISOString() : null,
           elapsedSec: state === 'running' ? 42 : state === 'done' ? 7.7 : null,
@@ -995,7 +1003,7 @@ window.__ModuleLoader__.load({
           running.state = 'running';
           running.startedAt = new Date().toISOString();
           running.elapsedSec = 0;
-          running.lock = 'repo+memory';
+          running.lock = 'repo';
           snap.queue = snap.queue.filter((q) => q !== id);
           snap.counts = { ...snap.counts, queued: Math.max(0, (snap.counts.queued ?? 1) - 1), running: (snap.counts.running ?? 0) + 1 };
           const rec = { jobId: id, pid: 4242, at: running.startedAt, lock: 'demo' };
@@ -1595,11 +1603,19 @@ window.__ModuleLoader__.load({
       const [mode, setMode] = useState('edit');
       const [timeoutMin, setTimeoutMin] = useState('15');
       const [bench, setBench] = useState(false);
+      /* ZB-16（用户要求：派发流程要能明确是否 repo 锁 / 锁哪些文件）：
+       *   · repoLock  —— 是否取仓库锁（取消勾选 = lock:'none'，明确不取锁）
+       *   · writeText —— 仓库锁**锁哪些文件**（逗号/换行/分号分隔；留空 = 锁整个仓库）
+       * memory 锁已按用户要求删除，故此处不再有它的开关。 */
+      const [repoLock, setRepoLock] = useState(true);
+      const [writeText, setWriteText] = useState('');
 
       const lastJob = (snapshot?.jobs ?? []).find((j) => j.id === lastJobId) ?? null;
       const active = lastJob && (lastJob.state === 'queued' || lastJob.state === 'running');
       const label = busy ? t('sending') : active ? (lastJob.state === 'queued' ? t('queuedBtn') : t('runningBtn')) : t('dispatch');
       const ph = kind === 'prompt' ? t('phPrompt') : kind === 'task' ? t('phTask') : t('phTarget');
+      /* 文件列表解析：逗号 / 换行 / 分号都能分隔（用户可能从资源管理器复制多行路径） */
+      const parseFiles = (s) => String(s ?? '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
 
       const submit = () => {
         const body = content.trim();
@@ -1612,6 +1628,12 @@ window.__ModuleLoader__.load({
         if (channel.model) spec.model = channel.model;
         if (timeoutMin !== '' && Number(timeoutMin) > 0) spec.timeoutMin = Number(timeoutMin);
         if (bench) spec.memoryBench = true;
+        /* ZB-16：把锁意图明确传下去 —— 不勾仓库锁 ⇒ none；勾了且填了文件 ⇒ 只锁那些文件。 */
+        if (!repoLock) spec.lock = 'none';
+        else {
+          const files = parseFiles(writeText);
+          if (files.length > 0) spec.write = files;
+        }
         onSubmit(spec);
       };
 
@@ -1630,6 +1652,23 @@ window.__ModuleLoader__.load({
             h('option', { value: 'yolo' }, 'yolo')),
         ),
         h('textarea', { className: 'zcd-ta', value: content, placeholder: ph, onChange: (e) => setContent(e.target.value), 'aria-label': t('content') }),
+        /* ZB-16：**锁意图**显式化（用户要求"派发可以明确是否 repo 锁，明确 repo 锁哪些文件"）。
+         * 勾选仓库锁 + 填文件 = 只锁这些文件（不同文件集可并发）；勾选但不填 = 锁整个仓库；
+         * 不勾 = lock:'none'（明确不取锁）。memory 锁已删除，故无对应开关。 */
+        h('div', { className: 'zcd-row' },
+          h('label', { className: 'zcd-row', style: { gap: 3 } },
+            h('input', { type: 'checkbox', checked: repoLock, onChange: (e) => setRepoLock(e.target.checked), 'aria-label': t('repoLockCb') }),
+            h('span', { className: 'zcd-label' }, t('repoLockCb'))),
+          repoLock
+            ? h('input', {
+              className: 'zcd-input', type: 'text', value: writeText,
+              placeholder: t('writePh'), title: t('writeHint'),
+              style: { flex: 1, minWidth: 120 }, 'aria-label': t('writeFiles'),
+              onChange: (e) => setWriteText(e.target.value),
+            })
+            : h('span', { className: 'zcd-note' }, t('lockNoneHint')),
+        ),
+        repoLock ? h('div', { className: 'zcd-note' }, t('lockScopeHint')) : null,
         h('div', { className: 'zcd-row' },
           h('span', { className: 'zcd-label' }, t('timeout')),
           h('input', { className: 'zcd-input', type: 'number', min: 1, value: timeoutMin, onChange: (e) => setTimeoutMin(e.target.value), style: { width: 56 }, 'aria-label': t('timeout') }),
@@ -2011,10 +2050,10 @@ window.__ModuleLoader__.load({
       const fileLocks = (snapshot && Array.isArray(snapshot.fileLocks)) ? snapshot.fileLocks : [];
       return h('div', { className: 'zcd-locks' },
         h('div', { className: 'zcd-row' },
+          /* ZB-16：repo 锁显示为「仓库锁」；memory 锁已按用户要求删除，故不再有那一格。
+           * 用户要求"显示被锁的文件和对应的进程"由下面的 fileLocks 列表承担。 */
           h('span', { className: 'zcd-label' }, t('repoLock')),
           h('span', { className: 'zcd-badge' }, holderOf(snapshot && snapshot.locks && snapshot.locks.repo)),
-          h('span', { className: 'zcd-label' }, t('memoryLock')),
-          h('span', { className: 'zcd-badge' }, holderOf(snapshot && snapshot.locks && snapshot.locks.memory)),
           h('span', { className: 'zcd-label' }, t('queueLen')),
           h('span', { className: 'zcd-badge' }, String((snapshot && snapshot.queue ? snapshot.queue.length : 0))),
         ),

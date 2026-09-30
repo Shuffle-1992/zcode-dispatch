@@ -57,9 +57,11 @@ async function waitFor(pred, what, timeoutMs = 10000) {
 
 test('并发 3 个 dispatch（maxConcurrent=1）→ 执行区间不重叠且 FIFO', async () => {
   const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot: newWorkRoot(), maxConcurrent: 1 });
-  const j1 = d.dispatch({ kind: 'prompt', prompt: 'a', lock: 'both', tag: 't1' });
-  const j2 = d.dispatch({ kind: 'prompt', prompt: 'b', lock: 'both', tag: 't2' });
-  const j3 = d.dispatch({ kind: 'prompt', prompt: 'c', lock: 'both', tag: 't3' });
+  /* ZB-16：lock 枚举改为 repo|none（memory/both 已删除）。此处用默认（repo）即可 ——
+   * 三个任务都要整仓库锁 ⇒ 在 maxConcurrent=1 下必然串行，测的就是这个。 */
+  const j1 = d.dispatch({ kind: 'prompt', prompt: 'a', lock: 'repo', tag: 't1' });
+  const j2 = d.dispatch({ kind: 'prompt', prompt: 'b', lock: 'repo', tag: 't2' });
+  const j3 = d.dispatch({ kind: 'prompt', prompt: 'c', lock: 'repo', tag: 't3' });
 
   const snapMid = d.snapshot();
   assert.doesNotThrow(() => JSON.stringify(snapMid), 'snapshot 运行中必须可 JSON.stringify');
@@ -97,34 +99,37 @@ test('并发 3 个 dispatch（maxConcurrent=1）→ 执行区间不重叠且 FIF
   assert.deepEqual(a.parseWarnings, []);
 });
 
-test('repo/memory 锁互斥：跨锁可并行、同锁与 both 排队 FIFO、锁文件内容与释放', async () => {
+test('ZB-16 锁模型：不同文件集可并行、同文件集排队 FIFO、锁文件内容与释放', async () => {
   const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot: newWorkRoot(), maxConcurrent: 4 });
-  const a = d.dispatch({ kind: 'prompt', prompt: 'a', lock: 'repo', tag: 'A' });
-  const b = d.dispatch({ kind: 'prompt', prompt: 'b', lock: 'memory', tag: 'B' });
+  /* 旧版测的是 repo/memory 跨锁并行；ZB-16 删除 memory 后，等价语义由**文件级锁**表达：
+   * A 锁 a.ts、B 锁 b.ts ⇒ 无竞写关系 ⇒ 可并行（这正是用户要的"不同文件允许并发"）。 */
+  const a = d.dispatch({ kind: 'prompt', prompt: 'a', write: ['F:/t/a.ts'], tag: 'A' });
+  const b = d.dispatch({ kind: 'prompt', prompt: 'b', write: ['F:/t/b.ts'], tag: 'B' });
   await waitFor(() => d.get(a.id).state === 'running' && d.get(b.id).state === 'running', 'A/B 并行运行');
   assert.ok(Date.parse(d.get(a.id).startedAt) < Date.now(), 'A 已启动');
 
-  const lockContent = JSON.parse(readFileSync(d.lockPaths.repo, 'utf8'));
-  assert.equal(lockContent.jobId, a.id);
-  assert.equal(lockContent.pid, process.pid);
-  assert.ok(Number.isFinite(Date.parse(lockContent.at)));
+  // 文件锁的锁体内容（原用例测 repo.lock 内容，现改为测文件锁锁体）
+  const aLock = d.listFileLocks().find((l) => l.jobId === a.id);
+  assert.ok(aLock, 'A 应持有一把文件锁');
+  assert.equal(aLock.jobId, a.id);
+  assert.equal(aLock.pid, process.pid);
+  assert.ok(Number.isFinite(Date.parse(aLock.at)));
 
-  const c = d.dispatch({ kind: 'prompt', prompt: 'c', lock: 'repo', tag: 'C' });
-  const e = d.dispatch({ kind: 'prompt', prompt: 'e', lock: 'both', tag: 'E' });
-  assert.equal(d.get(c.id).state, 'queued', 'C 等 repo 锁');
-  assert.equal(d.get(e.id).state, 'queued', 'E 等 both');
+  // C 与 A 写同一文件 ⇒ 排队；E 与 A、C 都不同文件？—— E 写 a.ts 故也排队（FIFO）
+  const c = d.dispatch({ kind: 'prompt', prompt: 'c', write: ['F:/t/a.ts'], tag: 'C' });
+  const e = d.dispatch({ kind: 'prompt', prompt: 'e', write: ['F:/t/a.ts'], tag: 'E' });
+  assert.equal(d.get(c.id).state, 'queued', 'C 等 a.ts 锁');
+  assert.equal(d.get(e.id).state, 'queued', 'E 等 a.ts 锁');
 
   const [ja, jb, jc, je] = await Promise.all([
     waitForTerminal(d, a.id), waitForTerminal(d, b.id), waitForTerminal(d, c.id), waitForTerminal(d, e.id),
   ]);
-  assert.equal(ja.lock, 'repo');
-  assert.equal(jb.lock, 'memory');
-  assert.equal(jc.lock, 'repo');
-  assert.equal(je.lock, 'repo+memory');
-  assert.ok(Date.parse(jc.startedAt) >= Date.parse(ja.finishedAt), 'C 必须在 A 释放 repo 之后');
+  assert.match(ja.lock, /^file:.*a\.ts$/, 'A 持文件锁');
+  assert.match(jb.lock, /^file:.*b\.ts$/, 'B 持另一文件锁');
+  assert.ok(Date.parse(jc.startedAt) >= Date.parse(ja.finishedAt), 'C 必须在 A 释放 a.ts 之后');
   assert.ok(Date.parse(je.startedAt) >= Date.parse(jc.finishedAt), 'E 按 FIFO 在 C 之后');
-  assert.ok(Date.parse(je.startedAt) >= Date.parse(jb.finishedAt), 'E 需要 B 释放 memory');
-  assert.ok(!existsSync(d.lockPaths.repo) && !existsSync(d.lockPaths.memory), '结束后锁文件应全部释放');
+  assert.equal(d.listFileLocks().length, 0, '结束后文件锁应全部释放');
+  assert.ok(!existsSync(d.lockPaths.repo), 'repo 锁未被使用（本用例全走文件锁）');
 });
 
 test('kill()：running → killed 且退出码非 0；queued → 直接 killed 不再启动', async () => {

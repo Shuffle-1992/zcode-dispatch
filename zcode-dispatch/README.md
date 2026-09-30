@@ -86,32 +86,29 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 - `channels` / `channel set` / `retry(jobId, {provider?, model?})` / `fallback`：Z6 通道与续跑，见下节。
 - 限制：单写者互斥（同锁 FIFO 排队，不报错）；`memoryBench` 仅 prompt；工具不授予/确认任何权限。
 
-## 并发语义（ZB-08 实测 + ZB-15 默认锁收窄）
+## 锁与并发语义（ZB-16 锁模型）
 
-**实际并发 = min(`maxConcurrent`, 单写者锁闸)**，而**锁闸通常更严**：
+**并发数 = min(`maxConcurrent`, 锁闸)**。锁闸按**文件集**判定 —— 这是 ZB-16 的核心：
 
 | 任务的 `lock` / `write` | 行为 |
 |---|---|
-| **默认（不传 `lock`）** | 只锁 `repo` ⇒ 与其它默认任务**仍串行**（都争 repo），但**可与 memory 任务 / write 任务并行** |
-| `lock=both` | 取 `repo`+`memory` 两把锁 ⇒ 与默认任务互斥（共享 repo） |
-| `lock=repo` 与 `lock=memory` 各一 | 可并行（最多 2 路） |
-| 声明了 `write: [...]` | **按文件判冲突**：写不同文件的可并行；写同一文件的后排队 |
+| **声明 `write: [...]`** | **只锁这些文件** ⇒ 与写**其它文件**的任务**可并发**；写同一文件的后排队 |
+| 不声明 `write`（默认 `lock=repo`） | 锁**整个仓库** ⇒ 与任何任务互斥（单写者纪律本义） |
+| `lock='none'` | 明确不取锁（确认无竞写关系时用） |
 
-> **默认锁的语义（ZB-15 收窄）**：默认 `repo` —— 单写者纪律的本义是「**仓库文件写权限**」
-> （宿主 PROTOCOL §5.2）。`memory` 锁保护的是 **ZCode 自己的记忆库（`~/.zcode`）**，
-> 与仓库写入互不相干，故改为**按需显式声明**（确实会写记忆库时才用 `lock=both`）。
+> **怎么让多个任务真正并发**：给每个任务声明它**要写的文件**（`write`）。
+> 派发面板上就是「仓库文件锁」勾选 + 「要写的文件」输入框（逗号/换行分隔，留空=锁整个仓库）。
+> 实测：三个任务分别写 `a.ts`/`b.ts`/`c.ts` ⇒ **三路同时 running**。
 
-> ⚠️ **收窄默认锁的收益边界（实测，别误解）**：`both → repo` 对「多个同类"改代码"任务」的
-> 并发提升是 **0** —— 它们仍然都争 `repo` 这一把锁。收益只在**混合场景**：
->
-> | 场景 | 同时 running 峰值 |
-> |---|---|
-> | `both` ×3 | 1 |
-> | **默认(repo) ×3** | **1**（仍串行） |
-> | 默认(repo) + 显式 `memory` | **2** |
-> | 默认(repo) + 声明 `write` | **2** |
->
-> ⇒ **想真正让多个同类任务并发，唯一正路是声明 `write`**（细粒度文件锁）。
+> **memory 锁已删除（ZB-16）**：它保护的是 ZCode 自己的记忆库（`~/.zcode`），与仓库写入互不相干。
+> ZCode 记忆写入改由**默认注入的提示词禁令**约束（派发时自动要求子代理不写记忆库）。
+> ⚠️ 该禁令只覆盖 `kind=prompt`/`target`；**`kind=task` 的任务包内容由宿主 runner 读取内联，
+> 插件注入不进去** ⇒ 该任务 `memoryBanApplied=false`（如实标记，未受禁令保护）。
+
+> **跨层级互斥（ZB-16 修的真实缺口）**：`repo.lock`（整仓库）与 `files/*.lock`（某几个文件）
+> 曾是两套互不知情的锁 —— 一个持整仓库锁时，另一个锁某文件却照常 running。
+> 但"整仓库写"涵盖所有文件 ⇒ 必然竞写。现已加 `crossLevelBlocked`：
+> 文件锁任务会检查整仓库锁，反之亦然（保守：无法证明无交集即视为冲突）。
 
 > 实测（2026-09-30）：T18（`lock=both`）跑 27 分钟期间，一个只要 `repo`、
 > 一个只要 `memory` 的任务全程干等，三者 `started`/`finished` 首尾相接、**无一毫秒重叠** ——
@@ -280,7 +277,8 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/panel-anchor.test.mjs` | 22 | 面板锚定语义（ZB-11：贴边跟随，缩窗不挤到中间、放大回原位） |
 | `node test/elapsed-format.test.mjs` | 15 | 耗时展示格式（ZB-13：恒定三段 XX时XX分XX秒；数据层仍为秒数） |
 | `node test/ctx-format.test.mjs` | 23 | 上下文占用展示（ZB-14：`180.9k / 200k`，截断非四舍五入） |
-| `node test/min-lock.test.mjs` | 7 | 默认锁最小化（ZB-15：默认只锁 repo；write 优先；both 仍需显式声明） |
+| `node test/lock-model.test.mjs` | 8 | 锁模型（ZB-16：删除 memory 锁；不同文件集可并发；同文件排队；跨层级互斥） |
+| `node test/lock-ui.test.mjs` | 26 | 派发区锁控件与中文锁名（ZB-16：仓库文件锁开关 + 要写的文件 + 分区改名） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 > `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），

@@ -8,9 +8,16 @@
  * 形如 `[zcode-run] done exit=0 elapsed=9.7s session=sess_x provider=plan:x model=M responseChars=N`，
  * 结束后按 tag 回读台账 `zcode-runs.jsonl` 补全字段（stdout 解析与台账取并集，解析失败不崩）。
  *
- * 互斥语义：spec.lock = 'repo' | 'memory' | 'both'（**默认 repo**；ZB-15 起由 both 收窄 ——
- * 单写者纪律的本义是"仓库文件写权限"，memory 锁保护的是 ZCode 自己的记忆库 ~/.zcode，
- * 与仓库写入互不相干，改为按需显式声明）。声明 spec.write 则走文件级细粒度锁。
+ * 互斥语义（ZB-16：**删除 memory 锁**，按用户要求）：
+ *   spec.lock = 'repo' | 'none'（默认 repo）
+ *   · repo ⇒ 仓库写锁。**锁什么由 spec.write 决定**：声明了文件集 ⇒ 只锁那些文件（不同文件可并发）；
+ *            未声明 ⇒ 锁整个仓库（粗粒度，单写者纪律本义）
+ *   · none ⇒ 不取锁（调用方明确知道无竞写关系时用）
+ *   同一时刻：不同文件集的任务可并发；文件集有交集（或任一为"整仓库"）则串行。
+ *
+ * 为什么删除 memory 锁：它保护的是 ZCode 自己的记忆库（~/.zcode），与仓库写入互不相干；
+ * 而 ZCode 记忆写入本身改用**默认注入的提示词禁令**约束（见 buildSpecPrompt），
+ * 不再需要一把进程间互斥锁（用户决定：派发任务默认要求子代理不写 ZCode 记忆）。
  *   同一时刻至多一个 run 持有 repo 锁、至多一个 run 持有 memory 锁；
  *   请求不满足锁条件时进 FIFO 队列等待（head-of-line，保证排队顺序），不报错。
  *   锁 = 文件锁（跨进程互斥，内容含 jobId/pid/at；过期 >2h 或 pid 已死即清理）
@@ -278,7 +285,7 @@ function atomicWrite(file, data) {
 /* ---------------- 工具 ---------------- */
 const TERMINAL_STATES = new Set(['done', 'failed', 'killed', 'interrupted']);
 const KINDS = new Set(['task', 'prompt', 'target']);
-const LOCK_MODES = new Set(['repo', 'memory', 'both']);
+const LOCK_MODES = new Set(['repo', 'none']); // ZB-16：删除 memory；none = 明确不取锁
 
 /* ==================== ZB-08：细粒度文件锁表 ====================
  *
@@ -350,7 +357,9 @@ export function createDispatcher(options = {}) {
   const dirLogs = join(workRoot, 'logs');
   const jobsFile = join(dirState, 'jobs.json');
   const repoLockPath = options.repoLockPath ? resolve(options.repoLockPath) : join(dirLocks, 'repo.lock');
-  const memoryLockPath = options.memoryLockPath ? resolve(options.memoryLockPath) : join(dirLocks, 'memory.lock');
+  /* ZB-16：memory 锁已删除（用户要求）。保留只读的 legacy 路径常量，仅用于启动时清理历史遗留的
+   * memory.lock 文件 —— 否则升级后那个文件会永远躺在 locks/ 里、且被旧版快照当成"有人持锁"。 */
+  const legacyMemoryLockPath = join(dirLocks, 'memory.lock');
   const ledgerPath = options.ledgerPath ? resolve(options.ledgerPath) : null;
   const maxConcurrent = Math.max(1, Number(options.maxConcurrent) || 1);
   const runnerCwd = options.runnerCwd ? resolve(options.runnerCwd) : process.cwd();
@@ -518,33 +527,25 @@ export function createDispatcher(options = {}) {
   }
 
   /* ---------- 锁与队列 ---------- */
-  /* 锁集合的计算（ZB-15：默认由 both 收窄为 repo）。
+  /* 锁集合的计算（ZB-16：删除 memory 锁；repo 锁的粒度由 write 决定）。
    *
-   * 用户观察（成立）：一般派发都是 repo+memory 两把锁 ⇒ 任何两个任务都互斥，
-   * 多并发无从谈起。而 **memory 锁保护的是 ZCode 自己的记忆库（~/.zcode）**，
-   * 与仓库写入互不相干 —— 绝大多数"改代码"的派发根本不写它，白占一把锁。
+   * 用户要求（本轮的模型重设计）：
+   *   · repo 锁要**明确锁哪些文件**，哪个进程锁哪些文件；
+   *   · 不同进程锁不同文件、没有竞写关系的，**允许并发执行**；
+   *   · 删除 memory 相关（ZCode 记忆写入改由默认注入的提示词禁令约束）。
    *
-   * 宿主 PROTOCOL §5.2 对单写者的定义是「**仓库文件写权限**」（ZCode 独占代码写入），
-   * 故**默认只锁 repo 就已守住单写者纪律的本义**；memory 改为按需显式声明。
-   *
-   * 三档语义：
-   *   · spec.write 非空        ⇒ 细粒度：只锁这些文件（最强并发，且更精确）
-   *   · spec.lock === 'both'   ⇒ 显式要求两把锁（任务确实会写 ~/.zcode 记忆时才用）
-   *   · 其它（含缺省 'repo'）  ⇒ **只锁 repo**（默认；单写者本义）
+   * 三档：
+   *   · spec.write 非空            ⇒ **只锁这些文件**（不同文件集可并发 —— 这正是用户要的）
+   *   · spec.lock === 'none'       ⇒ 不取锁（调用方明确知道无竞写关系）
+   *   · 其它（含缺省 'repo'）      ⇒ 锁**整仓库**（粗粒度；单写者纪律本义）
    */
   function locksFor(spec) {
     const decl = normalizeWriteSet(spec && spec.write);
     if (decl.length > 0) {
       return decl.map((p) => ({ name: 'file', path: fileLockPath(dirLocks, p), file: p }));
     }
-    if (spec.lock === 'memory') return [{ name: 'memory', path: memoryLockPath }];
-    if (spec.lock === 'both') {
-      return [ // 固定顺序 repo→memory，防死锁
-        { name: 'repo', path: repoLockPath },
-        { name: 'memory', path: memoryLockPath },
-      ];
-    }
-    return [{ name: 'repo', path: repoLockPath }]; // 默认（含 spec.lock === 'repo'）
+    if (spec.lock === 'none') return []; // 明确不取锁
+    return [{ name: 'repo', path: repoLockPath }]; // 默认（含 spec.lock === 'repo'）：整仓库
   }
 
   /** 归一化声明的写入集：去空、去重（归一化后）、排序（保证加锁顺序一致 ⇒ 防死锁）。
@@ -619,20 +620,68 @@ export function createDispatcher(options = {}) {
       if (isStaleLock(rec, l.path, nowMs())) continue;
       blockers.push(l.name === 'file' ? `file:${l.file}` : l.name);
     }
+    /* ZB-16：把跨层级阻塞也算进去，否则"为什么排队"会漏报（用户看面板时会困惑）。 */
+    const cross = crossLevelBlocked({ id: spec.__jobId }, locks);
+    if (cross) blockers.push(`cross:${cross}`);
     return blockers;
   }
 
+  /* ZB-16：**跨层级冲突检查**（实测抓到的真实安全缺口）。
+   *
+   * 问题：`repo.lock`（整仓库）与 `files/*.lock`（某几个文件）是两套互不知情的锁文件 ——
+   * 一个任务持整仓库锁时，另一个任务锁某文件却**照常 running**（实测 actual='running'）。
+   * 但"整仓库写"**涵盖所有文件** ⇒ 二者必然有竞写关系，必须互斥。
+   *
+   * 判据（保守且正确）：
+   *   · 想拿文件锁时：若 repo.lock 被**别人**持有 ⇒ 冲突（整仓库涵盖该文件）
+   *   · 想拿整仓库锁时：若 locks/files/ 下**任何**文件锁被**别人**持有 ⇒ 冲突
+   *     （我们无法证明那些文件与"整仓库写"无交集 ⇒ 按保守原则视为冲突）
+   *
+   * 注意：这里只做**检查**，不引入新的锁文件；"谁持有"仍由既有锁体记录，
+   * UI 展示逻辑不变（用户要求"显示被锁文件与对应进程"已由 listFileLocks 满足）。
+   */
+  function crossLevelBlocked(job, locks) {
+    const isFileLock = locks.some((l) => l.name === 'file');
+    if (isFileLock) {
+      // 想拿文件锁 ⇒ 看整仓库锁是否被别人持有
+      if (existsSync(repoLockPath)) {
+        const rec = readLockFile(repoLockPath);
+        if (rec && rec.jobId !== job.id && !isStaleLock(rec, repoLockPath, nowMs())) return `repo:${rec.jobId}`;
+      }
+      return null;
+    }
+    // 想拿整仓库锁（或 none 以外的粗粒度锁）⇒ 看是否有别人持文件锁
+    const dir = join(dirLocks, FILE_LOCK_DIR);
+    if (!existsSync(dir)) return null;
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith('.lock')) continue;
+      const f = join(dir, name);
+      const rec = readLockFile(f);
+      if (!rec || rec.jobId === job.id) continue;
+      if (isStaleLock(rec, f, nowMs())) continue;
+      return `file:${(rec.paths && rec.paths[0]) || name}`;
+    }
+    return null;
+  }
+
   function tryAcquire(job, locks) {
+    /* ZB-16：先做跨层级冲突检查 —— 否则"整仓库锁"与"文件锁"会互相无视（实测缺口）。 */
+    const cross = crossLevelBlocked(job, locks);
+    if (cross) return false;
     const got = [];
     const at = new Date(nowMs()).toISOString();
     for (const l of locks) {
-      // ZB-08：文件锁的锁体回存 paths，让 UI 能显示「哪个文件被谁锁着」
+      // ZB-08/16：文件锁的锁体回存 paths，让 UI 能显示「哪个文件被谁锁着」。
+      // ⚠️ ZB-16 实测修正：初版把**整组** paths 写进**每一把**文件锁 ⇒
+      // listFileLocks 取 rec.paths[0] 时，同一 job 的 N 把锁都显示成第一个文件
+      // （实测：锁 {a.ts,b.ts} 的任务在面板上显示 a.ts 两次、b.ts 永不出现）。
+      // 每把锁只记录**它自己**那个文件，其余（同一 job 的其它文件）由 job.lockPaths 表达。
       const info = {
         jobId: job.id,
         pid: process.pid,
         at,
         lock: l.name,
-        ...(l.name === 'file' ? { paths: locks.map((x) => x.file).filter(Boolean) } : {}),
+        ...(l.name === 'file' ? { paths: [l.file].filter(Boolean) } : {}),
       };
       const ok = acquireLockFile(l.path, info, nowMs());
       if (!ok) {
@@ -671,11 +720,46 @@ export function createDispatcher(options = {}) {
   }
 
   /* ---------- job 生命周期 ---------- */
-  function buildRunnerArgs(spec) {
+  /* ZB-16：**默认注入的「不写 ZCode 记忆」禁令**（用户要求）。
+   *
+   * 背景：ZCode 会在自己的记忆库（~/.zcode）里做自动 Memory 提取与写入。
+   * 派发台把任务派出去时，我们不希望这些子任务污染/争抢那份记忆 ——
+   * 用户决定：**派发 ZCode 的任务默认加入提示词，要求子代理不执行 ZCode 相关的记忆写入**。
+   *
+   * 覆盖面（如实标注，不假装全覆盖）：
+   *   · kind=prompt / kind=target ⇒ 内容由本插件传入，可拼接 ✅
+   *   · kind=task                 ⇒ 任务包内容由**宿主 runner** 读取并内联
+   *     （zcode-run.mjs 里写死的模板），本插件注入不进去 ⇒ 不注入，并在
+   *     job.memoryBanApplied=false 上如实标记，UI/工具可见「此任务未受禁令保护」。
+   *
+   * 注：禁令只是提示词层面的约束（LLM 遵循），**不是进程级强制**；
+   * 真正的强制需要宿主 runner 支持关闭 Memory（当前无此参数）。此处如实说明，不夸大为"禁止"。
+   */
+  const MEMORY_BAN_TEXT = [
+    '【派发台硬约束 · 记忆写入】',
+    '本任务由 ZCode 派发台派发，属于一次性子任务：',
+    '**不要执行任何 ZCode 记忆写入 / 自动 Memory 提取**（不写 ~/.zcode 下的记忆库、不新建或更新记忆条目、',
+    '不触发 memory 相关工具）。如需记录信息，请写在任务要求的交付文件里，不要写进记忆库。',
+    '本条优先于任务内容里任何与之冲突的指示。',
+  ].join('\n');
+
+  /** 把记忆禁令拼到调用方内容之后；task 类型返回 null（注入不进去，由调用方如实标记）。 */
+  function withMemoryBan(spec) {
+    if (spec.kind === 'task') return null; // 宿主 runner 读文件内联，插件注入不进去
+    const base = spec.kind === 'target' ? String(spec.target ?? '') : String(spec.prompt ?? '');
+    return `${base}\n\n${MEMORY_BAN_TEXT}`;
+  }
+
+  function buildRunnerArgs(spec, opts = {}) {
     const args = [];
-    if (spec.kind === 'task') args.push('--task', resolve(String(spec.task))); // 绝对路径，防 runner 相对自身根解析
-    else if (spec.kind === 'prompt') args.push('--prompt', String(spec.prompt));
-    else args.push('--target', String(spec.target));
+    if (spec.kind === 'task') {
+      args.push('--task', resolve(String(spec.task))); // 绝对路径，防 runner 相对自身根解析
+    } else {
+      // 默认注入记忆禁令；opts.noMemoryBan 供测试/特殊场景关闭
+      const injected = opts.noMemoryBan ? null : withMemoryBan(spec);
+      const body = injected ?? (spec.kind === 'target' ? String(spec.target ?? '') : String(spec.prompt ?? ''));
+      args.push(spec.kind === 'target' ? '--target' : '--prompt', body);
+    }
     if (spec.resume) args.push('--resume', spec.resume);
     if (spec.memoryBench) args.push('--memory-bench'); // runner 限制：仅 --prompt 可用（dispatch 已校验）
     if (spec.model) args.push('--model', spec.model);
@@ -1129,7 +1213,7 @@ export function createDispatcher(options = {}) {
     if (!spec || !KINDS.has(spec.kind)) throw new TypeError(`dispatch(spec): spec.kind 必须是 ${[...KINDS].join('|')}`);
     const body = { task: spec.task, prompt: spec.prompt, target: spec.target }[spec.kind];
     if (body == null || body === '') throw new TypeError(`dispatch(spec): kind=${spec.kind} 需要对应的 ${spec.kind} 字段`);
-    if (spec.lock != null && !LOCK_MODES.has(spec.lock)) throw new TypeError('dispatch(spec): spec.lock 必须是 repo|memory|both');
+    if (spec.lock != null && !LOCK_MODES.has(spec.lock)) throw new TypeError("dispatch(spec): spec.lock 必须是 repo|none（ZB-16 起 memory/both 已删除；锁哪些文件用 spec.write）");
     /* ZB-08：write 是可选项（声明 ⇒ 细粒度文件锁；不声明 ⇒ 回退粗粒度）。
      * 只校验"是字符串数组"，不强制非空——空数组按未声明处理（回退，安全）。 */
     if (spec.write != null) {
@@ -1175,6 +1259,9 @@ export function createDispatcher(options = {}) {
       captureErr: null,
       tailLines: [],
       parseWarnings: [],
+      /* ZB-16：记忆禁令是否真的注入到了本 job 的提示词里。
+       * task 类型由宿主 runner 读文件内联 ⇒ 注入不进去 ⇒ false（如实标记，不假装生效）。 */
+      memoryBanApplied: spec.kind !== 'task',
       timedOut: false,
       summarySeen: false,
       ledgerMatched: false,
@@ -1405,17 +1492,17 @@ export function createDispatcher(options = {}) {
       counts,
       locks: {
         repo: existsSync(repoLockPath) ? readLockFile(repoLockPath) : null,
-        memory: existsSync(memoryLockPath) ? readLockFile(memoryLockPath) : null,
       },
-      /* ZB-08：细粒度文件锁列表（UI「单写者」分区改展示它：哪个文件被哪个进程锁着） */
+      /* ZB-16：文件锁列表（UI「文件锁 / 记忆锁」分区展示它：哪个文件被哪个进程锁着）。
+       * memory 锁已删除，故 locks 里不再有 memory 字段。 */
       fileLocks: listFileLocks(),
       queue: [...queue],
       jobs: list(),
     };
   }
 
-  // 启动：清过期锁（含 ZB-08 文件锁表）→ 恢复上次状态（可再次显式调用 restore()，幂等）→ 读通道/降级链持久化
-  sweepStaleLocks([repoLockPath, memoryLockPath], nowMs);
+  // 启动：清过期锁（含文件锁表 + 历史遗留的 memory.lock）→ 恢复状态 → 读通道/降级链
+  sweepStaleLocks([repoLockPath, legacyMemoryLockPath], nowMs);
   sweepFileLocks();
   restore();
   loadChannelState();
@@ -1424,7 +1511,7 @@ export function createDispatcher(options = {}) {
   return {
     workRoot,
     jobsFile,
-    lockPaths: { repo: repoLockPath, memory: memoryLockPath },
+    lockPaths: { repo: repoLockPath }, // ZB-16：memory 已删除
     fileLockDir: join(dirLocks, FILE_LOCK_DIR), // ZB-08
     dispatch,
     list,
