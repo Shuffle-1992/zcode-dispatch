@@ -202,6 +202,7 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/quota-rpc.test.mjs` | 16 | 额度 RPC 与聚合 |
 | `node test/tail-scroll.test.mjs` | 13 | 输出框滚动决策（ZB-05：不闪烁、不弹回、底部跟随） |
 | `node test/pill.test.mjs` | 16 | 最小化胶囊（ZB-06：保留标题字样、locale 对称） |
+| `node test/pill-position.test.mjs` | 15 | 胶囊定位与面板位置视口钳制（ZB-07：胶囊固定右下角、脏 pos 不出屏） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 ## 已知限制

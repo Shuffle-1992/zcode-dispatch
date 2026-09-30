@@ -342,6 +342,27 @@ window.__ModuleLoader__.load({
       } catch { /* 写不进就算了 */ }
     };
     const clampWidth = (n) => Math.min(WIDTH.max, Math.max(WIDTH.min, Number(n) || WIDTH.def));
+    /* ZB-07：把保存的悬浮位置钳进当前视口（纯函数，便于独立测试）。
+     * 为什么需要：localStorage 里的位置可能是脏值 —— 早期版本存的负数/越界值，
+     * 或者存完之后用户把窗口缩小了。沿用脏值会让整个面板跑到屏幕外、彻底点不到。
+     * 约束：left/top 都至少留 EDGE；上界为「视口 - 面板尺寸 - EDGE」，且不小于 EDGE
+     * （面板比视口还大时退化为 EDGE，保证左上角可见而不是负数）。
+     * @param {{left:number, top:number}|null} p
+     * @param {{vw:number, vh:number, w:number, h:number}} view
+     * @returns {{left:number, top:number}|null} null = 没存过位置（调用方走默认右下角）
+     */
+    function clampPos(p, view) {
+      if (!p || typeof p !== 'object') return null;
+      const left = Number(p.left), top = Number(p.top);
+      if (!Number.isFinite(left) || !Number.isFinite(top)) return null;
+      const vw = (view && view.vw) || 0, vh = (view && view.vh) || 0;
+      const w = (view && view.w) || 0, h = (view && view.h) || 0;
+      if (!vw || !vh) return { left, top }; // 拿不到视口尺寸时不猜，原样返回
+      return {
+        left: Math.min(Math.max(EDGE, left), Math.max(EDGE, vw - w - EDGE)),
+        top: Math.min(Math.max(EDGE, top), Math.max(EDGE, vh - h - EDGE)),
+      };
+    }
     const fmtTokens = (n) => {
       if (n == null) return '—';
       if (n < 1000) return String(n);
@@ -1902,7 +1923,20 @@ window.__ModuleLoader__.load({
     }
 
     function FloatingPanel() {
-      const [pos, setPos] = useState(() => loadJson(LS.pos, null));
+      /* ZB-07：保存的位置可能是脏值（早期版本存的负数/越界值，或存完之后窗口变小了）——
+       * 直接沿用会让整个面板跑到屏幕外、再也点不到。载入时按当前视口钳制一次。
+       * 初始化阶段拿不到面板真实尺寸（还没渲染），用保存的宽高 / 默认值保守估计即可：
+       * 目的只是把「明显在视口外」的位置拉回来，精确对齐交给后续拖拽。 */
+      const [pos, setPos] = useState(() => {
+        const saved = loadJson(LS.pos, null);
+        const savedSize = loadJson(LS.size, null) || {};
+        return clampPos(saved, {
+          vw: (typeof window !== 'undefined' && window.innerWidth) || 0,
+          vh: (typeof window !== 'undefined' && window.innerHeight) || 0,
+          w: Number(savedSize.width) || WIDTH.def,
+          h: Number(savedSize.height) || 320,
+        });
+      });
       const [width, setWidth] = useState(() => clampWidth(loadJson(LS.size, null)?.width));
       /* ZB-06：高度初值。无保存值 → null = auto（保持旧观感）；有则钳到当前视口允许范围。 */
       const [height, setHeight] = useState(() => {
@@ -2096,9 +2130,17 @@ window.__ModuleLoader__.load({
         const waiting = running + ((snapshot && snapshot.counts && snapshot.counts.queued) || 0);
         /* ZB-06（用户报告「最小化后只能看到一点点内容」）：胶囊原先只画
          * [状态点][数字或·]，空载时就是一个孤零零的圆点 + 中点，看不出这是什么、也点不着。
-         * 现在保留「ZCode 派发台」字样 + 实时状态，并给它一个明确的 title。 */
+         * 现在保留「ZCode 派发台」字样 + 实时状态，并给它一个明确的 title。
+         *
+         * ZB-07（用户报告「缩小后的胶囊跑到左上角、最上面了，还点击不了」）：
+         * 根因是胶囊**复用了面板的 pos**。面板 440×620、胶囊约 140×30，同一个 left/top
+         * 必然错位；面板拖到边界时存的极端值（负数 / 超出视口）更会把胶囊整个推出屏幕 ⇒ 点不到。
+         * 胶囊本就只是「回到派发台」的入口，位置不需要跟面板走 —— 固定右下角即可。 */
         const status = running > 0 ? t('pillRunning') : waiting > 0 ? t('pillQueued') : t('pillIdle');
-        return h('div', { className: 'zcd-root zcd-min', style: rootStyle },
+        return h('div', {
+          className: 'zcd-root zcd-min',
+          style: { ...cssVars, right: '24px', bottom: '24px' }, // 不用 pos：见上
+        },
           h('style', null, CSS),
           h('button', {
             className: 'zcd-pill',
