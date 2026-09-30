@@ -59,3 +59,21 @@
 4. **dispose() 只清 interval 不够**：demo 引擎「派发编排」的挂起 setTimeout（约 6.2s 后置 done）会跨组件卸载存活，导致定时器泄漏检查偶发失败。挂起定时器要登记（pendingTransitions）并在 dispose 统一清（wire.client.mjs 与 client.js 内嵌引擎均已处理）。
 5. **杀进程过快 ≠ 缺陷**：dispatch 后立刻 kill（<100ms），子进程还没打印任何行，captureOut 为空、`tail()` 返回 `[]` 是 core 正确行为（UI 显示「无输出」）。测试要在 kill 前等一拍（等 runner 打印启动行），不要反过来「修」core。
 6. **`ctx.slots.inject(owner, cb)` 的回调由框架在挂载时调用**：桩环境测试必须手动调用 cb 才会触发 `slots.register`，否则会误判「没注册组件」。
+
+## Z10：Config 必须是 Standard Schema；且**宿主半边改代码必须重启进程**（2026-09-30 实测）
+
+1. **激活失败 `Cannot read properties of undefined (reading 'validate')`**
+   cordis `lib/index.js:958` 只认 `Config["~standard"].validate(config)`（Standard Schema v1）。
+   导出裸 JSON Schema 会得到 `runtime.Config["~standard"] === undefined` → 激活失败、插件不加载。
+   正解：`import z from "@deepseek-ai/schemastery"`（随 dsh 出货、官方插件同款）+ `z.object({...})`；
+   或手写 `{'~standard':{version:1,vendor,validate}}`（DSH 已加降级兜底，见 `zcode-dispatch/index.js`）。
+
+2. **"关→开开关"重载不到新代码（宿主半边）**
+   cordis `_reload()` → `_resolveConfig()` 用的是 `this.runtime`，即**进程内已 import 的模块对象**；
+   `_reload` 不会重新从磁盘 import。实测：源码修好后切开关，仍报**完全相同**的旧错误。
+   判据：DSH 主进程启动时间早于源码修改时间（本例进程 03:19 启，源码 13:30 改）。
+   → **宿主半边改动：必须完全退出 DSH 再启动**；客户端半边（`client.js`）改动：刷新页面即可（浏览器重新取包）。
+
+3. **本地自证的两条路径**（写单必带）
+   - 主路径：`node -e "import('./zcode-dispatch/index.js')"` → `Config['~standard'].validate({})` 应有 5 个默认值；
+   - 降级路径：`node --import <block-hook>`（resolve 钩子对该包抛 ERR_MODULE_NOT_FOUND）→ 仍须有 `~standard` 且归一脏值。
