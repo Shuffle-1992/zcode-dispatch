@@ -2422,3 +2422,70 @@ ZB-09 ～ ZB-12 均只改 `client.js`（+ 对应测试） ⇒ **刷新页面即�
 
 > 另注：仓库根出现 untracked 目录 `dsh-connect-zcode/`（**非本会话所建**，内容为另一插件
 > `@local/dsh-connect-zcode`），历次提交**均未纳入**，保持原样。
+
+---
+
+## 36. ZB-13：进程耗时改为「XX时XX分XX秒」
+
+**用户要求**：「进程中显示的时间改成 XX时XX分XX秒」。
+
+### 36.1 改动：只动展示层
+
+`fmtSec` 原实现：
+
+```js
+const fmtSec = (s) => (s == null ? '—' : `${Number(s).toFixed(1)}s`);   // 如 1641.8s
+```
+
+改为**恒定三段**输出（不省略零位，按用户原话格式）：
+
+```js
+const fmtSec = (s) => {
+  if (s == null) return '—';
+  const total = Math.max(0, Math.floor(Number(s) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  return `${h}时${String(m).padStart(2, '0')}分${String(sec).padStart(2, '0')}秒`;
+};
+```
+
+| 输入 | 输出 |
+|---|---|
+| `0` | `0时00分00秒` |
+| `59` | `0时00分59秒` |
+| `61` | `0时01分01秒` |
+| `3599` | `0时59分59秒` |
+| `3661` | `1时01分01秒` |
+| `1641.781` | `0时27分21秒` |
+| `90061` | `25时01分01秒` |
+| `null` / `undefined` | `—`（未开始/无数据的既有语义不变） |
+| `-5` / `'abc'` | `0时00分00秒`（兜底，不出现负数或 NaN 字样） |
+
+**为什么恒定三段**：列表里宽度一致、一眼可比；这也是用户给出的字面格式。
+
+**为什么只改展示层**：`elapsedSec` / `heldSec` 是**契约字段**（`core/dispatch-core.mjs`、
+`wire.*.mjs`、`bin/zcd.mjs`、台账 `zcode-runs.jsonl` 都按**秒数**读写），
+在渲染里改语义会波及 CLI 输出与用量聚合。测试 C4 专门断言 `core` 仍按秒存。
+
+**顺带受益**：`fmtSec` 同时用于「单写者 / 文件锁」分区的**持有时长**，
+故两处风格自动统一（不会出现"进程行是时分秒、锁行是秒"的分裂）。
+
+### 36.2 验证
+
+- 真实组件树实测：进程行耗时列文本 = `["0时00分42秒","—","—"]`，
+  全部匹配 `^\d+时\d{2}分\d{2}秒$`，且**旧的 `1641.8s` 风格 0 处残留** ✅
+- 新增 `test/elapsed-format.test.mjs`（**15 项**）：13 个边界值 / 恒定三段（零值不省略）/
+  边界兜底（null、小数、负数、非数字、数字字符串）/ 只改展示层（C1–C4）/ 旧格式已清除（D1–D2）
+- **反向验证**：把 `fmtSec` 换回旧格式 ⇒ 测试报红（`未能在 client.js 里定位 fmtSec`）⇒ 测试有效
+
+### 36.3 门禁（全绿）
+
+`node --check` 零失败；verify-plugin **20/20**；verify-switch **8/8**；core **12/12**；
+channel-retry **9/9**；quota-rpc **16/16**；tail-scroll **13/13**；pill **16/16**；
+pill-position **16/16**；section-order **9/9**；panel-anchor **22/22**；
+panel-reclamp **9/9**；**elapsed-format 15/15**（新增）；file-lock **9/9**；wait-action **6/6**。
+
+### 36.4 生效条件
+
+只改 `client.js` ⇒ **刷新页面即可**（无需重启 DSH）。

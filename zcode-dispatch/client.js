@@ -433,7 +433,18 @@ window.__ModuleLoader__.load({
       if (n < 1000000) return `${(n / 1000).toFixed(n < 10000 ? 2 : 1)}k`;
       return `${(n / 1000000).toFixed(2)}M`;
     };
-    const fmtSec = (s) => (s == null ? '—' : `${Number(s).toFixed(1)}s`);
+    /* ZB-13（用户要求）：耗时展示改为「XX时XX分XX秒」——**三段恒定输出**，不省略零位。
+     * 只改**展示层** —— 数据层的 elapsedSec/heldSec 仍是秒数（number），
+     * 那是契约字段（core / wire / CLI 都按秒读写），不能在渲染里改语义。
+     * 恒定三段的好处：列表里宽度一致、一眼可比（用户原话即此格式）。 */
+    const fmtSec = (s) => {
+      if (s == null) return '—';
+      const total = Math.max(0, Math.floor(Number(s) || 0));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const sec = total % 60;
+      return `${h}时${String(m).padStart(2, '0')}分${String(sec).padStart(2, '0')}秒`;
+    };
     const shortId = (id) => (id ? String(id).slice(0, 12) : '—');
     const ctxPct = (j) => (j && j.contextUsed != null && j.contextWindow ? `${Math.round((j.contextUsed / j.contextWindow) * 100)}%` : '—');
     // Z11：长文本截断展示（详情区 prompt 最多 1200 字符）；时间本地化

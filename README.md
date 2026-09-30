@@ -161,6 +161,7 @@ node --test test/wait-action.test.mjs  # wait 动作（6 项：等终态 / pause
 node test/section-order.test.mjs  # 分区顺序（9 项：单写者紧跟进程 / 用量置末）
 node test/panel-reclamp.test.mjs  # 面板位置可见性（9 项）
 node test/panel-anchor.test.mjs  # 面板锚定语义（22 项：缩窗不挤中间 / 放大回原位）
+node test/elapsed-format.test.mjs  # 耗时展示格式（15 项：XX时XX分XX秒）
 Z2_HOST_REPO=<宿主项目> node test/z2-verify.mjs   # 端到端验收（不设则跳过越界检查并如实标注）
 ```
 
