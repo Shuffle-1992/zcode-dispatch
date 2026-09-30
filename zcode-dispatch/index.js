@@ -11,8 +11,11 @@
  *    裸 JSON Schema 会在激活时抛「Cannot read properties of undefined (reading 'validate')」。
  *    首选宿主随包出货的 schemastery（官方插件同款）；解析不到时降级为 fallbackConfig() 的
  *    手写 Standard Schema，激活永不因 schema 崩。字段与默认值不变。
- * 2. agent 工具的注册 API 未经 inspection 确认（标准模式无 cordis_inspect_query），
- *    registerZcodeDispatchTool() 按候选顺序防御式尝试；工具本体（动作实现）不受影响。
+ * 2. agent 工具走官方契约注册：ctx.tools.register(defineTool({...}))（证据：refs/dsh-tools/
+ *    tool-fs-example/index.js:261 注册调用、:1176 inject=['tools','fs','systemPrompt']、
+ *    :1212 export；defineTool 契约：refs/dsh-tools/lib/index.js:838）。defineTool 经动态
+ *    import 解析（与 loadConfig 同款降级），宿主缺包或 ctx.tools 不可用时只 warn 不抛——
+ *    激活安全第一，UI 与派发核心不受影响。
  */
 import { createDispatcher } from './core/dispatch-core.mjs';
 import { DEFAULT_SWITCH_PATH, attachHostWire, createActionHandler, readSwitch, switchFileOf } from './wire.host.mjs';
@@ -69,36 +72,59 @@ async function loadConfig() {
 /** 插件 config schema（Standard Schema v1；cordis resolveConfig 经 Config['~standard'].validate 取值）。 */
 export const Config = await loadConfig();
 
+/**
+ * 官方工具定义器：随 dsh 出货的 @deepseek-ai/dsh-tools（包导出面见 refs/dsh-tools/lib/index.js:3714，
+ * defineTool 实现同文件 :838）。动态 import + 失败降级 null——与 loadConfig 同款：宿主缺包时
+ * 模块照常加载、激活不受影响，只在注册处降级为「不注册工具 + warn」。
+ */
+async function loadDefineTool() {
+  try {
+    const mod = await import('@deepseek-ai/dsh-tools');
+    return typeof mod?.defineTool === 'function' ? mod.defineTool : null;
+  } catch {
+    return null;
+  }
+}
+const defineTool = await loadDefineTool();
+
+/** cordis 插件名（loader 诊断用；官方插件同款导出，refs/dsh-tools/tool-fs-example/index.js:1174）。 */
+export const name = 'zcode-dispatch';
+
+/** 依赖的宿主服务：tools 由 dsh 基础 bundle 提供（同款：tool-fs-example/index.js:1176 inject 含 'tools'）。 */
+export const inject = ['tools'];
+
 /* Z12：ACTIONS 补 dismiss（Z11 漏列的既有动作）并新增 status / switch（派发总开关）。 */
 const ACTIONS = ['dispatch', 'list', 'kill', 'dismiss', 'tail', 'quota', 'status', 'switch', 'channels', 'channel', 'retry', 'fallback'];
 
-/** 工具参数 schema（JSON Schema；工具与 UI 共用 createActionHandler 的入参形状）。 */
+/**
+ * 工具参数 spec（@deepseek-ai/dsh-tools 官方 DSL，非 JSON Schema）：逐字段 {type, required?, description?}，
+ * 由 parameterSchemaSpecToJsonSchema 编译（refs/dsh-tools/lib/index.js:802）。DSL 词汇=注解+
+ * required:true+type 专属键（enum/const/items/properties/additionalProperties）——数字范围类
+ * 约束（timeoutMin>0、n≥1）无对应键，写进 description 由 execute 侧语义兜底。
+ * 字段与 createActionHandler 实际入参一一对应（实现与 schema 不漂移；action 必填，其余可选）。
+ */
 const TOOL_PARAMETERS = {
-  type: 'object',
-  properties: {
-    action: { type: 'string', enum: ACTIONS, description: '操作类型' },
-    enabled: { type: 'boolean', description: 'switch：目标状态（true=开启派发 / false=关闭派发，写入真值文件）' },
-    by: { type: 'string', description: 'switch：操作者标识（写入 updatedAt/updatedBy，缺省 ui/tool）' },
-    note: { type: 'string', description: 'switch：切换原因备注（写入 note）' },
-    kind: { type: 'string', enum: ['prompt', 'task', 'target'], description: 'dispatch：派发类型' },
-    prompt: { type: 'string', description: 'dispatch(kind=prompt)：发给 ZCode 的提示词' },
-    task: { type: 'string', description: 'dispatch(kind=task)：任务文件绝对路径' },
-    target: { type: 'string', description: 'dispatch(kind=target)：目标描述' },
-    model: { type: 'string', enum: ['GLM-5.3', 'GLM-5.3-Flash'], description: 'dispatch：模型' },
-    provider: { type: 'string', enum: ['plan', 'personal'], description: 'dispatch：plan=套餐通道 / personal=个人 Key' },
-    mode: { type: 'string', enum: ['build', 'edit', 'plan', 'yolo'], description: 'dispatch：ZCode 运行模式，默认 edit' },
-    timeoutMin: { type: 'number', exclusiveMinimum: 0, description: 'dispatch：超时分钟（正数）' },
-    memoryBench: { type: 'boolean', description: 'dispatch：附加 --memory-bench（仅 kind=prompt 支持）' },
-    tag: { type: 'string', description: 'dispatch：台账 tag（缺省由 runner 生成）' },
-    lock: { type: 'string', enum: ['repo', 'memory', 'both'], description: 'dispatch：单写者锁集合，默认 both' },
-    cwd: { type: 'string', description: 'dispatch：runner 工作目录' },
-    resume: { type: 'string', description: 'dispatch：要续跑的 sessionId' },
-    id: { type: 'string', description: 'kill/tail/retry：job id（形如 j-xxxx）' },
-    n: { type: 'integer', minimum: 1, description: 'tail：行数，默认 30，上限 200' },
-    retryModel: { type: 'string', description: 'retry：目标模型（同通道续跑时不允许传——--resume 带 --model 必失败）' },
-    chain: { type: 'array', items: { type: 'string' }, description: 'fallback：降级链（通道 id 数组，顺序即优先级；空数组=关闭）' },
-  },
-  required: ['action'],
+  action: { type: 'string', required: true, enum: ACTIONS, description: '操作类型' },
+  enabled: { type: 'boolean', description: 'switch：目标状态（true=开启派发 / false=关闭派发，写入真值文件）' },
+  by: { type: 'string', description: 'switch：操作者标识（写入 updatedAt/updatedBy，缺省 ui/tool）' },
+  note: { type: 'string', description: 'switch：切换原因备注（写入 note）' },
+  kind: { type: 'string', enum: ['prompt', 'task', 'target'], description: 'dispatch：派发类型' },
+  prompt: { type: 'string', description: 'dispatch(kind=prompt)：发给 ZCode 的提示词' },
+  task: { type: 'string', description: 'dispatch(kind=task)：任务文件绝对路径' },
+  target: { type: 'string', description: 'dispatch(kind=target)：目标描述' },
+  model: { type: 'string', enum: ['GLM-5.3', 'GLM-5.3-Flash'], description: 'dispatch：模型' },
+  provider: { type: 'string', enum: ['plan', 'personal'], description: 'dispatch：plan=套餐通道 / personal=个人 Key' },
+  mode: { type: 'string', enum: ['build', 'edit', 'plan', 'yolo'], description: 'dispatch：ZCode 运行模式，默认 edit' },
+  timeoutMin: { type: 'number', description: 'dispatch：超时分钟（必须 > 0）' },
+  memoryBench: { type: 'boolean', description: 'dispatch：附加 --memory-bench（仅 kind=prompt 支持）' },
+  tag: { type: 'string', description: 'dispatch：台账 tag（缺省由 runner 生成）' },
+  lock: { type: 'string', enum: ['repo', 'memory', 'both'], description: 'dispatch：单写者锁集合，默认 both' },
+  cwd: { type: 'string', description: 'dispatch：runner 工作目录' },
+  resume: { type: 'string', description: 'dispatch：要续跑的 sessionId' },
+  id: { type: 'string', description: 'kill/tail/retry：job id（形如 j-xxxx）' },
+  n: { type: 'integer', description: 'tail：行数（≥ 1，默认 30，上限 200）' },
+  retryModel: { type: 'string', description: 'retry：目标模型（同通道续跑时不允许传——--resume 带 --model 必失败）' },
+  chain: { type: 'array', items: { type: 'string' }, description: 'fallback：降级链（通道 id 数组，顺序即优先级；空数组=关闭）' },
 };
 
 const TOOL_DESCRIPTION_BODY = [
@@ -128,51 +154,64 @@ function buildToolDescription(switchFile) {
 }
 
 /**
- * 防御式注册 agent 工具：注册 API 未经 inspection 确认，按候选顺序尝试，
- * 全部失败则打日志说明 creator 该怎么修（动作实现不受影响）。
+ * 注册 agent 工具（官方契约：refs/dsh-tools/tool-fs-example/index.js:261
+ * ctx.tools.register(defineTool({ name, description, parameters, output, execute }))；
+ * ctx.tools 由 inject=['tools'] 从宿主取得）。
+ * 激活安全：ctx.tools 不可用、defineTool 未解析（宿主缺包）、注册抛错——一律
+ * log warn + 返回 null，UI 与派发核心不受影响。
+ * @param {object} ctx cordis Context
+ * @param {(level: string, msg: string) => void} log
+ * @param {(action: string, params: object) => Promise<object>} handleAction
+ * @param {string} switchFile 开关真值文件（工具描述首行的注册时快照用）
  * @returns {(() => void)|null} 注销函数（若注册成功），否则 null
  */
 function registerZcodeDispatchTool(ctx, log, handleAction, switchFile) {
-  const definition = {
-    name: 'zcode_dispatch',
-    description: buildToolDescription(switchFile),
-    parameters: TOOL_PARAMETERS,
-    async execute(args) {
-      const params = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
-      const result = await handleAction(params.action, params);
-      return JSON.stringify(result); // 工具结果统一回 JSON 字符串，调用方自行解析
-    },
-  };
-  const candidates = [
-    ['ctx.tools.define(def)', () => ctx.tools?.define?.(definition)],
-    ['ctx.tools.register(name, def)', () => ctx.tools?.register?.(definition.name, definition)],
-    ['ctx.tools.add(def)', () => ctx.tools?.add?.(definition)],
-    ['ctx.tool.define(def)', () => ctx.tool?.define?.(definition)],
-  ];
-  for (const [label, tryRegister] of candidates) {
-    try {
-      const r = tryRegister();
-      if (r !== undefined && r !== false) {
-        log('info', `agent 工具 zcode_dispatch 已注册（${label}）`);
-        return () => {
-          for (const m of ['remove', 'unregister', 'undefine', 'dispose']) {
-            try {
-              if (typeof ctx.tools?.[m] === 'function') {
-                ctx.tools[m](definition.name);
-                return;
-              }
-            } catch { /* 尝试下一个 */ }
-          }
-        };
-      }
-    } catch (e) {
-      log('warn', `工具注册候选 ${label} 失败：${e?.message ?? e}`);
-    }
+  if (!ctx?.tools || typeof ctx.tools.register !== 'function') {
+    log('warn', 'ctx.tools.register 不可用：agent 工具 zcode_dispatch 未注册（非致命，UI 与派发核心不受影响）');
+    return null;
   }
-  log('warn', '未能注册 agent 工具 zcode_dispatch：ctx.tools 注册 API 未经 inspection 确认。'
-    + 'creator 会话请用 cordis_inspect_query → Tool 查看现有工具的注册方式，'
-    + '然后只调整 index.js 的 registerZcodeDispatchTool() 候选列表（动作实现 createActionHandler 无需改动）。');
-  return null;
+  if (typeof defineTool !== 'function') {
+    log('warn', '@deepseek-ai/dsh-tools 不可用（defineTool 未解析）：agent 工具 zcode_dispatch 未注册（非致命，UI 与派发核心不受影响）');
+    return null;
+  }
+  try {
+    const registered = ctx.tools.register(defineTool({
+      name: 'zcode_dispatch',
+      description: buildToolDescription(switchFile),
+      parameters: TOOL_PARAMETERS,
+      // output 不可省略：defineTool 无条件读 options.output.render/.schema（refs/dsh-tools/lib/index.js:842/:849）。
+      // schema 用 DSL 最小合法形态 {type:'json'}（:688 注解即无约束 JSON，execute 的任意 JSON 返回值都合法）。
+      output: {
+        schema: { type: 'json' },
+        render: (_args, value) => [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
+      },
+      async execute(args) {
+        const params = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+        const result = await handleAction(params.action, params);
+        return JSON.stringify(result); // 工具结果统一回 JSON 字符串，调用方自行解析
+      },
+    }));
+    log('info', 'agent 工具 zcode_dispatch 已注册（官方 ctx.tools.register + defineTool）');
+    return () => {
+      try {
+        if (typeof registered === 'function') {
+          registered();
+          return;
+        }
+      } catch { /* 已注销 */ }
+      for (const m of ['remove', 'unregister', 'undefine', 'dispose']) {
+        try {
+          if (typeof ctx.tools?.[m] === 'function') {
+            ctx.tools[m]('zcode_dispatch');
+            return;
+          }
+        } catch { /* 尝试下一个 */ }
+      }
+    };
+  } catch (e) {
+    log('warn', `agent 工具 zcode_dispatch 注册失败：${e?.message ?? e}（非致命，UI 与派发核心不受影响）`);
+    return null;
+  }
 }
 
 function makeLogger(ctx) {

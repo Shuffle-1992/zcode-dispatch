@@ -94,9 +94,13 @@ window.__ModuleLoader__.load({
 
     /* 样式：作为 React 元素渲染进组件树，组件卸载即随之移除（不碰全局样式表）。 */
     const CSS = [
-      '.zcd-root{position:fixed;z-index:' + Z_INDEX + ';width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));font-size:12px;line-height:1.5;color:' + T.text + ';}',
+      /* ⚠️ Z14：官方 shell.overlay 浮层本身是 click-through（pointer-events:none）——
+       * occupant 必须自行 opt-in 回 pointer events，否则面板内所有点击都会穿透到后面的应用
+       * （这正是"按钮点了没反应"的真因；Z9 修的 setPointerCapture 只是第二因）。
+       * 策略：root 保持 none（浮层空白区不挡应用），面板/胶囊/把手各自 auto（可点可拖）。 */
+      '.zcd-root{position:fixed;z-index:' + Z_INDEX + ';pointer-events:none;width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));font-size:12px;line-height:1.5;color:' + T.text + ';}',
       '.zcd-root.zcd-min{width:auto;}',
-      '.zcd-panel{display:flex;flex-direction:column;max-height:min(72vh,560px);background:' + T.bg + ';border:1px solid ' + T.border + ';border-radius:10px;box-shadow:' + T.shadow + ';overflow:hidden;animation:zcd-in .18s ease;}',
+      '.zcd-panel{display:flex;flex-direction:column;pointer-events:auto;max-height:min(72vh,560px);background:' + T.bg + ';border:1px solid ' + T.border + ';border-radius:10px;box-shadow:' + T.shadow + ';overflow:hidden;animation:zcd-in .18s ease;}',
       '.zcd-titlebar{display:flex;align-items:center;gap:6px;padding:6px 8px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;border-bottom:1px solid var(--zcd-border);background:' + T.bgBar + ';}',
       '.zcd-titlebar:active{cursor:grabbing;}',
       '.zcd-title{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
@@ -165,8 +169,8 @@ window.__ModuleLoader__.load({
       '.zcd-job:hover{border-color:' + T.text3 + ';}',
       '.zcd-job-head{cursor:pointer;}',
       '.zcd-planline{margin-top:2px;font-size:10.5px;color:' + T.text3 + ';white-space:normal;overflow-wrap:anywhere;line-height:1.45;}',
-      '.zcd-grip{position:absolute;left:0;bottom:0;width:16px;height:16px;cursor:ew-resize;}',
-      '.zcd-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 12px;border:1px solid ' + T.border + ';border-radius:999px;background:' + T.bg + ';color:' + T.text + ';box-shadow:' + T.shadow + ';cursor:pointer;font:inherit;transition:transform .15s ease;}',
+      '.zcd-grip{position:absolute;left:0;bottom:0;width:16px;height:16px;pointer-events:auto;cursor:ew-resize;}',
+      '.zcd-pill{display:inline-flex;align-items:center;gap:6px;pointer-events:auto;padding:5px 12px;border:1px solid ' + T.border + ';border-radius:999px;background:' + T.bg + ';color:' + T.text + ';box-shadow:' + T.shadow + ';cursor:pointer;font:inherit;transition:transform .15s ease;}',
       '.zcd-pill:hover{transform:translateY(-1px);}',
       '@keyframes zcd-in{from{opacity:0;transform:translateY(6px) scale(.98);}}',
       '@keyframes zcd-pulse{50%{opacity:.35;}}',
@@ -1105,7 +1109,7 @@ window.__ModuleLoader__.load({
         return h('div', {
           className: 'zcd-root',
           style: {
-            position: 'fixed', right: '24px', bottom: '24px', zIndex: Z_INDEX, maxWidth: '340px',
+            position: 'fixed', right: '24px', bottom: '24px', zIndex: Z_INDEX, maxWidth: '340px', pointerEvents: 'auto',
             padding: '8px 10px', fontSize: '12px', lineHeight: 1.5,
             color: T.text, background: T.bg, border: '1px solid ' + T.border,
             borderRadius: '8px', boxShadow: T.shadow,

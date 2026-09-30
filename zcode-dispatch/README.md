@@ -69,9 +69,28 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
   （子进程已退出），UI「关闭」按钮因此先 `kill`、kill 无效时退回 `dismiss`。
 - `channels` / `channel set` / `retry(jobId, {provider?, model?})` / `fallback`：Z6 通道与续跑，见下节。
 - 限制：单写者互斥（同锁 FIFO 排队，不报错）；`memoryBench` 仅 prompt；工具不授予/确认任何权限。
-- ⚠ 注册 API 未经 inspection 确认：`index.js` 的 `registerZcodeDispatchTool()` 按
-  `ctx.tools.define → register → add → ctx.tool.define` 候选顺序防御式尝试；若全部失败会打
-  warn 日志（动作实现不受影响，creator 按 `cordis_inspect_query → Tool` 调整候选列表即可）。
+- 注册方式（Z13）：官方契约 `ctx.tools.register(defineTool({...}))`（`index.js` 导出
+  `inject = ['tools']` 取得服务；`defineTool` 来自随 dsh 出货的 `@deepseek-ai/dsh-tools`，
+  动态 import，缺包时降级为不注册 + warn，不影响激活与 UI）。
+
+## 其他会话如何发现并调用（Z13）
+
+任何 DSH 会话（包括新开的）只要宿主加载了本插件，agent 工具列表里就有 `zcode_dispatch`
+——工具名固定，模型侧可直接调用，无需额外发现步骤：
+
+1. **开工先查开关**：`zcode_dispatch({ action: 'status' })` → 返回
+   `switch={enabled, updatedAt, updatedBy, note, source}`；文件缺失/损坏视为开启。
+   工具描述首行也带注册时刻的开关快照，但运行期以 `status` 实时返回为准。
+2. **开关关闭时先切换**：`zcode_dispatch({ action: 'switch', enabled: true, by: '<会话标识>', note: '<原因>' })`
+   （原子写真值文件，格式与 CLI `zcode-switch.mjs` 相同；`enabled` 必填布尔）。
+   任何会话都可切换，也可主动关闭（`enabled: false`）。
+3. **总开关关闭时派发会被拒**：`dispatch` 与 `retry` 在关闭态直接返回
+   `ok:false` + 当前 switch 状态，不创建 job（runner 侧 `zcode-run.mjs` 还有第二道门）。
+4. **派发**：`zcode_dispatch({ action: 'dispatch', kind: 'prompt', prompt: '…', mode: 'edit' })`，
+   其余参数见上节；`list/kill/tail/quota/channels/channel/retry/fallback` 同理，
+   全部动作与 UI 悬浮窗共用同一实现（`createActionHandler`）。
+5. 工具未出现在列表里 = 注册降级了（宿主缺 `@deepseek-ai/dsh-tools` 或 `ctx.tools` 不可用），
+   看 DSH 日志里的 `[zcode-dispatch]` warn；UI 悬浮窗与派发核心不受影响。
 
 ## 通道切换 / 暂停 / 续跑（Z6）
 
