@@ -3091,3 +3091,114 @@ lock-model **8/8**；lock-ui **26/26**；lock-priority **4/4**；lock-badge **34
 
 只改了**测试**（`test/memory-ban.test.mjs` 与 `test/fixtures/fake-runner.mjs`）
 ⇒ **无需重启、无需刷新**（产品代码未动）。
+
+---
+
+## 44. ZB-21：修「面板重影 + 透明 + 塌到左上角」
+
+### 44.1 用户报告（附截图）
+
+> 「面板会发生重影的问题。变成透明在左上角。」
+
+截图症状三条：**① 面板塌到左上角**、**② 背景透明**（底下 DSH 的「deepseek HARNESS」透出来）、
+**③ 分区标题挤成一列（塌成窄条）**。
+
+### 44.2 诊断过程（先排除静态样式，再锁定运行时）
+
+**第一步：排除静态样式**。用真实组件树 + DOM 桩核对，确认 CSS **本身完全正确**：
+
+| 检查 | 结果 |
+|---|---|
+| `<style>` 是否渲染 | ✅ 1 个，CSS 文本 13204 字符 |
+| `.zcd-root{position:fixed` | ✅ 存在 |
+| `.zcd-panel{…background:` | ✅ 存在 |
+| 内联定位坐标 | ✅ `right/bottom = 24px`（或 left/top） |
+| `--zcd-w` | ✅ `440px` |
+
+⇒ 静态样式没问题，**问题在运行时**。
+
+**第二步：锁定根因**。`h('style', null, CSS)` 被渲染在 **`.zcd-root` 组件树内部**（两处：
+面板分支 + 胶囊分支）。面板每秒轮询重渲染，一旦 React 重建该 `<style>` 节点，
+浏览器会**先移除再插入**样式表 —— 那一瞬间正好产生截图里的三个症状：
+
+| 症状 | 机制 |
+|---|---|
+| ① 塌到左上角 | `.zcd-root` 失去 `position:fixed` ⇒ 退回静态布局 |
+| ② 透明 | `.zcd-panel` 失去 `background` ⇒ 看到底下应用 |
+| ③ 塌成窄条 | 失去 `width:min(var(--zcd-w),…)` ⇒ 收缩包裹 |
+| **重影** | 样式重新插入时 `animation:zcd-in` **从头播放**，而 `@keyframes zcd-in{from{opacity:0;…}}` **没有 `to`** ⇒ 反复重启期间长期半透明 |
+
+> 一个细节：`@keyframes zcd-in` **只有 from 没有 to** —— 正常播放一次没问题（终态回默认
+> `opacity:1`），但**一旦被反复重启**，面板就长期停在低透明度上。这正是"重影"的来源。
+
+### 44.3 修复（两层）
+
+**A. 样式只注入一次到 `document.head`，彻底脱离 React 重渲染路径**
+
+```js
+const STYLE_ID = 'zcode-dispatch-style';
+function ensureStyle() {           // 幂等：已存在则复用，不重复插入
+  if (styleEl && styleEl.isConnected) return;
+  const existing = document.getElementById(STYLE_ID);
+  …
+  s.textContent = CSS;
+  (document.head || document.documentElement).appendChild(s);
+}
+function detachStyle() { … }        // 卸载时移除，保持"卸载即清理"语义
+```
+
+- 删除两处 `h('style', null, CSS)`（面板分支与胶囊分支）
+- `useEffect(() => { ensureStyle(); return () => detachStyle(); }, [])` —— **依赖为空**，
+  只在挂载/卸载执行，轮询重渲染不触发
+- 保留 `data-plugin="zcode-dispatch"` 标记；`id` 同时用属性赋值与 `setAttribute` 双写
+  （`getElementById` 的幂等查找依赖它）
+
+**B. 给入场动画补显式终态**
+
+```diff
+- '@keyframes zcd-in{from{opacity:0;transform:translateY(6px) scale(.98);}}',
++ '@keyframes zcd-in{from{opacity:0;transform:translateY(6px) scale(.98);}to{opacity:1;transform:none;}}',
+```
+
+即使动画因任何原因被重启，终态也明确是**不透明 + 无位移**。
+
+### 44.4 验证
+
+新增 `test/panel-style.test.mjs`（**24 项**）：
+
+| 组 | 内容 |
+|---|---|
+| A（4 项） | 样式已移出组件树；改为 `createElement('style')` + `appendChild` 到 head |
+| B（6 项） | `ensureStyle` 幂等 / 按 id 复用 / `detachStyle` / effect 依赖为空数组 |
+| C（3 项） | `from{opacity:0}` 保留、**`to{opacity:1}` 已补**、`transform:none` 复位 |
+| D（4 项） | `position:fixed` / `background` / 宽度 / `--zcd-w` 未被破坏 |
+| **E（7 项）** | **DOM 桩实测**：挂载后 head 恰好 1 个 style、带稳定 id、CSS 含关键规则、组件树无 style 节点、**★ 连续 10 次重渲染后 head 插入/移除次数不变（1→1 / 0→0）**、样式仍在位 |
+
+**反向验证**：把样式改回"渲染进组件树" ⇒ A1 断言报红 ⇒ 测试有效。
+
+**测试开发中自曝两处**（均为我的问题）：
+① A1 假失败 —— 我的**注释里引用**了旧代码 `h('style', null, CSS)` 作根因说明，
+断言把"解释"误判成"残留" ⇒ 加 `stripComments()` 剥离注释后再断言；
+② 探针正则 `[^}]*to\{` **无法跨越 `from{…}` 里的 `}`** ⇒ 假报"to 仍缺" ⇒ 改为按子串判据。
+
+### 44.5 顺带修掉一个测试工程问题（**首个真正渲染 client.js 的测试会挂住**）
+
+`panel-style.test.mjs` 是**唯一真正 `import` 并渲染 `client.js`** 的测试
+（其余 `panel-anchor`/`lock-ui`/`lock-badge` 只读源码文本）。而面板有 **1 秒轮询定时器**
+（`REMOTE_POLL_MS=1000`）⇒ **事件循环永不自然清空、进程挂住**（实测 >240s 不退出）。
+
+已在该文件末尾加 `process.exit(0)`（**放在所有断言之后** —— 断言失败会先抛错，
+不会被这个 exit 掩盖）。实测退出耗时 **0.2s**。
+
+### 44.6 门禁（全绿，21 个测试文件）
+
+`node --check` 零失败；verify-plugin **20/20**；verify-switch **8/8**；core **12/12**；
+channel-retry **9/9**；quota-rpc **16/16**；tail-scroll **13/13**；pill **16/16**；
+pill-position **16/16**；section-order **9/9**；panel-anchor **22/22**；
+panel-reclamp **9/9**；elapsed-format **15/15**；ctx-format **23/23**；
+lock-model **8/8**；lock-ui **26/26**；lock-priority **4/4**；lock-badge **34/34**；
+memory-ban **4/4**；**panel-style 24/24**（新增）；file-lock **9/9**；wait-action **6/6**。
+
+### 44.7 生效条件
+
+只改 `client.js`（UI）⇒ **刷新页面即可**（无需重启 DSH）。

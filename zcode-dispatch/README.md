@@ -296,6 +296,7 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/lock-priority.test.mjs` | 4 | 调度优先级（ZB-17：文件锁任务优先放行；同类内 FIFO；整仓库锁执行时文件锁等待） |
 | `node test/lock-badge.test.mjs` | 34 | 进程行锁徽标（ZB-18：区分整仓库锁 / 文件锁 N / 不取锁 / 旧版记录）+ **全仓防复发扫描**（ZB-19） |
 | `node test/memory-ban.test.mjs` | 4 | 记忆禁令注入（ZB-20：prompt/target 注入；**task 注入不进去 ⇒ memoryBanApplied=false**） |
+| `node test/panel-style.test.mjs` | 24 | 面板样式注入（ZB-21：样式只注入 head 一次，重渲染不再触碰 ⇒ 不透明/不塌左上角） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 > `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），

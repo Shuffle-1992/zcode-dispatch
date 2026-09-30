@@ -168,6 +168,7 @@ node test/lock-ui.test.mjs  # 派发区锁控件与中文锁名（26 项）
 node --test test/lock-priority.test.mjs  # 调度优先级（4 项：文件锁任务优先放行）
 node test/lock-badge.test.mjs  # 进程行锁徽标 + 全仓防复发扫描（34 项）
 node --test test/memory-ban.test.mjs  # 记忆禁令注入（4 项：prompt/target 注入，task 如实标记）
+node test/panel-style.test.mjs  # 面板样式注入（24 项：只注入 head 一次，重渲染不触碰）
 Z2_HOST_REPO=<宿主项目> node test/z2-verify.mjs   # 端到端验收（不设则跳过越界检查并如实标注）
 ```
 

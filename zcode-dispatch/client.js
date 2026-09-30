@@ -236,9 +236,59 @@ window.__ModuleLoader__.load({
       '.zcd-filelock{display:flex;align-items:center;gap:6px;font-size:10.5px;min-width:0;}',
       '.zcd-filelock-f{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:' + T.text2 + ';}',
       '.zcd-filelock-who{flex:none;font-weight:600;color:' + T.text + ';}',
-      '@keyframes zcd-in{from{opacity:0;transform:translateY(6px) scale(.98);}}',
+      /* ZB-21：补上显式 to —— 原先只有 from{opacity:0}，动画一旦被重启就会长期半透明（重影）。 */
+      '@keyframes zcd-in{from{opacity:0;transform:translateY(6px) scale(.98);}to{opacity:1;transform:none;}}',
       '@keyframes zcd-pulse{50%{opacity:.35;}}',
     ].join('\n');
+
+    /* ZB-21（用户报告「面板发生重影，变成透明在左上角」）：
+     * ★ 根因：样式此前是**作为 React 元素**渲染进组件树（`h('style', null, CSS)`）。
+     * 面板每秒轮询重渲染，一旦 React 重建该 <style> 节点，浏览器会**先移除再插入**样式表 ——
+     * 那一瞬间：
+     *   ① `.zcd-root` 失去 position:fixed ⇒ 面板**塌到左上角**（退回静态布局）；
+     *   ② `.zcd-panel` 失去 background ⇒ **透明**（看到底下的 DSH 界面）；
+     *   ③ 样式重新插入时 `.zcd-panel` 的 `animation:zcd-in` **从头播放**，而
+     *      `@keyframes zcd-in{from{opacity:0;...}}` **没有 to** ⇒ 动画反复重启期间面板
+     *      长期处于低透明度 ⇒ 用户看到的**重影/半透明**。
+     *
+     * 修法（两层）：
+     *   A. 样式**只注入一次**到 document.head，完全脱离 React 重渲染路径（ensureStyle）；
+     *   B. 给 zcd-in 补上显式 `to{opacity:1;transform:none}`，即使动画被重启也终态明确。
+     *
+     * 为什么注入 head 而不是组件树：head 里的样式表不参与 React 协调，重渲染不会动它；
+     * 同时保留"插件卸载即移除"的语义（用 data 属性标记 + 卸载时移除，见 detachStyle）。
+     */
+    const STYLE_ID = 'zcode-dispatch-style';
+    let styleEl = null;
+    /** 把样式注入 document.head（幂等：已存在则复用，不重复插入）。 */
+    function ensureStyle() {
+      try {
+        if (typeof document === 'undefined') return;
+        if (styleEl && styleEl.isConnected) return;
+        const existing = document.getElementById(STYLE_ID);
+        if (existing) {
+          styleEl = existing;
+          return;
+        }
+        const s = document.createElement('style');
+        s.id = STYLE_ID;
+        /* 双保险：同时写 id 属性（真实 DOM 里 `s.id = x` 与 setAttribute 等价，
+         * 但某些测试桩/老内核只认其中一种；getElementById 依赖它做幂等查找）。 */
+        try { s.setAttribute('id', STYLE_ID); } catch { /* ignore */ }
+        s.setAttribute('data-plugin', 'zcode-dispatch');
+        s.textContent = CSS;
+        (document.head || document.documentElement).appendChild(s);
+        styleEl = s;
+      } catch { /* 注入失败不阻塞渲染（面板仍可用，只是样式可能不完整） */ }
+    }
+    /** 插件卸载时移除样式（保持"卸载即清理"的原有语义）。 */
+    function detachStyle() {
+      try {
+        const s = (styleEl && styleEl.isConnected) ? styleEl : (typeof document !== 'undefined' ? document.getElementById(STYLE_ID) : null);
+        if (s && s.parentNode) s.parentNode.removeChild(s);
+      } catch { /* ignore */ }
+      styleEl = null;
+    }
 
     /* ─────────────── 文案（与 locale/zh.json、locale/en.json 的 ui 段同源；接线后可改走宿主 locale 服务） ─────────────── */
     const STRINGS = {
@@ -2192,6 +2242,13 @@ window.__ModuleLoader__.load({
       /* 挂载后也要重算一次：初始渲染时面板还没有真实尺寸（offsetWidth=0），
        * 用估计值推导过一次；挂载后尺寸已知，需要纠正。 */
       useEffect(() => { forcePos((n) => n + 1); }, [collapsed, minimized, width, height]);
+      /* ZB-21：样式只注入一次到 document.head（脱离 React 重渲染路径）。
+       * 卸载时移除，保持"插件卸载即清理"的原有语义。
+       * 依赖数组为空 ⇒ 只在挂载/卸载时执行，轮询重渲染不会碰它（这正是修复点）。 */
+      useEffect(() => {
+        ensureStyle();
+        return () => detachStyle();
+      }, []);
       // Z6：通道清单 / 默认通道 / 降级链（挂载时拉一次；切换即时回显，wire 返回后用权威值校正）
       const [channelsInfo, setChannelsInfo] = useState({ channels: [], warnings: [] });
       const [channel, setChannelState] = useState({ provider: 'plan', model: 'GLM-5.3-Flash' });
@@ -2400,7 +2457,6 @@ window.__ModuleLoader__.load({
           className: 'zcd-root zcd-min',
           style: { ...cssVars, right: '24px', bottom: '24px' }, // 不用 pos：见上
         },
-          h('style', null, CSS),
           h('button', {
             className: 'zcd-pill',
             title: `${t('title')} · ${status}${waiting > 0 ? `（${waiting}）` : ''} — ${t('restore')}`,
@@ -2428,7 +2484,6 @@ window.__ModuleLoader__.load({
       const dispatchSwitch = snapshot && snapshot.switch ? snapshot.switch : null;
 
       return h('div', { ref: rootRef, className: 'zcd-root', style: rootStyle, role: 'region', 'aria-label': t('title') },
-        h('style', null, CSS),
         h('div', { className: 'zcd-panel' },
           h('div', { className: 'zcd-titlebar' + (pinned ? ' zcd-locked' : ''), onPointerDown: startDrag },
             h(StatusDot, { state: runningNow ? 'running' : 'idle' }),
