@@ -1947,7 +1947,7 @@ window.__ModuleLoader__.load({
       /* ZB-07：保存的位置可能是脏值（早期版本存的负数/越界值，或存完之后窗口变小了）——
        * 直接沿用会让整个面板跑到屏幕外、再也点不到。载入时按当前视口钳制一次。
        * 初始化阶段拿不到面板真实尺寸（还没渲染），用保存的宽高 / 默认值保守估计即可：
-       * 目的只是把「明显在视口外」的位置拉回来，精确对齐交给后续拖拽。 */
+       * 目的只是把「明显在视口外」的位置拉回来，精确对齐交给 ZB-10 的挂载后重钳。 */
       const [pos, setPos] = useState(() => {
         const saved = loadJson(LS.pos, null);
         const savedSize = loadJson(LS.size, null) || {};
@@ -1977,6 +1977,36 @@ window.__ModuleLoader__.load({
         switchSet,
       } = useWire();
       const rootRef = useRef(null);
+      /* ZB-10：按**真实测量尺寸**重新钳制位置。
+       *
+       * 起因（用户报告）：「面板固定了，重开 DSH 时窗口显示有变化，导致固定位置变动」。
+       * 缺口有二：
+       *   ① 载入时的钳制用的是**猜的**高度（savedSize.height || 320），与真实渲染高度不符
+       *      ⇒ 钳制结果有偏差；
+       *   ② **视口尺寸变化时完全没有重钳** —— 重开 DSH 后窗口变小，面板就留在视口外/贴边不对。
+       * 故：挂载后用 offsetWidth/offsetHeight（真实值，含用户设过的宽高）重钳一次，
+       * 并监听 resize 持续重钳；只在**确实越界**时才移动（clampPos 是最小平移）。
+       * 折叠/最小化时不重钳：折叠态面板很矮、胶囊本就固定右下角，重钳无意义且会干扰。 */
+      const reclampPos = useCallback(() => {
+        const el = rootRef.current;
+        if (!el) return; // 未挂载 / 最小化态（根节点不是面板）
+        const w = el.offsetWidth || WIDTH.def;
+        const h = el.offsetHeight || 320;
+        const vw = (typeof window !== 'undefined' && window.innerWidth) || 0;
+        const vh = (typeof window !== 'undefined' && window.innerHeight) || 0;
+        setPos((prev) => {
+          if (!prev) return prev; // 没存过位置 ⇒ 走默认右下角，无需钳
+          const next = clampPos(prev, { vw, vh, w, h });
+          if (!next) return prev;
+          return next.left === prev.left && next.top === prev.top ? prev : next;
+        });
+      }, []);
+      useEffect(() => {
+        reclampPos(); // 挂载后按真实尺寸钳一次（修 ①）
+        const onResize = () => reclampPos();
+        window.addEventListener('resize', onResize); // 视口变化持续钳（修 ②）
+        return () => window.removeEventListener('resize', onResize);
+      }, [reclampPos, collapsed, minimized]); // 展开态变化后尺寸变了，也重钳一次
       // Z6：通道清单 / 默认通道 / 降级链（挂载时拉一次；切换即时回显，wire 返回后用权威值校正）
       const [channelsInfo, setChannelsInfo] = useState({ channels: [], warnings: [] });
       const [channel, setChannelState] = useState({ provider: 'plan', model: 'GLM-5.3-Flash' });
