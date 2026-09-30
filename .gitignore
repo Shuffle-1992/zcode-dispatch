@@ -1,0 +1,27 @@
+# 运行期数据（不入库）
+zcode-dispatch/work/
+zcode-dispatch/.data/
+node_modules/
+
+# 桥的运行时收发（只保留目录占位）
+bridge/inbox/*
+bridge/outbox/*
+bridge/archive/*
+!bridge/inbox/.gitkeep
+!bridge/outbox/.gitkeep
+!bridge/archive/.gitkeep
+
+# 第三方（DSH 自带）材料的提取副本：不入库，来源与再生成方式见 refs/README.md
+refs/SKILL.md
+refs/references/
+refs/templates/
+refs/extracted/
+refs/dsh-typert/
+refs/dsh-plugin-manager/
+refs/dsh-pm-ui/
+refs/dsh-host-cli/
+
+# 临时/日志
+*.log
+*.tmp
+%TEMP%

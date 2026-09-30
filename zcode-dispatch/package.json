@@ -1,0 +1,14 @@
+{
+  "name": "@local/zcode-dispatch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.js", "./client": "./client.js", "./package.json": "./package.json", "./locale/*.json": "./locale/*.json", "./typert": "./wire.host.mjs", "./remote": "./wire.client.mjs" },
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": { "platform": "web", "immediately": true, "inject": ["@deepseek-ai/dsh-client-ui-conversation"] }
+  },
+  "meta": { "title": "ZCode 派发台", "description": "在 Harness 里派发/监视多个 ZCode 无头进程（单写者互斥、用量与上下文、套餐通道）" },
+  "icon": "./icon.svg",
+  "files": ["index.js", "client.js", "core", "locale", "icon.svg", "README.md", "wire.host.mjs", "wire.client.mjs"]
+}
