@@ -1412,7 +1412,13 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'remote', 'remote.zcodeDispatch'],
+      // 只依赖宿主必定提供的 `slots` 与 `remote` 基础服务。
+      // ⚠️ 绝不能把自家的 `remote.zcodeDispatch` 写进 inject：该命名空间正是 apply() 里
+      // $mount 才挂上的——声明它等于"等自己"，条目会永远 pending，导致 web boot 直接失败：
+      //   web boot: 1 entry did not activate
+      //   @local/zcode-dispatch: pending (waiting for service: remote.zcodeDispatch)
+      // 命名空间是否就绪改用运行时探测（createWire / MOD_CTX），缺席即降级 demo/ext。
+      inject: ['slots', 'remote'],
       apply(ctx) {
         MOD_CTX = ctx; // createWire 据此探测远端面；apply 未跑或无 remote 时走 ext/demo 降级
         // 第三方本地包不被构建期内联进 api-remotes 聚合，须在 apply 自挂 remote.zcodeDispatch
