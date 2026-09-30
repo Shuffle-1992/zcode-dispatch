@@ -29,11 +29,15 @@ ok(keys.includes('locks') && keys.includes('quota'), 'S2 单写者与用量两�
 const iLocks = keys.indexOf('locks');
 const iQuota = keys.indexOf('quota');
 const iJobs = keys.indexOf('jobs');
+const iDispatch = keys.indexOf('dispatch');
 
-ok(iLocks < iQuota, 'S3 单写者排在用量**之前**（本次互换的目标）');
-ok(iLocks === iJobs + 1, 'S4 单写者**紧跟**进程列表之后');
-ok(iQuota === keys.length - 1, 'S5 用量移到最末');
-ok(iLocks === iJobs + 1 && iQuota === iLocks + 1, 'S6 两分区相邻且顺序为 进程 → 单写者 → 用量');
+/* ZB-12（用户要求）：用量移到**派发下面**。
+ * 当前完整顺序：通道 → 派发 → 用量 → 进程 → 单写者/文件锁。 */
+ok(iQuota === iDispatch + 1, 'S3 用量**紧跟**派发之后（本次调整的目标）');
+ok(keys.join(' → ') === 'channel → dispatch → quota → jobs → locks',
+  `S4 完整顺序 = 通道 → 派发 → 用量 → 进程 → 单写者（实际 ${keys.join(' → ')}）`);
+ok(iLocks === iJobs + 1, 'S5 单写者仍**紧跟**进程列表之后');
+ok(iLocks === keys.length - 1, 'S6 单写者仍在最末');
 
 console.log('\n折叠状态按 id 独立（换位不应串状态）');
 ok(/SEC_DEFAULT_OPEN/.test(src), 'S7 默认开闭表仍按 id 定义');
