@@ -69,6 +69,65 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 > 三个路径全空时插件照常激活，只是不创建 dispatcher（面板 demo 降级、工具动作返回可读错误）——
 > 不会猜一个位置静默跑错。
 
+## ⚠️ 凭据从哪来 + 报「身份验证失败 / 401」怎么办
+
+本插件的凭据**不自己存**：它和宿主 runner（`zcode-run.mjs`）一样，读 **ZCode 自己的配置文件**：
+
+| 位置 | 内容 |
+|---|---|
+| `~/.zcode/v2/config.json` → `provider["builtin:bigmodel-coding-plan"].options.apiKey` | **明文** Key（本插件与 ZCode CLI 都读它） |
+| `~/.zcode/v2/credentials.json` → `account-provider:coding-plan:…:api-key` | **加密**（`enc:v1`）凭据库，随 OAuth 登录更新 |
+
+### 最常见的故障：OAuth 重新登录后 `config.json` 失配
+
+**这是 ZCode 的上游缺陷，不是本插件的问题**：
+
+> ZCode 在 **OAuth 重新登录 / 重新授权**后，把**新 Key 只写进加密凭据库
+> `credentials.json`**，**不回写 `config.json`**；而 `config.json` 里留着**已失效的旧 Key**。
+> ⇒ **一切读 `config.json` 的程序集体 401**，**连 ZCode 自己的 Agent CLI（`zcode.cjs -p …`）也一样**。
+
+**判断**（最快）：比对两个文件的修改时间 —— 若 `credentials.json` 很新、`config.json` 停在很久以前，
+基本就是失配。
+
+**💡 解决：把有效 Key 保存（写回）到 `config.json`** —— 这是**一次修好所有工具**的做法：
+
+1. 从凭据库解出有效 Key（`credentials.json` 里的值是 `enc:v1:<iv>.<tag>.<data>`
+   AES-256-GCM 加密，密钥 = `sha256(secret)`，secret 见下方参考实现）；
+2. **先验活**（见下方陷阱，**不能只看状态码**）；
+3. **备份** `config.json` 后，把有效 Key 填回
+   `provider["builtin:bigmodel-coding-plan"].options.apiKey`；
+4. 回读校验；必要时重启 ZCode / DSH。
+
+> ⚠️ 手工改之前**先退出 ZCode**（运行中修改可能被覆盖），并**务必先备份**。
+>
+> 姊妹项目 [`dsh-connect-zcode`](https://github.com/Shuffle-1992/dsh-connect-zcode) 提供了
+> 现成工具做这件事（自动备份 + 验活 + 原子替换 + 回读校验）：
+> `node scripts/sync-key-to-config.mjs --dry-run` 先诊断，去掉 `--dry-run` 即执行。
+> 其 README 与 `TROUBLESHOOTING.md` 有完整的踩坑记录。
+
+### ⚠️ 验活陷阱：网关对**失效 Key** 也返回 HTTP 200
+
+```
+HTTP 200
+{"code":1000,"msg":"身份验证失败。","success":false}      ← 这是失效 Key！
+```
+
+**只看 `res.ok` / 状态码会把无效 Key 判为有效**。正确判定（三者同时满足）：
+
+```js
+const res = await fetch(`${baseURL}/v1/models`, {
+  headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+});
+if (!res.ok) return false;                        // 401 等
+const body = await res.json();
+if (body?.success === false) return false;        // ← 关键：200 也可能是认证失败
+if (body?.code !== undefined && body.code !== 200) return false;
+return Array.isArray(body?.data) && body.data.length > 0;
+```
+
+> 本仓库 `test/` 下的假 runner 不触网，故该判定属于**宿主持有凭据**的范畴；
+> 此处记录是为了让排查者知道「为什么工具说正常、实际仍 401」。
+
 ## agent 工具 `zcode_dispatch`
 
 一个工具 + `action` 参数：`dispatch | list | kill | dismiss | tail | quota | status | switch | channels | channel | retry | fallback | wait`，
