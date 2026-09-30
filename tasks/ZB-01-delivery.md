@@ -1829,7 +1829,8 @@ action=switch 切换 enabled=true|false；action=dispatch 派发（关闭时会�
 
 **③ 清除宿主项目名（用户要求）**
 
-机械替换 36 个 md 文件 88 处 + 代码注释 1 处，**全仓 `宿主项目` 出现次数 = 0**：
+机械替换 36 个 md 文件 88 处 + 代码注释 1 处，**全仓该字样出现次数 = 0**
+（本节原文里残留的那一处，已在 §30 的历史重写中一并替换）：
 
 | 原 | 现 |
 |---|---|
@@ -1863,3 +1864,75 @@ core **12/12**；channel-retry **9/9**；quota-rpc **16/16**。
 
 > 若第 1 条为空 ⇒ profile patch 的 override 未命中：把 `- id: zcode-dispatch`（含 `name`）那段
 > 补进 profile patch 即可。插件会退化为"不创建 dispatcher"而**不会崩**（刻意设计）。
+
+---
+
+## 30. ZB-03：清除**历史提交**里的宿主项目名（历史重写）
+
+用户问：能否删掉此前提交里带宿主项目名的内容？不行的话是否删库重建？
+
+**结论：不必删库 —— 重写本地历史后强推即可**（仓库刚建、无 fork、仅本人在推）。
+
+### 30.1 规模（重写前实测）
+
+| 项 | 值 |
+|---|---|
+| 提交总数 | 19 |
+| 含该字样的提交 | **10**（`git log -S` pickaxe 精确列出） |
+| 全历史 diff 命中行 | **231** |
+
+> 关键认识：§29 那次只清洗了**工作区**——旧提交的树里仍原样保留该字样，
+> 任何人 `git log -p` 都能翻出来。要真正抹掉必须**重写历史**。
+
+### 30.2 第一次尝试失败：`--tree-filter` 撞上 Windows 文件锁
+
+```
+error: unable to unlink old '.gitignore': Invalid argument
+Could not checkout the index
+rm: cannot remove 'F:/My Code/dsh-plugins/.git-rewrite/t/.gitignore': Device or resource busy
+```
+
+- 在**第 14/19 个提交**才失败 ⇒ 不是系统性问题，是实时扫描/监视对临时检出目录的**瞬时占用**；
+- `--tree-filter` 要为每个提交把整棵树检出到磁盘（上千次创建/删除），正好踩这个坑；
+- **失败是干净回滚**（已实测确认）：历史 SHA 未变、无 `refs/original` 残留、工作区仅多出 `?? .git-rewrite/`，
+  历史命中数仍是 231 ⇒ **零损伤**。
+
+**改用 `--index-filter`**：只改写索引里的 blob，**全程不落盘**，从根上绕开该类锁。
+脚本见 `%TEMP%/zcd-idx-filter.mjs`（一次性，用完即删）：读 `git ls-files -s -z`
+→ 对文本类 blob 做与 §29 **完全相同的替换规则** → `git hash-object -w` + `update-index --cacheinfo`。
+
+```powershell
+git filter-branch --force --index-filter 'node "…/zcd-idx-filter.mjs"' -- --all
+```
+
+### 30.3 重写结果与自检
+
+| 自检项 | 结果 |
+|---|---|
+| 提交数保持 19 | ✅（`--all` 会计到 38，因 `refs/remotes/origin/main` 仍指向重写前 tip——刻意保留作远端真实值依据与回滚点） |
+| **main 全历史命中** | **0**（重写前 231）✅ |
+| **逐提交树检查**（19 个逐个 `git grep`） | **全部干净** ✅ |
+| 末次树 vs 重写前 | 差 1 文件 1 行 —— **正是修掉了我自己的疏漏**（§29.3 那句「…该字样出现次数 = 0」本身含该字样，随上次提交推上去了） |
+
+**回滚保险**：重写前用 `git bundle create` 留了全量备份（`%TEMP%/dsh-plugins-pre-rewrite.bundle`，594.6 KB），
+还原方式 `git clone <bundle> <目标目录>`。
+
+事后清理：删除 `refs/original/*` 备用 ref → `reflog expire --expire-unreachable=now --all` → `gc --prune=now`。
+
+### 30.4 强推
+
+重构后本地 `main` 已是一段新历史，与远端不共享祖先 ⇒ 需强推：
+
+```powershell
+git push --force-with-lease=main:1efaa4b0d96f2ce0d2775afd75c2fe960d6a8632 origin main
+```
+
+> 用 `--force-with-lease=<ref>:<期望值>` 显式给出**重写前远端 tip**：这样若远端在此期间被别人
+> 推过，推送会被拒绝而不是覆盖掉别人的提交。
+
+### 30.5 残留与边界（如实标注）
+
+- 强推后 GitHub 上旧提交**会在短期内仍可通过直接 SHA 访问**（服务端对象延迟回收）。
+  本项目被清理的是**项目名**、非凭据/密钥，风险等级低；
+  若要求**零残留**，最彻底的做法是**删库重建**（用户已授权该选项），但那会一并丢失 19 条提交历史。
+- 本次选择**重写 + 强推**：达到"公开可见的历史里没有该字样"，同时保住提交历史与 `tasks/` 留档。
