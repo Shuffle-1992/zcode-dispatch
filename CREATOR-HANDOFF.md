@@ -90,16 +90,9 @@
 3. 若已注册但无内容：看渲染是否抛错（刷新后如出现"渲染失败"卡片，把那行消息带回即可精确定位）；必要时把 `client.js` 顶部先换成**极简 `<div>`**（不依赖 wire/CSS）二分定位"槽位→组件"这条路，再逐步加回。
 4. 参考 `refs/SKILL.md`、`refs/references/practices.md`（`wire.view`）、`refs/references/ui-plugin.md`（其中明确：只有需要 overlay 且位置已知时才用 `shell.overlay`）。
 
-### P2（决定"是否真数据"）：宿主 Remote 面是否真的 provide 成功
-
-`wire.host.mjs` 用 `ctx.provide(FACE_NAME, face)` 注册（`FACE_NAME='zcodeDispatch'`），失败会降级为 `registered:false`。
-- `cordis_inspect_query` → **Service**：查 `zcodeDispatch` 是否在服务表、由哪个 fiber 提供；
-- 若不在：按官方形态改写 —— `refs/dsh-typert/protocol/README.zh.md`（`TypertRemoteService` + `Remote` 装饰器 / `bindTypertRemote()`；实现见 `protocol/lib/index.js:146-157`、`:248-268`），并对照 `refs/dsh-typert/plugin-manager/lib/index.js`（官方 host 半边完整实现）；
-- 客户端 `$mount(REMOTE_CONTRIBUTION)` 契约对齐 `refs/dsh-typert/registry/lib/client.js`；
-- 判据：面板徽标由「演示数据」→「**已连接**」（`connLabel`：demo/ext/live/其它）。
-
-### P3（可选）：UI 微调
-用户反馈的"布局挤 + 右上角折叠/最小化点不动"已由 Z9 修复（`startDrag` 交互元素守卫 + 8 条 CSS），但**未经真机点击验证**；面板可见后请顺手确认，仍不对就按 `tasks/Z9-delivery.md` 清单微调。
+### P2（可选）：UI 第二轮（Z11 正在做，创建者会话只需验收）
+用户 14:2x 提的四项：① 去掉内置演示数据、改诚实空态；② 通道/派发分区可折叠（默认折叠）；③ 暂停进程可"关闭"；④ 点击进程行展开看派发内容（多进程区分）。已派 Z11 落地；创建者会话只需在页面上点一遍确认（§六 现场判据），有问题按 `tasks/Z11-delivery.md` 清单微调。
+另：Z9 修的"布局挤 + 右上角折叠/最小化点不动"也需真机点击确认（`tasks/Z9-delivery.md`）。
 
 ---
 
