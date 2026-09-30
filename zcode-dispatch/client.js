@@ -221,6 +221,10 @@ window.__ModuleLoader__.load({
       '.zcd-grip:hover{color:var(--zcd-text);}',
       '.zcd-pill{display:inline-flex;align-items:center;gap:6px;pointer-events:auto;padding:5px 12px;border:1px solid ' + T.border + ';border-radius:999px;background:' + T.bg + ';color:' + T.text + ';box-shadow:' + T.shadow + ';cursor:pointer;font:inherit;transition:transform .15s ease;}',
       '.zcd-pill:hover{transform:translateY(-1px);}',
+      /* ZB-06：胶囊要能一眼看出「这是什么」——标题常驻，计数与状态按需出现。 */
+      '.zcd-pill-title{font-weight:600;white-space:nowrap;}',
+      '.zcd-pill-n{flex:none;min-width:16px;text-align:center;font-size:10px;font-weight:600;padding:0 4px;border-radius:999px;background:' + T.hover + ';color:' + T.text + ';}',
+      '.zcd-pill-state{color:' + T.text3 + ';white-space:nowrap;}',
       '@keyframes zcd-in{from{opacity:0;transform:translateY(6px) scale(.98);}}',
       '@keyframes zcd-pulse{50%{opacity:.35;}}',
     ].join('\n');
@@ -231,6 +235,7 @@ window.__ModuleLoader__.load({
         title: 'ZCode 派发台',
         connConnecting: '连接中', connDemo: '演示数据', connExt: '外部数据', connLive: '已连接', connOffline: '未连接',
         collapse: '折叠 / 展开', minimize: '最小化为胶囊', restore: '展开派发台', grip: '拖拽调整宽高（自动保存）',
+        pillRunning: '运行中', pillQueued: '排队中', pillIdle: '空闲',
         pin: '固定位置（固定后不可拖动）', unpin: '取消固定（恢复可拖动）',
         secDispatch: '派发', secJobs: '进程', secQuota: '用量', secLocks: '单写者',
         kind: '类型', kindPrompt: '提示词', kindTask: '任务文件', kindTarget: '目标',
@@ -273,6 +278,7 @@ window.__ModuleLoader__.load({
         title: 'ZCode Dispatch Console',
         connConnecting: 'connecting', connDemo: 'demo data', connExt: 'external', connLive: 'live', connOffline: 'offline',
         collapse: 'Collapse / Expand', minimize: 'Minimize to pill', restore: 'Restore console', grip: 'Drag to resize (saved automatically)',
+        pillRunning: 'running', pillQueued: 'queued', pillIdle: 'idle',
         pin: 'Pin position (no dragging while pinned)', unpin: 'Unpin (allow dragging again)',
         secDispatch: 'Dispatch', secJobs: 'Processes', secQuota: 'Usage', secLocks: 'Single writer',
         kind: 'Kind', kindPrompt: 'Prompt', kindTask: 'Task file', kindTarget: 'Target',
@@ -2088,11 +2094,22 @@ window.__ModuleLoader__.load({
       if (minimized) {
         const running = (snapshot && snapshot.counts && snapshot.counts.running) || 0;
         const waiting = running + ((snapshot && snapshot.counts && snapshot.counts.queued) || 0);
+        /* ZB-06（用户报告「最小化后只能看到一点点内容」）：胶囊原先只画
+         * [状态点][数字或·]，空载时就是一个孤零零的圆点 + 中点，看不出这是什么、也点不着。
+         * 现在保留「ZCode 派发台」字样 + 实时状态，并给它一个明确的 title。 */
+        const status = running > 0 ? t('pillRunning') : waiting > 0 ? t('pillQueued') : t('pillIdle');
         return h('div', { className: 'zcd-root zcd-min', style: rootStyle },
           h('style', null, CSS),
-          h('button', { className: 'zcd-pill', title: t('restore'), onClick: () => setMinimized(false) },
-            h(StatusDot, { state: running > 0 ? 'running' : 'idle' }),
-            h('span', null, waiting > 0 ? String(waiting) : '·')));
+          h('button', {
+            className: 'zcd-pill',
+            title: `${t('title')} · ${status}${waiting > 0 ? `（${waiting}）` : ''} — ${t('restore')}`,
+            'aria-label': `${t('restore')}：${t('title')}`,
+            onClick: () => setMinimized(false),
+          },
+            h(StatusDot, { state: running > 0 ? 'running' : waiting > 0 ? 'queued' : 'idle' }),
+            h('span', { className: 'zcd-pill-title' }, t('title')),
+            waiting > 0 ? h('span', { className: 'zcd-pill-n' }, String(waiting)) : null,
+            h('span', { className: 'zcd-pill-state' }, status)));
       }
 
       const runningNow = ((snapshot && snapshot.counts && snapshot.counts.running) || 0) > 0;
