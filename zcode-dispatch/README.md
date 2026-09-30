@@ -84,7 +84,7 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
   `state/dismissed.json`（queued/running 必须先 kill）；core 的 `kill` 对 paused 是空操作
   （子进程已退出），UI「关闭」按钮因此先 `kill`、kill 无效时退回 `dismiss`。
 - `channels` / `channel set` / `retry(jobId, {provider?, model?})` / `fallback`：Z6 通道与续跑，见下节。
-- 限制：单写者互斥（同锁 FIFO 排队，不报错）；`memoryBench` 仅 prompt；工具不授予/确认任何权限。
+- 限制：仓库写锁互斥（同锁 FIFO 排队，不报错；**文件锁任务优先放行**，见「锁与并发语义」）；`memoryBench` 仅 prompt；工具不授予/确认任何权限。
 
 ## 锁与并发语义（ZB-16 锁模型）
 
@@ -110,6 +110,20 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 > 但"整仓库写"涵盖所有文件 ⇒ 必然竞写。现已加 `crossLevelBlocked`：
 > 文件锁任务会检查整仓库锁，反之亦然（保守：无法证明无交集即视为冲突）。
 
+> **调度优先级（ZB-17 用户要求）：文件锁任务优先放行**。
+> 旧实现是严格 FIFO + 队头阻塞（队头拿不到锁就 `break`）—— 后果是一个整仓库锁任务排在
+> 队头时，**后面本可并行的文件锁任务全被堵住**（实测：反向验证时旧实现"实际跑的是 WHOLE"）。
+> 现改为**按优先级扫描队列**取第一个能拿到锁的：
+>
+> | 规则 | 说明 |
+> |---|---|
+> | 优先级 | **文件锁任务 > 整仓库锁任务** |
+> | 同类内 | 保持 **FIFO**（按队列原始顺序，不互相插队） |
+> | 整仓库锁执行时 | 文件锁任务**都等待**（这是 `crossLevelBlocked` 的职责，与优先级无关） |
+>
+> ⚠️ 已知取舍：若文件锁任务持续不断到来，队里的整仓库锁任务可能被长期推后（**饥饿**）。
+> 本轮按用户明确要求只做优先级、**未加 aging**；若实际出现饥饿，再加"等待超时后提升优先级"。
+
 > 实测（2026-09-30）：T18（`lock=both`）跑 27 分钟期间，一个只要 `repo`、
 > 一个只要 `memory` 的任务全程干等，三者 `started`/`finished` 首尾相接、**无一毫秒重叠** ——
 > 因为 `maxConcurrent=1` 是总闸。故 `maxConcurrent` 已提到 4（profile 配置）。
@@ -128,9 +142,9 @@ dispatch(write: ['F:\\proj\\src\\a.ts'])   # 只锁 a.ts
 - **路径归一化**：Windows 上大小写不敏感，`F:\proj\src\a.ts` 与 `F:\PROJ\SRC\A.TS`
   视为**同一文件**（否则会产出多把锁、同一文件被并发写 —— 这是开发中实测抓到并修掉的 bug）
 - **防死锁**：多文件按归一化路径**排序后**依次加锁，所有任务加锁顺序一致
-- **加锁留痕**：锁体回存 `paths`，UI「单写者 / 文件锁」分区展示**哪个文件被哪个进程锁着、锁了多久**
+- **加锁留痕**：锁体回存 `paths`，UI「**仓库文件锁**」分区展示**哪个文件被哪个进程锁着、锁了多久**
 
-> ⚠️ **安全底线**：**未声明 `write` 的任务一律回退到 `repo`/`memory` 粗粒度锁**。
+> ⚠️ **安全底线**：**未声明 `write` 的任务一律锁整个仓库**（`repo.lock`）。
 > 细粒度是「声明了才生效的可选优化」，**不是默认放宽** —— 否则不声明的任务会失去互斥保护，
 > 多个 ZCode 进程同时改同一个仓库，那正是单写者语义要防的事故。
 > 测试 `test/file-lock.test.mjs` 的第一条就是这个底线。
@@ -278,7 +292,8 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/elapsed-format.test.mjs` | 15 | 耗时展示格式（ZB-13：恒定三段 XX时XX分XX秒；数据层仍为秒数） |
 | `node test/ctx-format.test.mjs` | 23 | 上下文占用展示（ZB-14：`180.9k / 200k`，截断非四舍五入） |
 | `node test/lock-model.test.mjs` | 8 | 锁模型（ZB-16：删除 memory 锁；不同文件集可并发；同文件排队；跨层级互斥） |
-| `node test/lock-ui.test.mjs` | 26 | 派发区锁控件与中文锁名（ZB-16：仓库文件锁开关 + 要写的文件 + 分区改名） |
+| `node test/lock-ui.test.mjs` | 26 | 派发区锁控件与中文锁名（ZB-16/17：仓库文件锁开关 + 要写的文件 + 分区名「仓库文件锁」） |
+| `node test/lock-priority.test.mjs` | 4 | 调度优先级（ZB-17：文件锁任务优先放行；同类内 FIFO；整仓库锁执行时文件锁等待） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 > `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），

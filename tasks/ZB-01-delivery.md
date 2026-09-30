@@ -2787,3 +2787,96 @@ panel-reclamp **9/9**；elapsed-format **15/15**；ctx-format **23/23**；
 
 改了 `core/dispatch-core.mjs` 与 `index.js`（**Host 半边**）+ `client.js`（UI）
 ⇒ **完全退出 DSH 再启动**（UI 部分刷新即可，但宿主改了，一并重启更稳）。
+
+---
+
+## 40. ZB-17：分区名改「仓库文件锁」+ 调度优先级（文件锁任务优先放行）
+
+### 40.1 用户要求
+
+> 「分区名：「单写者 / 文件锁」→「仓库文件锁」。整仓库锁（repo.lock）与文件锁（files/*.lock）
+> 之间关系，如果有多个并发，**优先执行文件锁的进程**，整仓库锁的进程后执行；
+> 整仓库锁的进程执行时，文件锁的待执行进程都等待。**优先放行文件锁的进程**。」
+
+### 40.2 改动一：分区名
+
+| 位置 | 原 | 现 |
+|---|---|---|
+| `client.js` 内嵌 STRINGS（zh/en） | 文件锁 / 记忆锁 · File locks / Memory lock | **仓库文件锁** · **Repo file locks** |
+| `locale/zh.json` / `en.json` | 同上 | 同步（125 key 对称） |
+
+> 注：§39 里"改成「文件锁 / 记忆锁」"是 ZB-16 当时的记录，保持原样不改（历史留档）；
+> 本节记录 ZB-17 的再次更名。
+
+### 40.3 改动二：调度优先级（核心）
+
+**旧实现**（严格 FIFO + 队头阻塞）：
+
+```js
+function pump() {
+  while (queue.length > 0 && runningCount < maxConcurrent) {
+    const head = jobs.get(queue[0]);
+    if (!tryAcquire(head, locksFor(head.spec))) break; // ← 队头拿不到锁就整个停
+    …
+  }
+}
+```
+
+**后果**（反向验证实测原文）：整仓库锁任务排在队头时，后面本可并行的文件锁任务**全被堵住**，
+跑起来的是 `["WHOLE"]` 而不是 `["F1","F2"]`。
+
+**新实现**（按优先级扫描，取第一个能拿到锁的）：
+
+```js
+const ordered = [
+  ...alive.filter(id => isFileLockSpec(jobs.get(id).spec)),   // ① 文件锁任务优先
+  ...alive.filter(id => !isFileLockSpec(jobs.get(id).spec)),  // ② 整仓库锁任务
+  ...dead,                                                     // ③ 顺手清失效 id
+];
+for (const id of ordered) {
+  if (tryAcquire(job, locksFor(job.spec))) { picked = …; break; }
+}
+```
+
+| 规则 | 实现 |
+|---|---|
+| **文件锁任务优先放行** | 排序时文件锁任务在前 |
+| **同类内保持 FIFO** | `filter` 保持 queue 原始顺序 ⇒ 同类不互相插队 |
+| **整仓库锁执行时文件锁任务都等待** | 由 `crossLevelBlocked` 保证（整仓库锁涵盖所有文件）—— 与优先级**是两件事**，注释里写明了 |
+| 都拿不到锁 | `break`，等释放 |
+
+⚠️ **已知取舍（如实登记）**：若文件锁任务持续不断到来，队里的整仓库锁任务可能被**长期推后（饥饿）**。
+本轮按用户明确要求只做优先级、**未加 aging**。若实际出现饥饿，再加"等待超时后提升优先级"即可。
+
+### 40.4 验证
+
+新增 `test/lock-priority.test.mjs`（**4 项**）：
+
+| 用例 | 断言 |
+|---|---|
+| **★ 核心**：整仓库锁在队头 | 队列 = `[WHOLE, F1, F2]`；持锁者释放后**跑起来的是 `["F1","F2"]`**，`WHOLE` 仍在等 |
+| 整仓库锁执行时 | 文件锁任务必须 `queued`（跨层级互斥） |
+| 同类内 FIFO | `maxConcurrent=1` 下 A→B→C 严格按队列顺序，`startedAt` 依次不重叠 |
+| 整仓库锁排前面也不先跑 | 队列 `[WHOLE2, F]` ⇒ 释放后 `F` 先跑，`WHOLE2` 仍等 |
+
+**反向验证**：把 `pump()` 换回严格 FIFO 队头阻塞 ⇒ 测试报红，且报错原文**精确复现旧行为**：
+`应优先放行文件锁任务，实际跑的是 ["WHOLE"]` ⇒ 证明测试能抓到该缺陷。
+
+### 40.5 一处因改名而失效的旧断言（已更新，非产品问题）
+
+`lock-ui.test.mjs` 的 A1/E3 断言的是 ZB-16 的分区名「文件锁 / 记忆锁」，
+本轮改名后**必然失败** —— 已更新为「仓库文件锁」（26/26 恢复）。
+
+### 40.6 门禁（全绿）
+
+`node --check` 零失败；verify-plugin **20/20**；verify-switch **8/8**；core **12/12**；
+channel-retry **9/9**；quota-rpc **16/16**；tail-scroll **13/13**；pill **16/16**；
+pill-position **16/16**；section-order **9/9**；panel-anchor **22/22**；
+panel-reclamp **9/9**；elapsed-format **15/15**；ctx-format **23/23**；
+lock-model **8/8**；lock-ui **26/26**；**lock-priority 4/4**（新增）；
+file-lock **9/9**；wait-action **6/6**。
+
+### 40.7 生效条件
+
+改了 `core/dispatch-core.mjs`（**Host 半边**）+ `client.js`（UI）
+⇒ **完全退出 DSH 再启动**。

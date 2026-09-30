@@ -705,16 +705,56 @@ export function createDispatcher(options = {}) {
     delete job.lockPaths;
   }
 
+  /** ZB-17：某 spec 是否是"文件锁任务"（声明了 write ⇒ 文件级锁，可并行）。 */
+  function isFileLockSpec(spec) {
+    return normalizeWriteSet(spec && spec.write).length > 0;
+  }
+
+  function runningCount() {
+    let n = 0;
+    for (const j of jobs.values()) if (j.state === 'running') n += 1;
+    return n;
+  }
+
+  /* ZB-17：**文件锁任务优先放行**（用户要求）。
+   *
+   * 旧实现是严格 FIFO + 队头阻塞：`if (!tryAcquire(head, …)) break;`
+   * —— 队头拿不到锁就整个停。后果：一个整仓库锁任务排在前面时，
+   * **后面本可并行的文件锁任务全被堵住**（实测过：T18 持整仓库锁 27 分钟，
+   * 期间所有文件锁任务干等）。
+   *
+   * 新实现：按**优先级扫描**队列，取第一个能拿到锁的启动。
+   *   · 优先级：文件锁任务（可并行）> 整仓库锁任务
+   *   · **同类内保持 FIFO**（按 queue 原始顺序），故同类任务不会互相插队
+   *   · 都不行则停（等别人释放）
+   *
+   * 与"整仓库锁执行时文件锁任务等待"的关系：那是 `crossLevelBlocked` 的职责
+   * （整仓库锁涵盖所有文件 ⇒ 与任何文件锁冲突），本函数只决定**放行顺序**。
+   *
+   * ⚠️ 已知取舍（如实登记）：若文件锁任务持续不断地到来，队里的整仓库锁任务
+   * 可能被长期推后（饥饿）。本轮按用户明确要求只做优先级、未加 aging；
+   * 若实际出现饥饿，再加"等待超时后提升优先级"即可。
+   */
   function pump() {
-    while (queue.length > 0 && [...jobs.values()].filter((j) => j.state === 'running').length < maxConcurrent) {
-      const head = jobs.get(queue[0]);
-      if (!head) {
-        queue.shift();
-        continue;
+    while (queue.length > 0 && runningCount() < maxConcurrent) {
+      const alive = queue.filter((id) => jobs.get(id));
+      const dead = queue.filter((id) => !jobs.get(id));
+      /* 优先级排序：文件锁任务在前（各自保持原队列序），整仓库锁任务在后，失效 id 最后。 */
+      const ordered = [
+        ...alive.filter((id) => isFileLockSpec(jobs.get(id).spec)),
+        ...alive.filter((id) => !isFileLockSpec(jobs.get(id).spec)),
+        ...dead,
+      ];
+      let picked = null;
+      for (const id of ordered) {
+        const j = jobs.get(id);
+        if (!j) { picked = { id, dead: true }; break; }
+        if (tryAcquire(j, locksFor(j.spec))) { picked = { id, job: j }; break; }
       }
-      if (!tryAcquire(head, locksFor(head.spec))) break; // FIFO：队头拿不到锁就停，保证排队顺序
-      queue.shift();
-      startJob(head);
+      if (!picked) break; // 没有任何任务能拿到锁 ⇒ 等释放
+      queue = queue.filter((x) => x !== picked.id);
+      if (picked.dead) continue; // 顺手清掉失效 id，继续尝试下一个
+      startJob(picked.job);
       emit('queue-changed');
     }
   }

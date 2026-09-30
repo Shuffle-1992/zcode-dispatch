@@ -20,7 +20,7 @@
     "secDispatch": "Dispatch",
     "secJobs": "Processes",
     "secQuota": "Usage",
-    "secLocks": "File locks / Memory lock",
+    "secLocks": "Repo file locks",
     "noFileLocks": "(no file locks: jobs did not declare write, using whole-repo lock)",
     "kind": "Kind",
     "kindPrompt": "Prompt",

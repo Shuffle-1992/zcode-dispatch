@@ -4,7 +4,7 @@
 //   ① repo/memory 改中文名显示，memory 改为「Zcode 记忆锁」；
 //   ② 派发可明确是否 repo 锁、明确 repo 锁哪些文件；
 //   ③ 删除 memory 相关；
-//   ⑤ 分区名改为「文件锁 / 记忆锁」。
+//   ⑤ 分区名改为「文件锁 / 记忆锁」（ZB-17 起改为「仓库文件锁」）。
 //
 // client.js 无法直接 import（依赖 React / 槽位），故对源码做断言；
 // 纯逻辑（文件列表解析）抽出来单测。
@@ -18,7 +18,7 @@ let pass = 0;
 const ok = (c, m) => { assert.ok(c, m); pass += 1; console.log(`  ✓ ${m}`); };
 
 console.log('① 分区名与中文锁名');
-ok(/secLocks: '文件锁 \/ 记忆锁'/.test(src), "A1 分区名 = 「文件锁 / 记忆锁」（用户要求 ⑤）");
+ok(/secLocks: '仓库文件锁'/.test(src), "A1 分区名 = 「仓库文件锁」（ZB-17 用户要求；原为「文件锁 / 记忆锁」）");
 ok(/repoLock: '仓库锁'/.test(src), "A2 repo 锁显示为「仓库锁」");
 ok(/lockHeld: '持有仓库锁'/.test(src), 'A3 lockHeld 文案同步中文化');
 ok(!/memoryLock: 'memory 锁'/.test(src), 'A4 旧的「memory 锁」英文名已移除');
@@ -79,7 +79,7 @@ console.log('\nlocale 中英对称');
   for (const k of ['repoLockCb', 'writePh', 'writeHint', 'writeFiles', 'lockNoneHint', 'lockScopeHint']) {
     ok(zu[k] !== undefined && eu[k] !== undefined, `E2 locale 含 ${k}`);
   }
-  ok(zu.secLocks === '文件锁 / 记忆锁', 'E3 locale 的分区名同步为「文件锁 / 记忆锁」');
+  ok(zu.secLocks === '仓库文件锁', 'E3 locale 的分区名同步为「仓库文件锁」');
 }
 
 console.log(`\n===== ZB-16(UI)：${pass} PASS / 0 FAIL =====`);

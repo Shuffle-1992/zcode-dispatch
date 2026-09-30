@@ -20,7 +20,7 @@
     "secDispatch": "派发",
     "secJobs": "进程",
     "secQuota": "用量",
-    "secLocks": "文件锁 / 记忆锁",
+    "secLocks": "仓库文件锁",
     "noFileLocks": "（当前没有文件锁：任务未声明 write，走仓库整锁）",
     "kind": "类型",
     "kindPrompt": "提示词",
