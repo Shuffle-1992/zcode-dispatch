@@ -110,3 +110,25 @@
 - 还原：`profile-backup/README-RECOVERY.md`（含三态留档与两条恢复命令）。
 - **教训**：让插件进入启动路径前，先用常驻判据挡住"会阻塞启动"的写法（本轮已加：
   「inject 不自声明 remote 命名空间」+「apply 全兜底」），否则一次启动失败就要用户点救援按钮 = 配置被重置。
+
+## 2026-10-05：仓库目录改名（`dsh-plugins` → `zcode-dispatch`）—— link 状态必须由 pnpm 重建
+
+- **起因**：本地目录名与 GitHub 仓库名（`zcode-dispatch`）不一致，改名对齐。
+- **踩的坑**：改完 `profile/package.json` 的 `link:` spec 后，**只手工改了
+  `node_modules/.pnpm/lock.yaml`，漏了 profile 根目录的正式锁文件 `profiles/desktop/pnpm-lock.yaml`**。
+  约 2.5 小时后 DSH 插件管理器自动跑 `pnpm install`（日志
+  `profiles/desktop/.plugin-manager/logs/operation-*/pnpm.log`），pnpm 以**仍含旧路径的根锁**为准，
+  把 `package.json`/两个 lock/junction 全部按旧路径重建 ⇒ junction 悬空 ⇒ 下次启动报
+  `cannot resolve profile bundle "@local/zcode-dispatch"`。
+- **正确做法**：改 `link:` spec 后**跑一次 profile 的 pnpm install**，让它自己重建 lock + junction；
+  若必须手工改，则 `profiles/<p>/pnpm-lock.yaml`（正式）与 `node_modules/.pnpm/lock.yaml`（副本）
+  **两个都要改**，并重建 junction，最后**再跑一次 install 复验**。
+- **附带教训（本仓库自身）**：`tools/`、`zcode-dispatch/test/*.test.mjs`、README、`CREATOR-*.md`
+  里**硬编码了绝对路径**（本次共 23 文件 43 处），改名后测试/校验脚本全部找不到源码。
+  本次已批量更正；**建议后续改为相对自身推导**（`import.meta.url` → `path.resolve`），
+  这样仓库放哪都能跑，不必再随改名批量改路径。
+- **附带教训（改名必查项）**：`junction`/`symlink` 的目标路径**不在任何文本里**，文本替换扫不到 ——
+  改名后必须单独扫链接：`Get-ChildItem <root> -Recurse -Force -Directory | Where-Object { $_.LinkType }`
+  再校验 `Target` 是否存在（本次另发现 `node_modules/@deepseek-ai/{cosmokit,schemastery}` 悬空）。
+- **附带教训（验收标准）**：改名后实测面板派发成功（exit 0）**不足以**作为验收 —— 依赖/link 类改动
+  必须**跑一次 install + 重启一次**；故障可能延迟到下次启动才暴露。
