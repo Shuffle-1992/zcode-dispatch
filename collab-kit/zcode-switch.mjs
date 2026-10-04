@@ -15,15 +15,15 @@
  *
  * 谁遵守（缺一不可，新入口必须一并接入）：
  *   1) scripts/collab/zcode-run.mjs      —— 无头派发（本仓库所有 run 的必经之路）
- *   2) dsh-plugins 插件的 Host 动作层     —— 面板/agent 工具的 dispatch 动作
- *   3) dsh-plugins/tools/bridge.mjs      —— 客户端自动化桥的投放
+ *   2) zcode-dispatch 插件的 Host 动作层     —— 面板/agent 工具的 dispatch 动作
+ *   3) zcode-dispatch/tools/bridge.mjs      —— 客户端自动化桥的投放
  */
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /* 项目根（含 collab/ 的目录）：--project > env ZCODE_PROJECT_DIR > cwd。
- * 本工具已迁至 dsh-plugins/collab-kit，不再与宿主项目有目录关系。 */
+ * 本工具已迁至 zcode-dispatch/collab-kit，不再与宿主项目有目录关系。 */
 function resolveProjectRoot() {
   const i = process.argv.indexOf('--project');
   if (i >= 0 && process.argv[i + 1]) return resolve(process.argv[i + 1]);

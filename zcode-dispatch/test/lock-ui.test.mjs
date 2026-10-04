@@ -11,7 +11,7 @@
 import { readFileSync } from 'node:fs';
 import { strict as assert } from 'node:assert';
 
-const SRC = 'F:\\My Code\\dsh-plugins\\zcode-dispatch\\client.js';
+const SRC = 'F:\\My Code\\zcode-dispatch\\zcode-dispatch\\client.js';
 const src = readFileSync(SRC, 'utf8');
 
 let pass = 0;
@@ -72,8 +72,8 @@ console.log('\n文件列表解析（纯逻辑，从源码抽 parseFiles）');
 
 console.log('\nlocale 中英对称');
 {
-  const zh = JSON.parse(readFileSync('F:\\My Code\\dsh-plugins\\zcode-dispatch\\locale\\zh.json', 'utf8'));
-  const en = JSON.parse(readFileSync('F:\\My Code\\dsh-plugins\\zcode-dispatch\\locale\\en.json', 'utf8'));
+  const zh = JSON.parse(readFileSync('F:\\My Code\\zcode-dispatch\\zcode-dispatch\\locale\\zh.json', 'utf8'));
+  const en = JSON.parse(readFileSync('F:\\My Code\\zcode-dispatch\\zcode-dispatch\\locale\\en.json', 'utf8'));
   const zu = zh.ui ?? zh, eu = en.ui ?? en;
   ok(Object.keys(zu).length === Object.keys(eu).length, `E1 中英 key 数一致（${Object.keys(zu).length}）`);
   for (const k of ['repoLockCb', 'writePh', 'writeHint', 'writeFiles', 'lockNoneHint', 'lockScopeHint']) {

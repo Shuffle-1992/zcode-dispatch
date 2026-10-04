@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const PKG = 'F:\\My Code\\dsh-plugins\\zcode-dispatch';
+const PKG = 'F:\\My Code\\zcode-dispatch\\zcode-dispatch';
 const results = [];
 const check = (name, ok, detail = '') => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  ${detail}`); };
 
@@ -35,7 +35,7 @@ check('index.js 声明 Config（可配置）', /export\s+const\s+Config\s*=/.tes
 {
   let std = { ok: false, detail: 'import 失败' };
   try {
-    const mod = await import('file:///F:/My Code/dsh-plugins/zcode-dispatch/index.js');
+    const mod = await import('file:///F:/My Code/zcode-dispatch/zcode-dispatch/index.js');
     const C = mod.Config;
     const fn = C && C['~standard'] && C['~standard'].validate;
     const res = typeof fn === 'function' ? fn({}) : null;

@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { strict as assert } from 'node:assert';
 
-const SRC = 'F:\\My Code\\dsh-plugins\\zcode-dispatch\\client.js';
+const SRC = 'F:\\My Code\\zcode-dispatch\\zcode-dispatch\\client.js';
 const src = readFileSync(SRC, 'utf8');
 
 let pass = 0;
@@ -33,8 +33,8 @@ for (const k of ['pillRunning', 'pillQueued', 'pillIdle']) {
 }
 
 console.log('\nlocale 对称');
-const zh = JSON.parse(readFileSync('F:\\My Code\\dsh-plugins\\zcode-dispatch\\locale\\zh.json', 'utf8'));
-const en = JSON.parse(readFileSync('F:\\My Code\\dsh-plugins\\zcode-dispatch\\locale\\en.json', 'utf8'));
+const zh = JSON.parse(readFileSync('F:\\My Code\\zcode-dispatch\\zcode-dispatch\\locale\\zh.json', 'utf8'));
+const en = JSON.parse(readFileSync('F:\\My Code\\zcode-dispatch\\zcode-dispatch\\locale\\en.json', 'utf8'));
 const zu = zh.ui ?? zh, eu = en.ui ?? en;
 ok(Object.keys(zu).length === Object.keys(eu).length, `S11 中英 key 数一致（${Object.keys(zu).length}）`);
 for (const k of ['pillRunning', 'pillQueued', 'pillIdle']) ok(zu[k] && eu[k], `S12 locale 含 ${k}`);

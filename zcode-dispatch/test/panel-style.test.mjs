@@ -17,7 +17,7 @@
 import { readFileSync } from 'node:fs';
 import { strict as assert } from 'node:assert';
 
-const SRC = 'F:\\My Code\\dsh-plugins\\zcode-dispatch\\client.js';
+const SRC = 'F:\\My Code\\zcode-dispatch\\zcode-dispatch\\client.js';
 const src = readFileSync(SRC, 'utf8');
 
 let pass = 0;
@@ -87,7 +87,7 @@ console.log('\nE. DOM 桩实测：注入一次且重渲染不再触碰 head');
   globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
   let captured = null;
   globalThis.window = { __ModuleLoader__: { load: (o) => { captured = o; } }, __zcodeDispatchDemo: 'builtin', localStorage: globalThis.localStorage, innerHeight: 900, innerWidth: 1200, addEventListener: () => {}, removeEventListener: () => {} };
-  await import('file:///F:/My Code/dsh-plugins/zcode-dispatch/client.js');
+  await import('file:///F:/My Code/zcode-dispatch/zcode-dispatch/client.js');
 
   const el = (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat() });
   const cellStore = new Map();

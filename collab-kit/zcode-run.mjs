@@ -8,13 +8,13 @@
  * 而不是个人自建 API Key；需要个人 Key 时显式 `--provider personal`。
  *
  * 用法：
- *   node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project <项目根> --task collab/tasks/R35-01-task.md --tag R35-01 --mode yolo
- *   node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project <项目根> --prompt "只回答 OK" --tag smoke
- *   node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project <项目根> --target "<可校验目标>" --tag R35-02 --mode edit
- *   node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project <项目根> --resume sess_xxx --prompt "继续下一批" --tag R35-03
- *   node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project <项目根> --list-providers                      # 看套餐/供应商可用性
- *   node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project <项目根> --prompt ... --model GLM-5.3-Flash    # 套餐内指定模型
- *   node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project <项目根> --prompt ... --provider personal --model deepseek-v4-pro
+ *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --task collab/tasks/R35-01-task.md --tag R35-01 --mode yolo
+ *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --prompt "只回答 OK" --tag smoke
+ *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --target "<可校验目标>" --tag R35-02 --mode edit
+ *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --resume sess_xxx --prompt "继续下一批" --tag R35-03
+ *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --list-providers                      # 看套餐/供应商可用性
+ *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --prompt ... --model GLM-5.3-Flash    # 套餐内指定模型
+ *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --prompt ... --provider personal --model deepseek-v4-pro
  *
  * 参数：
  *   --task <file>        任务包文件（内容内联进 prompt，避免 CLI 找不到路径）
@@ -69,10 +69,10 @@ import { request as httpsRequest } from 'node:https';
  *   2. env `ZCODE_PROJECT_DIR`
  *   3. **从绝对路径的 `--task` 反推**：向上找最近的含 `collab/` 的祖先目录
  *      —— 这条是为「派发台」准备的：它按契约传**绝对** `--task` 但**不传** `--project`，
- *      且其子进程 cwd 未必是宿主项目（见 dsh-plugins/zcode-dispatch dispatch-core.mjs）。
+ *      且其子进程 cwd 未必是宿主项目（见 zcode-dispatch/zcode-dispatch dispatch-core.mjs）。
  *   4. 当前工作目录（通用工具的合理默认：你在哪个项目里跑，就用哪个项目）
  *
- * 为什么不再是 `<脚本>/../..`：本脚本已迁至 `dsh-plugins/collab-kit/`（DSH 工具仓库），
+ * 为什么不再是 `<脚本>/../..`：本脚本已迁至 `zcode-dispatch/collab-kit/`（DSH 工具仓库），
  * 与宿主项目（如 keysion dac vue）不再有目录关系；写死推导会指向错误位置。
  */
 function inferProjectFromTask(taskArg) {
