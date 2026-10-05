@@ -136,6 +136,11 @@ window.__ModuleLoader__.load({
       'button.zcd-switch{background:transparent;font:inherit;cursor:pointer;transition:background-color .15s ease,color .15s ease;}',
       'button.zcd-switch:hover{background:' + T.hover + ';color:' + T.text + ';}',
       'button.zcd-switch:disabled{opacity:.5;cursor:default;}',
+      /* ZB-27y（用户要求「派发开关按钮小些，与右侧已连接高度一致」）：
+       * `button.zcd-switch{font:inherit}` 会把字号重置为继承值（≈13-14px）并压过 `.zcd-conn` 的
+       * 10px ⇒ 开关徽标比「已连接」高。此条特异性更高（0,2,1）且排在后面：字号/行高与 .zcd-conn
+       * 完全一致（10px/1.7 ⇒ 同高），横向再收 2px（1px 5px）让它整体更小巧。 */
+      'button.zcd-conn.zcd-switch{font-size:10px;line-height:1.7;padding:1px 5px;border-radius:8px;}',
       '.zcd-body{display:flex;flex-direction:column;gap:10px;padding:10px;overflow:auto;min-height:0;overscroll-behavior:contain;}',
       /* ZB-16：**分区内部**的纵向节奏容器。此前 ChannelSection / QuotaCards 的根是
        * `h('div', null, …)` —— 没有 class、没有 gap，于是 `.zcd-sec` 的 gap 完全管不到它们内部，

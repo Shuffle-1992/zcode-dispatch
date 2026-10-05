@@ -41,6 +41,9 @@ ok(!/\.zcd-root,\.zcd-root \*\{box-sizing/.test(code), 'C2 旧的 .zcd-root 作�
 ok(!/animation:zcd-in/.test(code) && !/@keyframes zcd-in/.test(code), 'C3 入场动画与 keyframes 已随浮窗移除（重影那类问题的载体消失）');
 ok(!/\.zcd-pill/.test(code) && !/\.zcd-grip/.test(code), 'C4 药丸 / 缩放手柄样式已清除');
 ok(/\.zcd-iconbtn\{/.test(code), 'C5 行内小图标按钮样式**保留**（JobRow 仍在用）');
+  /* ZB-27y：派发开关徽标与「已连接」同高（font-size/line-height 对齐 .zcd-conn），横向更紧凑。 */
+  ok(/button\.zcd-conn\.zcd-switch\{font-size:10px;line-height:1\.7;padding:1px 5px;border-radius:8px;\}/.test(code),
+    '★ C6 派发开关徽标：字号/行高与 .zcd-conn 一致（同高），横向 1px 5px 更小巧');
 
 console.log('\nD. DOM 桩实测：注入一次且重渲染不再触碰 head');
 {
