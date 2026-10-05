@@ -269,7 +269,12 @@ window.__ModuleLoader__.load({
        *   border:0; border-radius:var(--dsw-radius-sm); background:transparent;
        *   color:label-tertiary; font-size:12px; line-height:18px; cursor:pointer
        * （白色/透明底/无焦点环仍由下面的成组 !important 规则与元素内联 style 兜住宿主覆盖。） */
-      '.zcd-entry .zcd-chip{display:inline-flex;align-items:center;gap:3px;min-height:28px;padding:3px 2px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:' + T.text3 + ';font-size:12px;line-height:18px;cursor:pointer;}',
+      /* ZB-27k：几何取**子智能体**（.oXE0lW_trigger —— 就在本入口左边，用户点名「参考子智能体的
+       * 三角形图标」）：gap:4px; min-height:28px; padding:3px 2px; border-radius:var(--dsw-radius-sm);
+       * font-size:12px; line-height:18px; color:label-tertiary。
+       * （官方自身不统一：jobs gap 3px；agent-team gap 5px + padding 3px 7px；子智能体 gap 4px。
+       *   可见邻居里子智能体与创造模式都是 4px ⇒ 取 4px。箭头尺寸同理取子智能体的默认 14。） */
+      '.zcd-entry .zcd-chip{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:3px 2px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:' + T.text3 + ';font-size:12px;line-height:18px;cursor:pointer;}',
       /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
        * 焦点可见性改由**颜色**承担（与邻居把 :hover/:focus-visible 变成 label-primary 同思路）。 */
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',
@@ -1567,7 +1572,7 @@ window.__ModuleLoader__.load({
      */
     function IconChevronDownSystem({ className }) {
       return h('svg', {
-        width: 12, height: 12, viewBox: '0 0 16 16', className, fill: 'none',
+        width: 14, height: 14, viewBox: '0 0 16 16', className, fill: 'none',
         xmlns: 'http://www.w3.org/2000/svg', 'aria-hidden': true, strokeWidth: 1,
       },
         h('path', {

@@ -36,7 +36,7 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
    *   packages/client/ui-jobs/src/client/JobListAction.tsx          <button type="button" className={css.trigger}>
    * 注意：源码**不声明 font-family / font-weight** —— 元素是 <button>，用 UA 按钮字体。 */
   ok(/display:inline-flex/.test(css), 'B2 display:inline-flex');
-  ok(/gap:3px/.test(css), '★ B3 gap 3px（官方 .trigger 同值）');
+  ok(/gap:4px/.test(css), '★ B3 gap 4px（子智能体 .oXE0lW_trigger 同值 —— 用户点名参考它；官方 jobs 是 3px、agent-team 是 5px，官方自身不统一）');
   ok(/min-height:28px/.test(css), '★ B4 min-height 28px（官方同值；不是 height:22px —— 那是被动装饰 agent-preset）');
   ok(/padding:3px 2px/.test(css), '★ B5 padding 3px 2px（官方同值）');
   ok(/border:0/.test(css), 'B6 border 0');
@@ -50,7 +50,7 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(!!hover && /T\.text2/.test(hover), '★ B13 hover/focus-visible → label-secondary（T.text2，官方 .trigger 同值；官方此处不是 label-primary）');
   ok(/\.zcd-chip svg\{flex:none;transition:transform \.12s;\}/.test(code), 'B14 箭头过渡 120ms（官方 .trigger svg{transition:transform 120ms ease}）');
   ok(/\.zcd-chip\[aria-expanded="true"\] svg\{transform:rotate\(180deg\);?\}/.test(code), '★ B15 展开时旋转 **svg 本身**（官方 .triggerOpen 用法一致）');
-  ok(/width: 12, height: 12, viewBox: '0 0 16 16'/.test(code), '★ B16 箭头 size 12 / viewBox 16（官方 JobListAction.tsx: size={12}）');
+  ok(/width: 14, height: 14, viewBox: '0 0 16 16'/.test(code), '★ B16 箭头 14×14 / viewBox 16（子智能体用默认 14 —— 用户点名参考它；jobs 用 12）');
   ok(/strokeWidth: 1\b/.test(code) && /M4 6L7\.29289 9\.29289C7\.68342 9\.68342 8\.31658 9\.68342 8\.70711 9\.29289L12 6/.test(code),
     '★ B17 箭头路径与 strokeWidth 1 逐字取自官方 IconChevronDownOutlineRegular');
   ok(/background:transparent/.test(css), 'B18 透明底');

@@ -81,6 +81,18 @@
 - **纪律**：凡是"要与系统某元素一致"，先找**同用法的官方实现**读源码对齐；不要从压缩产物反推，
   更不要凭截图猜度量。
 
+### 坑：PowerShell `Set-Content -NoNewline` 接数组会把整个文件压成一行
+
+```powershell
+(Get-Content file.js) -replace 'a','b' | Set-Content file.js -NoNewline   # ❌ 全部行拼成一行
+```
+`-NoNewline` 用于`Set-Content`时**不会**给数组元素之间补换行 ⇒ 2602 行的 client.js 变成一行，
+`node --check` 报 "Unexpected end of input"（语法直接废掉）。
+- **正解**：要么用编辑工具/编辑器做替换；要么 `-join "\`n"` 后配合 `-NoNewline`，或
+  `[System.IO.File]::WriteAllText(path, text)`；纯文本替换优先用 `edit` 工具。
+- **配套纪律**：批量改文件前先 `git status` 确认工作区干净，出事立刻 `git restore -- <file>`
+  （本轮就是这样 3 秒回滚到已提交状态，只损失两处未提交微调）。
+
 ### 方法：第三方插件的 UI 排查要"查三条链"（profile 装载链 / 令牌定义链 / 级联链），别只看截图
 
 排查「入口颜色/字号与系统不一致」时，按顺序用**可验证事实**排除，比反复对截图快得多：
