@@ -278,9 +278,12 @@ window.__ModuleLoader__.load({
       /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
        * 焦点可见性改由**颜色**承担（与邻居把 :hover/:focus-visible 变成 label-primary 同思路）。 */
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',
-      /* 颜色也带 !important：否则宿主可能把基础态压成 label-primary（用户现场看到"我的字比邻居亮"）。
-       * 本条在后 ⇒ 同权重同重要性下覆盖上面的基础态，hover/展开仍是 label-primary（与系统一致）。 */
-      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible{color:' + T.text2 + ';}',
+      /* ZB-27p：悬浮/聚焦的亮度改为与**可见邻居完全一致** —— 子智能体 `.oXE0lW_trigger:hover`
+       * 与 agent-team `.EBLgjq_trigger:hover` 都变到 `label-primary`（T.text）；我此前用 label-secondary，
+       * 比它们**暗一档**，于是"我被悬浮时"和"邻居被悬浮时"仍不是同一种观感（用户分别截图对比）。
+       * 现在：静止 = label-tertiary（三者相同，已实测 rgb(173,178,184) 一致）；
+       *       悬浮/聚焦 = label-primary（与两个可见邻居同值）。 */
+      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible{color:' + T.text + ';}',
       /* 展开指示：与子智能体一致 —— 转的是 **svg 本身**，过渡 .12s。 */
       '.zcd-entry .zcd-chip svg{flex:none;transition:transform .12s;}',
       '.zcd-entry .zcd-chip[aria-expanded="true"] svg{transform:rotate(180deg);}',
@@ -2408,9 +2411,9 @@ window.__ModuleLoader__.load({
           className: 'zcd-chip',
           style: {
             background: 'transparent', backgroundImage: 'none', border: 0, boxShadow: 'none', outline: 'none',
-            /* ZB-27m：高亮条件**只有 hover**（与会展开的官方入口一致：`.trigger:hover/:focus-visible`）。
-             * 之前写 `(open || hover)` ⇒ 指针移进面板后我的字还亮着，而旁边没有这个状态。 */
-            color: hover ? T.text2 : T.text3,
+            /* ZB-27p：悬浮/聚焦 = label-primary（与两个可见邻居的 :hover 同值）；
+             * 静止 = label-tertiary（已实测与邻居 rgb 完全一致）。 */
+            color: hover ? T.text : T.text3,
           },
           title: t('headerTip'),
           'aria-label': t('headerTip'),

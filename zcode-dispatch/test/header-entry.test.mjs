@@ -47,7 +47,7 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(!/font-weight/.test(css), '★ B11 不声明 font-weight（官方同值；UA 400）');
   ok(/T\.text3/.test(css), 'B12 常态色 label-tertiary（T.text3）');
   const hover = code.split('\n').find((l) => l.includes('.zcd-chip:hover') && l.includes('color:'));
-  ok(!!hover && /T\.text2/.test(hover), '★ B13 hover/focus-visible → label-secondary（T.text2，官方 .trigger 同值；官方此处不是 label-primary）');
+  ok(!!hover && /T\.text\b/.test(hover), '★ B13 hover/focus-visible → **label-primary**（T.text，子智能体/agent-team 的 .trigger:hover 同值）');
   ok(/\.zcd-chip svg\{flex:none;transition:transform \.12s;\}/.test(code), 'B14 箭头过渡 120ms（官方 .trigger svg{transition:transform 120ms ease}）');
   ok(/\.zcd-chip\[aria-expanded="true"\] svg\{transform:rotate\(180deg\);?\}/.test(code), '★ B15 展开时旋转 **svg 本身**（官方 .triggerOpen 用法一致）');
   ok(/width: 14, height: 14, viewBox: '0 0 16 16'/.test(code), '★ B16 箭头 14×14 / viewBox 16（子智能体用默认 14 —— 用户点名参考它；jobs 用 12）');
@@ -86,14 +86,14 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
     '★ B39 诊断：记录浏览器认定的 :hover/:focus/:focus-visible（用于分辨"我的状态卡住"与"别处改色"）');
   ok(/inlineStyle: String\(el\.getAttribute\('style'\)/.test(src) && /focusIsChip:/.test(src), 'B40 诊断：记录内联样式与 document.activeElement 是否为我');
   /* ZB-27i：颜色内联兜底（现场实测：resting 令牌与邻居相同，但为排除未知宿主规则，颜色也走内联）。 */
-  ok(/color: hover \? T\.text2 : T\.text3/.test(src), '★ B31 颜色内联且**仅 hover** 高亮（resting=label-tertiary / hover=label-secondary）—— 官方 .trigger:hover 语义，展开态不再保持高亮');
+  ok(/color: hover \? T\.text : T\.text3/.test(src), '★ B31 颜色内联且**仅 hover** 高亮（resting=label-tertiary / hover=**label-primary**，与两个可见邻居 .trigger:hover 同值）');
   ok(/onMouseEnter: \(\) => setHover\(true\)/.test(src) && /onMouseLeave: \(\) => setHover\(false\)/.test(src), '★ B32 悬停态用 React 状态表达（不依赖宿主伪类命中）');
   /* ZB-27n：hover 只由**按钮自身**驱动；容器不设 hover（否则指针移到面板上时入口也会变亮）。 */
   ok(/onMouseEnter: scheduleOpen,/.test(src), '★ B32b 容器 onMouseEnter 只调度展开、**不设 hover**（面板是子节点，指针移到面板上不应让入口变亮）');
   ok(!/onMouseEnter: \(\) => \{ setHover\(true\); scheduleOpen\(\); \}/.test(src), '★ B32c 已移除"容器进入即 setHover(true)"的写法');
   ok(/onFocus: \(\) => setHover\(true\)/.test(src) && /onBlur: \(\) => setHover\(false\)/.test(src), '★ B33 聚焦态同上（键盘可达时的视觉反馈）');
   ok(/const \[hover, setHover\] = useState\(false\)/.test(src), 'B34 hover 状态声明');
-  ok(/color: hover \? T\.text2 : T\.text3/.test(src) && !/#[0-9a-fA-F]{3,8}\b/.test(src.match(/color: hover[^\n]*/)[0]), 'B35 内联色只用主题令牌（无字面色值 ⇒ 明暗自适应）');
+  ok(/color: hover \? T\.text : T\.text3/.test(src) && !/#[0-9a-fA-F]{3,8}\b/.test(src.match(/color: hover[^\n]*/)[0]), 'B35 内联色只用主题令牌（无字面色值 ⇒ 明暗自适应）');
 }
 
 console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{
