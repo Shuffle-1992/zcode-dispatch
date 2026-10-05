@@ -117,6 +117,31 @@
 - **回归测试**：`panel-style.test.mjs` 新增 B6–B8（断言引用计数存在、只有归零才 detach、
   **禁止**任何组件卸载时直接 detachStyle()）。
 
+### 方法：判定"某元素与系统不一致"到底要测哪些属性（以及怎么**免 DevTools** 取到实测值）
+
+排查"入口看着比邻居大/不齐"这类问题时，**只测 font-size/font-weight/font-family 是不够的**——
+我按这三项对齐了四五轮，实测一直"一致"，但用户看到的差异始终存在。真正该测的清单：
+
+| 类别 | 属性 |
+|---|---|
+| 排版 | `font-size` `font-weight` `font-family`（**完整串，别截断**）`line-height` `letter-spacing` `word-spacing` |
+| 字体特性 | `font-style` `font-stretch` `font-variant` `font-feature-settings` `text-rendering` `-webkit-font-smoothing` |
+| 渲染影响 | `text-shadow` `transform` `zoom` `color` |
+| 几何 | 盒 `getBoundingClientRect()` + **字形盒**（`Range.selectNodeContents`，紧贴文字，不受盒模型干扰） |
+| 其余元素 | 图标 svg 的盒/位置/`strokeWidth`/`transform`（常被忽略） |
+
+**决定性实验**：用**同一段文字**分别套上"我的字体"与"对照元素的字体"离屏渲染（`position:absolute;visibility:hidden`），
+比对宽高。两者相同 ⇒ 差异**只可能来自文字内容**；不同 ⇒ 差异在字体/渲染链上，再逐项二分。
+
+**免 DevTools 取实测值的通道**（本项目实测可用）：客户端把测量结果写进 `localStorage`，
+Chromium 会落盘到 `%APPDATA%\@deepseek-ai\dsh-desktop\Local Storage\leveldb\*.log`，
+排查方用 Node 读该文件、按 UTF-16LE 解码并做括号配平即可取回 JSON —— 无需用户开 DevTools 或截图。
+（注意：值是 UTF-16LE；数组较大时可能被 leveldb 分块，按"单条 + 括号配平"解析最稳。）
+
+**另一个更重要的教训**：如果差异是**状态性**的（"悬浮之前正常、悬浮之后不正常"），
+那多半不是样式值的问题，而是**状态残留或资源生命周期**问题 —— 本项目最后就是
+"共享样式表被按需挂载的面板卸载时删掉"（见上一条），静态对齐永远修不好。
+
 ### 方法：第三方插件的 UI 排查要"查三条链"（profile 装载链 / 令牌定义链 / 级联链），别只看截图
 
 排查「入口颜色/字号与系统不一致」时，按顺序用**可验证事实**排除，比反复对截图快得多：

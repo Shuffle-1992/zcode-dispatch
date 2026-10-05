@@ -156,6 +156,18 @@
 共享 store 去重、真渲染 + **真点击**（`aria-expanded` 翻转）、无任务时不渲染徽标、locale 双侧键齐。
 **生效方式**：客户端 → 刷新页面；host 侧改动 → 需重启 DSH（见 pitfalls「host 代码改动必须重启」）。
 
+**ZB-27 最终状态（用户逐轮验收后定稿）**：
+- 入口/弹窗：会话标题行「ZCode 派发台」，order **-25**（在子智能体目录之后、智能体团队之前）；
+  几何取可见邻居的官方值（gap 4 / min-height 28 / padding 3px 2px / 12px / line-height 18 / 箭头 14×14 viewBox16 strokeWidth1）；
+  悬浮 150ms 展开、离开 120ms 收起（照抄 ui-subagent CatalogDropdown 时序）、Esc/窗口失焦/点外部即时关闭；
+  高亮仅 hover（label-primary，与可见邻居 .trigger:hover 同值）；弹窗 padding 3 / gap 1 / radius-lg /
+  --dsw-specific-menu / backdrop-filter / max-height min(480px,100vh-140px)，贴右展开。
+- **共享资源引用计数**：插件样式表（ZB-27u）与 wire（ZB-27w）都改为**模块级单例 + 引用计数** ——
+  面板关闭不再带走入口的样式；入口与面板共用同一条轮询（不再"每会话一条 1s 轮询"）。
+- 入口活动图标：有进行中 → 脉动状态点（14×14 槽位，官方 .oXE0lW_activitySlot 同值）；仅排队 → 静态点。
+- 临时诊断（zcd:diag → localStorage → leveldb）在验收通过后**已移除**；方法论进 pitfalls。
+- 门禁：测试 106/106、verify-plugin 21/21、verify-switch 8/8。
+
 **ZB-27 改版（同日，用户第二次反馈后）**：入口从「带边框圆角药丸 + 计数徽标 + 右下角浮窗 + 最小化胶囊」
 改为**与同排官方入口同形态的文字按钮 + 挂在其下的悬浮弹窗**，并取消浮窗与药丸：
 - 样式对齐来源 = 同槽位的官方实现 `dsh-client-ui-jobs` 的 job-list（触发与弹层两套 CSS 令牌照抄）；

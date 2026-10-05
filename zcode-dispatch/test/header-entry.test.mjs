@@ -78,21 +78,8 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(/max-height:min\(480px,calc\(100vh - 140px\)\)/.test(mcss), '★ B28 max-height min(480px,100vh-140px)（官方同值）');
   ok(/right:0/.test(mcss), 'B29 贴右展开（**有意偏离**：官方用 left:0 + JS menuShift；本入口在标题行最右端）');
   ok(/overflow:auto/.test(mcss), 'B30 内容滚动');
-  /* ZB-27j：临时诊断通道（把测量值写进 localStorage，随 Chromium 落盘到 leveldb 供排查方读回）。 */
-  ok(/localStorage\.setItem\('zcd:diag'/.test(src) && /\[open, hover\]/.test(src), '★ B36 诊断：**时序快照**写入 localStorage（zcd:diag，依赖 open/hover 变化）');
-  ok(/getComputedStyle\(n\)/.test(src) && /getBoundingClientRect\(\)/.test(src), 'B37 诊断：采集计算样式 + 真实几何');
-  ok(/mates: mates\.map\(snap\)/.test(src) && /querySelectorAll\(/.test(src), 'B38 诊断：同时采集同排邻居入口以便逐项对比');
-  ok(/matches: \{ hover: m\(':hover'\), focus: m\(':focus'\), focusVisible: m\(':focus-visible'\) \}/.test(src),
-    '★ B39 诊断：记录浏览器认定的 :hover/:focus/:focus-visible（用于分辨"我的状态卡住"与"别处改色"）');
-  ok(/inlineStyle: String\(el\.getAttribute\('style'\)/.test(src) && /focusIsChip:/.test(src), 'B40 诊断：记录内联样式与 document.activeElement 是否为我');
-  /* ZB-27r：决定性实验与渲染属性补测（此前只测 size/weight/family 无法解释"看着更大"）。 */
-  ok(/probe: mates\.length/.test(src) && /withMine: probe\(el, '智能体团队'\)/.test(src) && /withMate: probe\(mates\[0\], '智能体团队'\)/.test(src),
-    '★ B41 决定性实验：同一段文字分别套"我的字体"与"邻居的字体"离屏渲染并比宽高');
-  ok(/letterSpacing: c\.letterSpacing/.test(src) && /fontFeatureSettings: c\.fontFeatureSettings/.test(src)
-    && /fontSmoothing: c\.webkitFontSmoothing/.test(src) && /textRendering: c\.textRendering/.test(src),
-    '★ B42 补测渲染属性：letter-spacing / word-spacing / font-variant / font-feature-settings / text-rendering / font-smoothing / transform / zoom');
-  ok(/selectNodeContents\(n\)/.test(src), '★ B43 实测字形盒（Range 紧贴文字，反映真实字形高宽）');
-  /* ZB-27t（用户选择）：会话头入口改用**纯中文短标签**，与邻居同类字面。 */
+  /* ZB-27v：短标签试验已回退（真正的差异来自共享样式表被面板卸载带走，见 ZB-27u），
+   * 入口恢复完整标题，且不留 headerShort 死键。 */
   ok(!/headerShort:/.test(code) && !/t\('headerShort'\)/.test(code), '★ B44 已移除临时的 headerShort 键与引用（不留死键：短标签试验回退后不再使用）');
   /* ZB-27i：颜色内联兜底（现场实测：resting 令牌与邻居相同，但为排除未知宿主规则，颜色也走内联）。 */
   ok(/color: hover \? T\.text : T\.text3/.test(src), '★ B31 颜色内联且**仅 hover** 高亮（resting=label-tertiary / hover=**label-primary**，与两个可见邻居 .trigger:hover 同值）');
@@ -135,10 +122,24 @@ console.log('\nD. 解耦：入口不建 wire；浮窗时代的状态与交互不
   const i = code.indexOf('function HeaderEntry()');
   const body = code.slice(i, code.indexOf('function PanelBody()', i));
   ok(i > 0 && body.length > 0, 'D1 定位 HeaderEntry 函数体');
-  ok(!/useWire\s*\(/.test(body), '★ D2 入口体内不调 useWire（wire 由弹窗里的 PanelBody 持有）');
+  /* ZB-27w：入口改为读**共享 wire**（模块级单例 + 引用计数）—— 入口可以读快照以显示任务/加载图标，
+   * 但**绝不能**自己 createWire()，否则又变回"每个会话一条 1s 轮询"。 */
+  ok(/const \{ snapshot \} = useWire\(\);/.test(body), '★ D2 入口读共享 wire 的快照（用于任务/加载图标）');
+  ok(!/createWire\s*\(/.test(body), '★ D2b 入口体内**不得**自己 createWire()（否则每会话一条轮询）');
   ok(!/panelUi/.test(src), '★ D3 ZB-24 的模块级共享 store 已移除（入口只是开合开关）');
   ok(!/setMinimized|ui\.minimized/.test(code), '★ D4 最小化状态/药丸相关代码已清除');
   ok(!/zcd-pill|zcd-min|className: 'zcd-root'|zcd-titlebar|zcd-grip/.test(code), '★ D5 药丸/浮窗类名与标记已清除');
+  /* ZB-27w：共享 wire 契约（模块级单例 + 引用计数；最后一个使用者才 dispose）。 */
+  ok(/let SHARED_WIRE = null;/.test(code) && /let SHARED_REFS = 0;/.test(code), '★ D6 共享 wire 单例与引用计数声明');
+  ok(/ref\.current = acquireSharedWire\(\);/.test(code) && !/ref\.current = createWire\(\)/.test(code), '★ D7 useWire 取得共享实例');
+  ok(/releaseSharedWire\(\);/.test(code) && /if \(SHARED_REFS === 0 && SHARED_WIRE\)/.test(code), '★ D8 释放走引用计数，最后一个才 dispose');
+  ok(/function invalidateSharedWire\(\)/.test(code) && /invalidateSharedWire\(\); setRemoteEpoch/.test(code), '★ D9 远端就绪后作废重建共享 wire');
+  /* ZB-27w：入口活动图标 + 被误删的脉动 keyframes。 */
+  ok(/className: 'zcd-chip-activity'/.test(code), '★ D10 入口有活动槽位 .zcd-chip-activity');
+  ok(/\.zcd-chip-activity\{flex:none;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;\}/.test(code),
+    '★ D11 槽位 14×14（官方 .oXE0lW_activitySlot 同值）');
+  ok(/state: runningCount > 0 \? 'running' : 'queued'/.test(code), '★ D12 进行中 → running（脉动）；仅排队 → queued');
+  ok(/@keyframes zcd-pulse\{50%\{opacity:\.35;\}\}/.test(code), '★ D13 @keyframes zcd-pulse 已补回（曾被当死代码误删，导致 running 点不脉动）');
 }
 
 console.log('\nG. ZB-27f：入口是 <button>（与邻居同元素 ⇒ 同 UA 字体）+ 双层防高亮 + 容器同权重置');

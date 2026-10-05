@@ -299,6 +299,16 @@ window.__ModuleLoader__.load({
        * 一度把它当死代码删掉，故在此显式保留并注明用途。 */
       '.zcd-iconbtn{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:' + T.text2 + ';cursor:pointer;transition:background-color .15s ease,color .15s ease;}',
       '.zcd-iconbtn:hover{background:' + T.hover + ';color:' + T.text + ';}',
+      /* ⚠️ ZB-27w：`@keyframes zcd-pulse` 被我在 ZB-27 的"清理死代码"里**误删**了 ——
+       * 而 `.zcd-dot.s-running{animation:zcd-pulse …}` 与 `.zcd-dot.s-paused{…}` 一直在用它，
+       * 结果"进行中"的状态点就不再脉动（与 .zcd-iconbtn 同一类误判：带 animation 的 keyframes
+       * 不能按"没人引用"处理，必须先反查 `animation:` 引用）。此处补回。 */
+      '@keyframes zcd-pulse{50%{opacity:.35;}}',
+      /* ZB-27w（用户要求「有任务要有图标提示、进行中要有加载图标，参考子智能体」）：
+       * 官方子智能体入口在 runningCount>0 时渲染 <span class=activitySlot><StateDot state="ongoing"/></span>，
+       * .oXE0lW_activitySlot{flex:none;justify-content:center;align-items:center;width:14px;height:14px;display:inline-flex}
+       * —— 这里照抄该 14×14 槽位（点本身复用面板里的 .zcd-dot，running 态自带脉动）。 */
+      '.zcd-chip-activity{flex:none;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;}',
       /* ZB-08：文件锁列表（哪个文件被哪个进程锁着、锁了多久） */
       '.zcd-locks{display:flex;flex-direction:column;gap:6px;}',
       '.zcd-filelocks{display:flex;flex-direction:column;gap:3px;}',
@@ -1489,6 +1499,34 @@ window.__ModuleLoader__.load({
       switchSet: async () => ({ ok: false, error: 'wire 不可用' }),
     };
 
+    /* ─────────────── 共享 wire（ZB-27w） ───────────────
+     * 背景：会话头入口（每个会话一枚，常驻）需要"有没有进行中的任务"来显示图标，
+     * 而面板也需要同一份快照。若各自建 wire，就会变成"每会话一条 1s 轮询"（此前被明确否掉）。
+     * 做法：**模块级单例 + 引用计数** —— 谁先需要谁创建，最后一个释放者负责 dispose。
+     * 远端命名空间就绪（$mount 成功后）时作废重建一次：首帧探测可能落空、建成降级 wire。 */
+    let SHARED_WIRE = null;
+    let SHARED_REFS = 0;
+    function acquireSharedWire() {
+      if (!SHARED_WIRE) {
+        try { SHARED_WIRE = createWire() ?? DEAD_WIRE; } catch { SHARED_WIRE = DEAD_WIRE; }
+      }
+      SHARED_REFS += 1;
+      return SHARED_WIRE;
+    }
+    function releaseSharedWire() {
+      SHARED_REFS = Math.max(0, SHARED_REFS - 1);
+      if (SHARED_REFS === 0 && SHARED_WIRE) {
+        try { SHARED_WIRE.dispose?.(); } catch { /* ignore */ }
+        SHARED_WIRE = null;
+      }
+    }
+    /** 远端就绪后作废共享 wire（下一次 acquire 会重建；订阅方通过 epoch 重挂）。 */
+    function invalidateSharedWire() {
+      if (!SHARED_WIRE) return;
+      try { SHARED_WIRE.dispose?.(); } catch { /* ignore */ }
+      SHARED_WIRE = null;
+    }
+
     /* ─────────────── 组件 ─────────────── */
     /* 渲染兜底：任何渲染期异常都转成一张可见的失败卡片，而不是静默消失。
      * （2026-09-30 实测：createWire 若抛错会让整块浮层不见且页面无报错，难以定位。） */
@@ -1531,14 +1569,16 @@ window.__ModuleLoader__.load({
 
     function useWire() {
       /* ZB-01：远端命名空间就绪后必须重建一次 wire——否则首次渲染建成的降级 wire
-       * 会被 useRef 永久沿用（$mount 异步，首帧探测必然可能落空）。 */
+       * 会被 useRef 永久沿用（$mount 异步，首帧探测必然可能落空）。
+       * ZB-27w：wire 改为**模块级共享单例**（引用计数），入口与面板共用同一条轮询 ——
+       * 于是"每个会话头入口都建一条 wire"的问题不复存在。 */
       const [remoteEpoch, setRemoteEpoch] = useState(0);
-      useEffect(() => onRemoteReady(() => setRemoteEpoch((n) => n + 1)), []);
+      useEffect(() => onRemoteReady(() => { invalidateSharedWire(); setRemoteEpoch((n) => n + 1); }), []);
       const ref = useRef(null);
       const builtEpoch = useRef(-1);
       if (ref.current == null || builtEpoch.current !== remoteEpoch) {
-        try { ref.current?.dispose?.(); } catch { /* 旧 wire 释放失败不阻塞重建 */ }
-        ref.current = createWire() ?? DEAD_WIRE;
+        try { releaseSharedWire(); } catch { /* 旧引用释放失败不阻塞重建 */ }
+        ref.current = acquireSharedWire();
         builtEpoch.current = remoteEpoch;
       }
       const wire = ref.current;
@@ -1547,7 +1587,7 @@ window.__ModuleLoader__.load({
         const un = wire.subscribe((b) => setState(b));
         return () => {
           un();
-          wire.dispose(); // 组件卸载：退订 + 停掉轮询/引擎定时器
+          releaseSharedWire(); // 释放自己那一份；最后一个使用者才真正 dispose
         };
       }, [wire]);
       return {
@@ -2348,116 +2388,13 @@ window.__ModuleLoader__.load({
         };
       }, [open]);
 
-      /* ⚠️ 临时诊断（ZB-27n，对齐验证完成后删除）：**时序快照** —— 每次 open/hover 变化都追加一条，
-       * 记录：我的 React 状态（open/hover）+ 浏览器自己认定的 matches(':hover'/':focus'/':focus-visible')
-       * + 计算样式（color/fontSize/fontFamily/fontWeight/lineHeight）+ 真实几何 + **同一时刻邻居的值**。
-       * 写入 localStorage['zcd:diag']，随 Chromium 落盘到
-       *   %APPDATA%\@deepseek-ai\dsh-desktop\Local Storage\leveldb\*.log
-       * ⇒ 排查方直接从磁盘读回，无需 DevTools/截图；能分辨"我的状态卡住"与"别的东西在改颜色"。 */
-      useEffect(() => {
-        try {
-          const root = rootRef.current;
-          const el = root && typeof root.querySelector === 'function' ? root.querySelector('.zcd-chip') : null;
-          if (!el || typeof window === 'undefined' || !window.localStorage || typeof window.getComputedStyle !== 'function') return;
-          const m = (sel) => { try { return typeof el.matches === 'function' ? el.matches(sel) : null; } catch { return null; } };
-          const snap = (n) => {
-            const c = window.getComputedStyle(n);
-            const b = n.getBoundingClientRect();
-            /* ZB-27r：补测"会影响**观感**但不出现在 font-size 里"的渲染属性（此前只测了 size/weight/family），
-             * 以及字形盒（Range 紧贴文字，能反映真实字形高度/宽度）。 */
-            let glyph = null;
-            try {
-              const r = typeof document.createRange === 'function' ? document.createRange() : null;
-              if (r) { r.selectNodeContents(n); const g = r.getBoundingClientRect(); glyph = { w: Math.round(g.width * 100) / 100, h: Math.round(g.height * 100) / 100 }; }
-            } catch { /* ignore */ }
-            return {
-              text: String(n.textContent || '').trim().slice(0, 12),
-              tag: n.tagName,
-              h: Math.round(b.height * 100) / 100,
-              w: Math.round(b.width * 100) / 100,
-              top: Math.round(b.top * 100) / 100,
-              fontSize: c.fontSize,
-              fontFamily: c.fontFamily,
-              fontWeight: c.fontWeight,
-              lineHeight: c.lineHeight,
-              color: c.color,
-              padding: c.padding,
-              gap: c.gap,
-              appearance: c.appearance || c.webkitAppearance || '',
-              letterSpacing: c.letterSpacing,
-              wordSpacing: c.wordSpacing,
-              fontStyle: c.fontStyle,
-              fontStretch: c.fontStretch,
-              fontVariant: c.fontVariant,
-              fontFeatureSettings: c.fontFeatureSettings,
-              textRendering: c.textRendering,
-              fontSmoothing: c.webkitFontSmoothing || c.fontSmooth || '',
-              textShadow: c.textShadow,
-              transform: c.transform,
-              zoom: c.zoom,
-              glyph,
-              /* ZB-27s：三角图标是最后一个"未实测"的元素（此前只按源码推断 14×14）——
-               * 量它的真实盒、位置、strokeWidth 与 transform。 */
-              svg: (() => {
-                try {
-                  const g = typeof n.querySelector === 'function' ? n.querySelector('svg') : null;
-                  if (!g) return null;
-                  const r = g.getBoundingClientRect();
-                  const cs = window.getComputedStyle(g);
-                  return {
-                    w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100,
-                    top: Math.round(r.top * 100) / 100, left: Math.round(r.left * 100) / 100,
-                    strokeWidth: cs.strokeWidth, transform: cs.transform,
-                  };
-                } catch { return null; }
-              })(),
-            };
-          };
-          /* ZB-27r：决定性实验 —— 用**同一段文字**分别套用"我的字体"与"邻居的字体"离屏渲染，
-           * 直接比宽度/高度。两者相同 ⇒ 差异只来自文字内容（拉丁 + 中文混排 vs 纯中文）；
-           * 不同 ⇒ 差异来自字体/渲染属性，按上面补测的属性继续定位。 */
-          const probe = (fontSrc, text) => {
-            const s = document.createElement('span');
-            s.textContent = text;
-            s.style.cssText = 'position:absolute;left:-9999px;top:-9999px;white-space:pre;visibility:hidden;margin:0;';
-            const c = window.getComputedStyle(fontSrc);
-            for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontStretch', 'letterSpacing', 'wordSpacing', 'fontFeatureSettings', 'fontVariant', 'textRendering']) s.style[p] = c[p];
-            s.style.webkitFontSmoothing = c.webkitFontSmoothing || '';
-            const host = root && typeof root.appendChild === 'function' ? root : null;
-            if (!host) return null;
-            host.appendChild(s);
-            const r = s.getBoundingClientRect();
-            const out = { w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100 };
-            try { host.removeChild(s); } catch { /* ignore */ }
-            return out;
-          };
-          const row = (typeof el.closest === 'function' ? el.closest('[class*="headerActions"]') : null)
-            || (el.parentElement && el.parentElement.parentElement);
-          const mates = row && typeof row.querySelectorAll === 'function'
-            ? Array.from(row.querySelectorAll('button, [role="button"]')).filter((b) => b !== el).slice(0, 2)
-            : [];
-          const entry = {
-            at: new Date().toISOString(),
-            state: { open, hover },
-            matches: { hover: m(':hover'), focus: m(':focus'), focusVisible: m(':focus-visible') },
-            ariaExpanded: el.getAttribute('aria-expanded'),
-            focusIsChip: (typeof document !== 'undefined' && document.activeElement) ? document.activeElement === el : null,
-            inlineStyle: String(el.getAttribute('style') || '').slice(0, 120),
-            mine: snap(el),
-            mates: mates.map(snap),
-            /* 同一段文字（取邻居的文字）在两种字体下渲染的宽度/高度 —— 决定性对比。 */
-            probe: mates.length
-              ? { text: String(mates[0].textContent || '').trim().slice(0, 12), withMine: probe(el, '智能体团队'), withMate: probe(mates[0], '智能体团队') }
-              : null,
-          };
-          let series = [];
-          try { series = JSON.parse(window.localStorage.getItem('zcd:diag') || '[]') || []; } catch { series = []; }
-          if (!Array.isArray(series)) series = [];
-          series.push(entry);
-          while (series.length > 25) series.shift();
-          window.localStorage.setItem('zcd:diag', JSON.stringify(series));
-        } catch { /* 诊断失败不影响功能 */ }
-      }, [open, hover]);
+      /* ZB-27w（用户要求）：入口要显示"有没有任务/有没有进行中的任务"。
+       * 数据来自**共享 wire**（模块级单例 + 引用计数）⇒ 不会因入口而多出轮询：
+       * 入口与面板共用同一条；最后一个使用者卸载时才 dispose。 */
+      const { snapshot } = useWire();
+      const counts = (snapshot && snapshot.counts) || {};
+      const runningCount = Number(counts.running) || 0;
+      const queuedCount = Number(counts.queued) || 0;
 
       /* ZB-27l：**悬浮展开 / 离开即关**的挂点放在外层容器上 ——
        * 弹窗是容器的子节点，所以"从入口移进弹窗"不会触发 mouseleave（指针仍在子树内）；
@@ -2507,6 +2444,13 @@ window.__ModuleLoader__.load({
           onFocus: () => setHover(true),
           onBlur: () => setHover(false),
         },
+          /* ZB-27w：**有任务就显示图标**（照抄官方子智能体/后台任务的入口做法）：
+           *   有进行中 → StatusDot(state='running')（自带脉动，= "加载图标"）
+           *   仅排队中 → StatusDot(state='queued')
+           * 槽位固定 14×14（官方 .oXE0lW_activitySlot 同值），所以有/无图标都不会让入口左右跳动。 */
+          (runningCount > 0 || queuedCount > 0)
+            ? h('span', { className: 'zcd-chip-activity' }, h(StatusDot, { state: runningCount > 0 ? 'running' : 'queued' }))
+            : null,
           /* ZB-27v：恢复完整标题「ZCode 派发台」（短标签试验已回退 —— 真实差异由 ZB-27u
            * 的样式引用计数修复解决，而非文字）。 */
           h('span', { className: 'zcd-chip-label' }, t('title')),

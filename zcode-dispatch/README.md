@@ -373,7 +373,7 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 ## 验证步骤（creator 会话，安装后）
 
 1. `cordis_inspect_query`：确认新行已挂（`Config.listConfigs` 过滤本包名 → 查 `entry`；插槽注册）。
-2. 会话标题行出现「ZCode 派发台」入口：点开出面板（点外部 / Esc / 再点入口关闭）；五个分区
+2. 会话标题行出现「ZCode 派发台」入口（排在「N 个子智能体」之后）：**悬浮 150ms 展开**面板、**离开 120ms 收起**，Esc / 点外部也可关闭；有任务时入口显示状态点、进行中为脉动（同官方入口做法）；五个分区
    （通道 / 派发栏 / 进程列表 / 用量卡片 / 单写者状态）可折叠（通道/派发/单写者默认收起）；浅色/深色主题各看一眼。
 3. 双调用方一致性：agent 跑工具 `zcode_dispatch` `action: list`，与 UI 列表一致；
    `action: quota` 的三窗口数字与 `node bin/zcd.mjs quota` 一致。
@@ -403,10 +403,10 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/lock-priority.test.mjs` | 4 | 调度优先级（ZB-17：文件锁任务优先放行；同类内 FIFO；整仓库锁执行时文件锁等待） |
 | `node test/lock-badge.test.mjs` | 34 | 进程行锁徽标（ZB-18：区分整仓库锁 / 文件锁 N / 不取锁 / 旧版记录）+ **全仓防复发扫描**（ZB-19） |
 | `node test/memory-ban.test.mjs` | 4 | 记忆禁令注入（ZB-20：prompt/target 注入；**task 注入不进去 ⇒ memoryBanApplied=false**） |
-| `node test/panel-style.test.mjs` | 21 | 样式注入与作用域（ZB-21/27：样式只注入 head 一次、重渲染不触碰；border-box 限定 .zcd-menu 子树） |
+| `node test/panel-style.test.mjs` | 24 | 样式注入与作用域（ZB-21/27：样式只注入 head 一次、重渲染不触碰；border-box 限定 .zcd-menu 子树） |
 | `node test/notify.test.mjs` | 21 | 落地自动唤醒（ZB-22：空闲 followup / 忙碌 inject、幂等、自己 kill/wait 的抑制、唤醒预算、卸载退订、工具层译码） |
 | `node test/wake-integration.test.mjs` | 3 | 落地唤醒**全链路接线**（ZB-22：`apply()` → inject agents/systemPrompt → 派发 → 落地 → 唤醒 + 信标 `wakeActive`；关配置 / 无服务时降级） |
-| `node test/header-entry.test.mjs` | 38 | 会话标题行入口 + 悬浮弹窗（ZB-27：槽位/order、**入口样式与同排一致**、系统菜单令牌、点外部/Esc 关闭、入口不建 wire、真点击开合） |
+| `node test/header-entry.test.mjs` | 98 | 会话标题行入口 + 悬浮弹窗（ZB-27：槽位/order、**入口样式与同排一致**、系统菜单令牌、点外部/Esc 关闭、入口不建 wire、真点击开合） |
 | `node test/single-source.test.mjs` | 31 | **单源哨兵**（ZB-25：动作清单 ≡ switch、状态集合引用同一性、三表方法集相等、协议常量逐字相等、STRINGS ↔ locale 逐值） |
 | `node test/hardening.test.mjs` | 5 | **核对硬化**（ZB-26：B1 锁 realpath / B2 ownerPid 不改写活 job / B3 多进程不丢更新 / B4 tail 不读越界 / A2 非法 config 只 warn 不阻断激活） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
