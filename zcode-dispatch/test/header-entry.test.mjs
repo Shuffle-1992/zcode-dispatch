@@ -89,6 +89,22 @@ console.log('\nD. 解耦：入口不建 wire；浮窗时代的状态与交互不
   ok(!/zcd-pill|zcd-min|className: 'zcd-root'|zcd-titlebar|zcd-grip/.test(code), '★ D5 药丸/浮窗类名与标记已清除');
 }
 
+console.log('\nG. ZB-27d：入口不是 <button>（宿主 button 状态样式无法枚举）+ 容器同权重置');
+{
+  ok(/h\('span', \{[\s\S]{0,80}role: 'button'/.test(src), '★ G1 入口用 span + role=button（不是 <button> ⇒ 免疫宿主针对 button 元素的 :focus/:active/原生外观规则）');
+  ok(!/h\('button', \{[^}]*className: 'zcd-chip'/.test(code), '★ G2 不再渲染 <button class="zcd-chip">');
+  ok(/'aria-haspopup': 'dialog'/.test(code) && /'aria-expanded': open/.test(code), 'G3 无障碍属性保留（aria-expanded / aria-haspopup）');
+  ok(/tabIndex: 0/.test(code), '★ G4 tabIndex=0（保持键盘可达）');
+  ok(/onKeyDown:[\s\S]{0,320}key === 'Enter'/.test(code) && /key === ' '/.test(code),
+    '★ G5 Enter/Space 键盘开合（换 span 后必须自己实现，否则可达性退化）');
+  /* 外层容器：宿主可能把高亮加在槽位 cell（我们的根 div）上 —— 芯片自身的重置救不了。 */
+  ok(/\.zcd-entry\{position:relative;display:inline-flex;background:transparent !important/.test(code),
+    '★ G6 外层 .zcd-entry 也重置背景/边框/阴影');
+  ok(/\.zcd-entry:focus-within,\.zcd-entry:active\{background:transparent !important/.test(code),
+    '★ G7 .zcd-entry 的 :focus-within / :active 也重置（祖先型高亮）');
+  ok(/outline:none !important/.test(code), '★ G8 交互态清掉 outline（若宿主用焦点环填充则一并消除）');
+}
+
 console.log('\nF. 样式注入时机（ZB-27b 的根因守卫）');
 {
   /* 用户现场「字号还是不对 + 有背景色」= 入口在首次点开前**没有任何插件样式**：
@@ -178,7 +194,8 @@ console.log('\nE. 真渲染（React 桩）：开合与弹窗内容');
   };
 
   let tree = render();
-  const chip = findAll(tree, (n) => n.type === 'button' && typeof n.props.className === 'string' && n.props.className.includes('zcd-chip'))[0];
+  const chipOf = (t) => findAll(t, (n) => typeof n.props?.className === 'string' && n.props.className.includes('zcd-chip'))[0];
+  const chip = chipOf(tree);
   ok(!!chip, 'E2 渲染出入口按钮（.zcd-chip）');
   ok(texts(chip).includes('ZCode 派发台'), `E3 入口文字是「ZCode 派发台」（实际=${texts(chip)}）`);
   ok(chip.props['aria-expanded'] === false, 'E4 初始未展开');
@@ -188,11 +205,11 @@ console.log('\nE. 真渲染（React 桩）：开合与弹窗内容');
   tree = render();
   const menus = findAll(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('zcd-menu'));
   ok(menus.length === 1, 'E6 ★ 点击后挂出弹窗（.zcd-menu）');
-  ok(findAll(tree, (n) => n.type === 'button' && n.props.className.includes('zcd-chip'))[0].props['aria-expanded'] === true, 'E7 展开状态与 aria-expanded 一致');
+  ok(chipOf(tree).props['aria-expanded'] === true, 'E7 展开状态与 aria-expanded 一致');
   const menuText = texts(menus[0]);
   ok(menuText.includes('派发'), `E8 弹窗里是原面板内容（含分区标题，实际片段=${menuText.slice(0, 40)}）`);
 
-  findAll(tree, (n) => n.type === 'button' && n.props.className.includes('zcd-chip'))[0].props.onClick();
+  chipOf(tree).props.onClick();
   tree = render();
   ok(findAll(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('zcd-menu')).length === 0, 'E9 再点入口收起弹窗');
 }

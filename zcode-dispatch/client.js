@@ -236,10 +236,18 @@ window.__ModuleLoader__.load({
        * 有自己的高亮态（形如 `button[aria-expanded="true"]` 或 `:focus` 的填充背景）。故这里不只重置
        * 基础态，而是把 background/border/box-shadow 在**所有交互态**一起重置（背景用 !important，
        * 因为宿主选择器未知）。颜色只走主题令牌（T.* = --dsw-alias-* 带回退）⇒ 明暗两套自适应。 */
-      '.zcd-entry{position:relative;display:inline-flex;}',
-      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;border:0;background:transparent;box-shadow:none;min-height:28px;padding:3px 2px;margin:0;font-family:inherit;font-size:12px;font-weight:inherit;line-height:18px;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--dsw-radius-sm,6px);}',
-      /* 所有交互态统一"无底色" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。 */
-      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0;box-shadow:none !important;}',
+      '.zcd-entry{position:relative;display:inline-flex;background:transparent !important;border:0 !important;box-shadow:none !important;}',
+      /* 外层容器也要重置：宿主可能把高亮加在**槽位 cell**（我们的根 div）上，例如
+       * `:focus-within` / `[aria-expanded]` 的祖先选择器 —— 那种情况芯片自身的重置救不了。 */
+      '.zcd-entry:focus-within,.zcd-entry:active{background:transparent !important;box-shadow:none !important;}',
+      /* ZB-27d（用户第二次报「展开收回后仍有底色」）：入口从 <button> 换成 <span role="button">。
+       * 宿主针对 `button` 元素的规则（`:focus` / `:active` / `[aria-expanded]` 填充、原生外观、
+       * 焦点环）一律不再命中 —— 第三方插件无法枚举宿主的全部 button 选择器，换元素是唯一彻底做法。
+       * 可访问性不受影响：role=button + tabindex=0 + Enter/Space 键盘处理（见组件）。 */
+      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;border:0;background:transparent;box-shadow:none;outline:none;min-height:28px;padding:3px 2px;margin:0;font-family:inherit;font-size:12px;font-weight:inherit;line-height:18px;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--dsw-radius-sm,6px);user-select:none;-webkit-user-select:none;}',
+      /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
+       * 焦点可见性改由**颜色**承担（与子智能体触发按钮把 :focus-visible 变成 label-primary 同思路）。 */
+      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip[aria-expanded="true"]{color:' + T.text + ';}',
       /* 展开指示：与子智能体一致 —— 转的是 **svg 本身**，过渡 .12s。 */
       '.zcd-entry .zcd-chip svg{flex:none;transition:transform .12s;}',
@@ -2244,14 +2252,24 @@ window.__ModuleLoader__.load({
       }, [open]);
 
       return h('div', { className: 'zcd-entry', ref: rootRef },
-        h('button', {
-          type: 'button',
+        /* ZB-27d：**不是 <button>** —— 见 CSS 注释（宿主对 button 元素的状态样式无法枚举）。
+         * 用 span + role=button + tabIndex + Enter/Space 处理，键盘可达性不变。 */
+        h('span', {
+          role: 'button',
+          tabIndex: 0,
           className: 'zcd-chip',
           title: t('headerTip'),
           'aria-label': t('headerTip'),
           'aria-expanded': open,
           'aria-haspopup': 'dialog',
           onClick: () => setOpen((v) => !v),
+          onKeyDown: (e) => {
+            if (!e) return;
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+              e.preventDefault();
+              setOpen((v) => !v);
+            }
+          },
         },
           h('span', { className: 'zcd-chip-label' }, t('title')),
           /* 展开指示用**系统同款图标与几何**（size 14 / viewBox 16 / strokeWidth 1），
