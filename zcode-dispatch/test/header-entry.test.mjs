@@ -32,7 +32,7 @@ console.log('\nB. 入口样式与同排一致（取自 dsh-client-ui-jobs 的 jo
   ok(!!chip, 'B1 有 .zcd-chip 规则');
   const css = chip[0];
   ok(/border:0/.test(css), 'B2 无边框（同排入口是纯文字按钮，不是药丸）');
-  ok(/background:0 0/.test(css), 'B3 无底色');
+  ok(/background:(0 0|transparent)/.test(css), 'B3 无底色');
   ok(/font-size:12px/.test(css), 'B4 字号 12px（与同排一致）');
   ok(/line-height:18px/.test(css), 'B5 行高 18px');
   ok(/min-height:28px/.test(css), 'B6 min-height 28px');
@@ -40,10 +40,16 @@ console.log('\nB. 入口样式与同排一致（取自 dsh-client-ui-jobs 的 jo
   ok(/T\.text3/.test(css), 'B8 常态色用 label-tertiary（T.text3）');
   ok(/\.zcd-chip:hover/.test(code) && /T\.text2/.test(code.match(/\.zcd-chip:hover[^\n]*/)[0]), 'B9 hover 变 label-secondary（T.text2）');
   ok(/zcd-chip-chevron/.test(code), 'B10 带展开指示箭头（与同排入口一致）');
+  /* ZB-27b（用户现场「字号还是不对、有背景色」）—— 真因是样式注入时机，但顺带把"入口不该有
+   * 宿主 button 的外观"钉死，免得下次又被宿主样式带偏。 */
+  ok(/\.zcd-entry \.zcd-chip\{/.test(code), 'B11 ★ 选择器带 .zcd-entry 作用域（压过宿主 `.headerActions button` 之类规则）');
+  ok(/appearance:none/.test(css) && /-webkit-appearance:none/.test(css), 'B12 appearance:none（去宿主原生 button 外观）');
+  ok(/background:transparent/.test(css), '★ B13 背景透明（用户明确要求"不要背景色"）');
+  ok(/box-shadow:none/.test(css), 'B14 无宿主描边/阴影');
+  ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(css), '★ B15 入口样式无字面色值 ⇒ 明暗两套主题自适应（颜色只走 T.* 令牌）');
 }
 
-console.log('\nC. 弹窗：系统菜单样式 + 开合交互');
-{
+console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{
   const menu = code.match(/'\.[^']*zcd-menu\{[^]*?\}',/);
   ok(!!menu, 'C1 有 .zcd-menu 规则');
   const css = menu[0];
@@ -58,8 +64,7 @@ console.log('\nC. 弹窗：系统菜单样式 + 开合交互');
   ok(/aria-expanded/.test(code) && /aria-haspopup/.test(code), 'C10 无障碍属性：aria-expanded / aria-haspopup');
 }
 
-console.log('\nD. 解耦：入口不建 wire；浮窗时代的状态与交互不再残留');
-{
+console.log('\nD. 解耦：入口不建 wire；浮窗时代的状态与交互不再残留');{
   const i = code.indexOf('function HeaderEntry()');
   const body = code.slice(i, code.indexOf('function PanelBody()', i));
   ok(i > 0 && body.length > 0, 'D1 定位 HeaderEntry 函数体');
@@ -67,6 +72,19 @@ console.log('\nD. 解耦：入口不建 wire；浮窗时代的状态与交互不
   ok(!/panelUi/.test(src), '★ D3 ZB-24 的模块级共享 store 已移除（入口只是开合开关）');
   ok(!/setMinimized|ui\.minimized/.test(code), '★ D4 最小化状态/药丸相关代码已清除');
   ok(!/zcd-pill|zcd-min|className: 'zcd-root'|zcd-titlebar|zcd-grip/.test(code), '★ D5 药丸/浮窗类名与标记已清除');
+}
+
+console.log('\nF. 样式注入时机（ZB-27b 的根因守卫）');
+{
+  /* 用户现场「字号还是不对 + 有背景色」= 入口在首次点开前**没有任何插件样式**：
+   * ensureStyle() 原先只挂在弹窗（PanelBody）的 effect 上，而弹窗要用户点开才挂载。
+   * 因此必须由 apply() 在注册槽位之前先注入一次。 */
+  const applyIdx = code.indexOf('apply(ctx) {');
+  const ensureInApply = code.indexOf('ensureStyle();', applyIdx);
+  const registerIdx = code.indexOf('ctx.slots.inject(HEADER_SLOT', applyIdx);
+  ok(applyIdx > 0 && ensureInApply > applyIdx, '★ F1 apply() 里调用 ensureStyle()（激活即注入样式）');
+  ok(ensureInApply < registerIdx, '★ F2 注入**早于**槽位注册（入口一出现就带样式）');
+  ok(/try \{ ensureStyle\(\); \}/.test(code), 'F3 注入被 try 包住（样式失败不影响入口注册）');
 }
 
 /* ---------------- E. 真渲染：点开 → 弹窗出现；再点 → 收起 ---------------- */

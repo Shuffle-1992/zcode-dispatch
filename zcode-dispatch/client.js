@@ -224,13 +224,21 @@ window.__ModuleLoader__.load({
        * 触发样式取自 dsh-client-ui-jobs 的 job-list（同槽位、同排）：
        *   border:0; background:none; padding:3px 2px; min-height:28px; font-size:12px;
        *   line-height:18px; gap:3px; color:label-tertiary；hover/focus 变 label-secondary。
-       * 之前那版是「带边框的圆角药丸 + 10px 徽标」，所以与同排入口不协调。 */
+       *
+       * ⚠️ ZB-27b（用户现场：「字号还是不对、有背景色」）：真因是**样式注入时机** ——
+       * ensureStyle() 原先只挂在弹窗（PanelBody）的 effect 上，而弹窗要等用户点开才挂载，
+       * 于是入口在首次点开之前**完全没样式**，用的是宿主对 <button> 的默认样式（底色 + 继承字号）。
+       * 现在改成 apply() 时就注入（见文件末尾），入口一出现就是对的。
+       *
+       * 选择器统一加 `.zcd-entry ` 作用域（0,2,0）压过宿主形如 `.headerActions button` 的规则；
+       * 并显式 appearance:none + background:transparent，杜绝宿主 button 底色/描边。
+       * 颜色一律走主题令牌（T.* = --dsw-alias-* 带回退）⇒ 明暗两套主题自适应。 */
       '.zcd-entry{position:relative;display:inline-flex;}',
-      '.zcd-chip{border:0;background:0 0;min-height:28px;padding:3px 2px;font:inherit;font-size:12px;line-height:18px;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:3px;border-radius:var(--dsw-radius-sm,6px);}',
-      '.zcd-chip:hover,.zcd-chip:focus-visible{color:' + T.text2 + ';}',
-      '.zcd-chip[aria-expanded="true"]{color:' + T.text2 + ';}',
-      '.zcd-chip-chevron{display:inline-flex;transition:transform .12s;}',
-      '.zcd-chip-chevronOpen{transform:rotate(180deg);}',
+      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;border:0;background:transparent;box-shadow:none;min-height:28px;padding:3px 2px;margin:0;font-family:inherit;font-size:12px;font-weight:inherit;line-height:18px;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:3px;border-radius:var(--dsw-radius-sm,6px);}',
+      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible{background:transparent;color:' + T.text2 + ';}',
+      '.zcd-entry .zcd-chip[aria-expanded="true"]{color:' + T.text2 + ';}',
+      '.zcd-entry .zcd-chip-chevron{display:inline-flex;transition:transform .12s;}',
+      '.zcd-entry .zcd-chip-chevronOpen{transform:rotate(180deg);}',
       /* 弹窗本体：与 job-list 的 .menu 同一套令牌（--dsw-specific-menu / elevation-prominent /
        * radius-lg），贴入口右缘展开（本入口位于标题行右端，left:0 会溢出视口）。 */
       '.zcd-menu{position:absolute;top:calc(100% + 5px);right:0;z-index:100;box-sizing:border-box;display:flex;flex-direction:column;padding:3px;background:var(--dsw-specific-menu,' + T.bg + ');border:0;border-radius:var(--dsw-radius-lg,12px);box-shadow:var(--dsw-elevation-prominent,' + T.shadow + ');width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));max-height:min(560px,calc(100vh - 140px));overflow:auto;text-align:left;}',
@@ -2451,6 +2459,10 @@ window.__ModuleLoader__.load({
               });
             }
           } catch { /* 子 fiber 建立失败：仍可用 createWire 的即时探测兜底 */ }
+          /* ZB-27b（用户现场：入口「字号不对 + 有背景色」）：样式必须在**入口出现之前**就注入。
+           * 原先 ensureStyle() 只挂在弹窗的 effect 上 —— 弹窗要等用户点开才挂载，于是入口在首次
+           * 点开前完全没有样式，用的是宿主 <button> 默认样式。这里在激活时先注入一次（幂等）。 */
+          try { ensureStyle(); } catch { /* 样式注入失败不影响注册（PanelBody 里还会再试） */ }
           /* ZB-27（用户要求）：**只在会话标题行注册一个入口**，弹窗挂在它下面。
            * 原先那条注册到 shell.overlay 的右下角浮窗（id `zcode-dispatch.console`，order 20）
            * 与它的最小化胶囊一并取消 —— 两份 UI 会让"哪个才是派发台"变得含糊。 */
