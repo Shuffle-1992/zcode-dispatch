@@ -52,35 +52,10 @@ window.__ModuleLoader__.load({
      * —— 正是用户截图里的「N 个子智能体 / 智能体团队 / 创造模式 / 后台任务」。
      * 我们取 order 10：排在 agent-preset 之后、DSH 自带「后台任务」之前。 */
     const HEADER_SLOT = 'conversation.session.header.actions';
-    /* 面板开关与概要的**模块级共享状态**（ZB-24）：两个渲染器 —— 悬浮面板（唯一持 wire 者）
-     * 与会话头入口（纯读者）—— 共用这一份。
-     * 为什么这么做：若让头入口也调 useWire()，**每开一个会话就多一条 1s 轮询**（useWire 每个
-     * 组件实例各建一条 wire），白白翻倍请求。共享 store 下，头入口零网络成本即可显示计数。 */
-    const panelUi = {
-      state: { minimized: false, running: 0, queued: 0, conn: 'connecting' },
-      listeners: new Set(),
-      get: () => panelUi.state,
-      /** 浅合并 + 值变化才通知（面板每秒重渲染，不做去重会白刷读者）。 */
-      set(patch) {
-        const prev = panelUi.state;
-        const next = { ...prev, ...patch };
-        let changed = false;
-        for (const k of Object.keys(next)) if (next[k] !== prev[k]) { changed = true; break; }
-        if (!changed) return next;
-        panelUi.state = next;
-        for (const l of [...panelUi.listeners]) {
-          try { l(next); } catch { /* 单个读者异常不影响其他读者 */ }
-        }
-        return next;
-      },
-      subscribe(l) { panelUi.listeners.add(l); return () => panelUi.listeners.delete(l); },
-    };
-    /** 订阅共享状态（读者用）。 */
-    function usePanelUi() {
-      const [v, setV] = useState(panelUi.get);
-      useEffect(() => panelUi.subscribe(setV), []);
-      return v;
-    }
+
+    /* ZB-27：入口改为「点开即弹窗」后，ZB-24 那份**模块级共享状态 store 已不需要** ——
+     * 弹窗内容（PanelBody）自己持 wire 并渲染实时数据，入口只是个开合开关（局部 useState）。
+     * 原 store 的用途是"让另一个渲染器零网络成本显示计数徽标"，现在没有第二个渲染器了。 */
 
     const LS = {
       pos: 'zcode-dispatch:panel:pos:v1', // 悬浮位置 {left, top}
@@ -147,25 +122,13 @@ window.__ModuleLoader__.load({
 
     /* 样式：作为 React 元素渲染进组件树，组件卸载即随之移除（不碰全局样式表）。 */
     const CSS = [
-      /* ⚠️ Z14：官方 shell.overlay 浮层本身是 click-through（pointer-events:none）——
-       * occupant 必须自行 opt-in 回 pointer events，否则面板内所有点击都会穿透到后面的应用
-       * （这正是"按钮点了没反应"的真因；Z9 修的 setPointerCapture 只是第二因）。
-       * 策略：root 保持 none（浮层空白区不挡应用），面板/胶囊/把手各自 auto（可点可拖）。 */
-      '.zcd-root{position:fixed;z-index:' + Z_INDEX + ';pointer-events:none;width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));font-size:12px;line-height:1.6;color:' + T.text + ';}',
+      /* ZB-27：本插件不再往 shell.overlay 放东西（浮窗与最小化胶囊已取消），
+       * 全部样式作用域收敛到悬浮弹窗 `.zcd-menu` 子树内 —— 不碰宿主 shell，也不碰应用其他区域。 */
       /* ZB-17：本面板子树统一 border-box。此前全文件**没有任何 box-sizing 规则**，
        * 而 `.zcd-ta{width:100%}` 同时带 `padding:5px 8px` + `border:1px` ⇒ 默认 content-box 下
        * 实际宽度 = 100% + 18px，输入框必然冲出右边界（用户报告）。
-       * 作用域严格限定在 .zcd-root 之内：不碰宿主 shell，也不碰应用其他区域的样式。
        * 顺带消除同类隐患（所有带 padding 的 select/input/card 都受影响）。 */
-      '.zcd-root,.zcd-root *{box-sizing:border-box;}',
-      '.zcd-root.zcd-min{width:auto;}',
-      '.zcd-panel{position:relative;display:flex;flex-direction:column;pointer-events:auto;height:var(--zcd-h,auto);max-height:var(--zcd-h,min(72vh,560px));background:' + T.bg + ';border:1px solid ' + T.border + ';border-radius:10px;box-shadow:' + T.shadow + ';overflow:hidden;animation:zcd-in .18s ease;}',
-      '.zcd-titlebar{display:flex;align-items:center;gap:8px;padding:7px 10px;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;border-bottom:1px solid var(--zcd-border);background:' + T.bgBar + ';}',
-      '.zcd-titlebar:active{cursor:grabbing;}',
-      /* ZB-08：已固定 → 标题栏不再给出「可拖」的视觉承诺（拖动逻辑本身也会早退） */
-      '.zcd-titlebar.zcd-locked{cursor:default;}',
-      '.zcd-titlebar.zcd-locked:active{cursor:default;}',
-      '.zcd-title{flex:1;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.zcd-menu,.zcd-menu *{box-sizing:border-box;}',
       '.zcd-conn{flex:none;font-size:10px;line-height:1.7;padding:1px 7px;border:1px solid ' + T.border + ';border-radius:8px;color:' + T.text2 + ';}',
       // Z12 派发总开关徽标：非 live=只读 span；live=可点 button（hover 反馈，busy 半透明）
       '.zcd-switch{display:inline-flex;align-items:center;gap:4px;}',
@@ -173,8 +136,6 @@ window.__ModuleLoader__.load({
       'button.zcd-switch{background:transparent;font:inherit;cursor:pointer;transition:background-color .15s ease,color .15s ease;}',
       'button.zcd-switch:hover{background:' + T.hover + ';color:' + T.text + ';}',
       'button.zcd-switch:disabled{opacity:.5;cursor:default;}',
-      '.zcd-iconbtn{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:' + T.text2 + ';cursor:pointer;transition:background-color .15s ease,color .15s ease;}',
-      '.zcd-iconbtn:hover{background:' + T.hover + ';color:' + T.text + ';}',
       '.zcd-body{display:flex;flex-direction:column;gap:10px;padding:10px;overflow:auto;min-height:0;overscroll-behavior:contain;}',
       /* ZB-16：**分区内部**的纵向节奏容器。此前 ChannelSection / QuotaCards 的根是
        * `h('div', null, …)` —— 没有 class、没有 gap，于是 `.zcd-sec` 的 gap 完全管不到它们内部，
@@ -259,36 +220,32 @@ window.__ModuleLoader__.load({
       '.zcd-job:hover{border-color:' + T.text3 + ';}',
       '.zcd-job-head{cursor:pointer;}',
       '.zcd-planline{margin-top:4px;font-size:10.5px;color:' + T.text3 + ';white-space:normal;overflow-wrap:anywhere;line-height:1.55;}',
-      /* ZB-11：缩放手柄**固定右下角**（用户要求「仅右下角可以控制」），并带一个三角标让它一眼可辨。
-       * 手柄侧不再随锚定切换 —— 改为在拖拽开始时把面板钉成 left/top 锚定（见 startResize），
-       * 于是"右移变宽、下移变高"永远成立，手柄与光标同向。 */
-      '.zcd-grip{position:absolute;right:0;bottom:0;width:16px;height:16px;pointer-events:auto;cursor:nwse-resize;display:flex;align-items:flex-end;justify-content:flex-end;color:var(--zcd-text3);}',
-      '.zcd-grip:hover{color:var(--zcd-text);}',
-      '.zcd-pill{display:inline-flex;align-items:center;gap:6px;pointer-events:auto;padding:5px 12px;border:1px solid ' + T.border + ';border-radius:999px;background:' + T.bg + ';color:' + T.text + ';box-shadow:' + T.shadow + ';cursor:pointer;font:inherit;transition:transform .15s ease;}',
-      '.zcd-pill:hover{transform:translateY(-1px);}',
-      /* ZB-06：胶囊要能一眼看出「这是什么」——标题常驻，计数与状态按需出现。 */
-      '.zcd-pill-title{font-weight:600;white-space:nowrap;}',
-      '.zcd-pill-n{flex:none;min-width:16px;text-align:center;font-size:10px;font-weight:600;padding:0 4px;border-radius:999px;background:' + T.hover + ';color:' + T.text + ';}',
-      '.zcd-pill-state{color:' + T.text3 + ';white-space:nowrap;}',
-      /* ZB-24：会话标题行入口（与 DSH 自带 chip 同形态：小胶囊 + 计数徽标）。
-       * ⚠️ 这枚胶囊**不在** .zcd-root 子树里（它渲染在会话头槽位），
-       * 所以只能用 T.* 里那套带 --dsw-alias-* 回退的主题令牌，**不能**用 --zcd-* 自定义属性。 */
-      '.zcd-head{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:3px 10px;border:1px solid ' + T.border + ';border-radius:999px;background:transparent;color:' + T.text2 + ';font:inherit;cursor:pointer;transition:background-color .15s ease,color .15s ease;}',
-      '.zcd-head:hover{background:' + T.hover + ';color:' + T.text + ';}',
-      /* 面板当前是展开态 ⇒ 入口保持高亮（与 aria-expanded 同一事实，视觉上可核对） */
-      '.zcd-head.zcd-head-open{background:' + T.hover + ';color:' + T.text + ';}',
-      '.zcd-head-dot{flex:none;width:6px;height:6px;border-radius:999px;background:' + T.stIdle + ';}',
-      '.zcd-head-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
-      '.zcd-head-n{flex:none;min-width:16px;text-align:center;font-size:10px;font-weight:600;padding:0 4px;border-radius:999px;background:' + T.accent + ';color:' + T.onAccent + ';}',
+      /* ── ZB-27：会话标题行入口 + 悬浮弹窗（照抄 DSH 自带入口的 visual language）──
+       * 触发样式取自 dsh-client-ui-jobs 的 job-list（同槽位、同排）：
+       *   border:0; background:none; padding:3px 2px; min-height:28px; font-size:12px;
+       *   line-height:18px; gap:3px; color:label-tertiary；hover/focus 变 label-secondary。
+       * 之前那版是「带边框的圆角药丸 + 10px 徽标」，所以与同排入口不协调。 */
+      '.zcd-entry{position:relative;display:inline-flex;}',
+      '.zcd-chip{border:0;background:0 0;min-height:28px;padding:3px 2px;font:inherit;font-size:12px;line-height:18px;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:3px;border-radius:var(--dsw-radius-sm,6px);}',
+      '.zcd-chip:hover,.zcd-chip:focus-visible{color:' + T.text2 + ';}',
+      '.zcd-chip[aria-expanded="true"]{color:' + T.text2 + ';}',
+      '.zcd-chip-chevron{display:inline-flex;transition:transform .12s;}',
+      '.zcd-chip-chevronOpen{transform:rotate(180deg);}',
+      /* 弹窗本体：与 job-list 的 .menu 同一套令牌（--dsw-specific-menu / elevation-prominent /
+       * radius-lg），贴入口右缘展开（本入口位于标题行右端，left:0 会溢出视口）。 */
+      '.zcd-menu{position:absolute;top:calc(100% + 5px);right:0;z-index:100;box-sizing:border-box;display:flex;flex-direction:column;padding:3px;background:var(--dsw-specific-menu,' + T.bg + ');border:0;border-radius:var(--dsw-radius-lg,12px);box-shadow:var(--dsw-elevation-prominent,' + T.shadow + ');width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));max-height:min(560px,calc(100vh - 140px));overflow:auto;text-align:left;}',
+      '.zcd-panelHead{display:flex;align-items:center;gap:8px;padding:6px 8px 5px;border-bottom:.5px solid var(--dsw-alias-border-l1,' + T.border + ');}',
+      '.zcd-panelTitle{flex:1;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + T.text + ';}',
+      /* 行内小图标按钮（**仍在使用**：JobRow 的终止 / 重跑 / 续接 / 关闭）。ZB-27 清理浮窗样式时
+       * 一度把它当死代码删掉，故在此显式保留并注明用途。 */
+      '.zcd-iconbtn{flex:none;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:none;border-radius:5px;background:transparent;color:' + T.text2 + ';cursor:pointer;transition:background-color .15s ease,color .15s ease;}',
+      '.zcd-iconbtn:hover{background:' + T.hover + ';color:' + T.text + ';}',
       /* ZB-08：文件锁列表（哪个文件被哪个进程锁着、锁了多久） */
       '.zcd-locks{display:flex;flex-direction:column;gap:6px;}',
       '.zcd-filelocks{display:flex;flex-direction:column;gap:3px;}',
       '.zcd-filelock{display:flex;align-items:center;gap:6px;font-size:10.5px;min-width:0;}',
       '.zcd-filelock-f{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:' + T.text2 + ';}',
       '.zcd-filelock-who{flex:none;font-weight:600;color:' + T.text + ';}',
-      /* ZB-21：补上显式 to —— 原先只有 from{opacity:0}，动画一旦被重启就会长期半透明（重影）。 */
-      '@keyframes zcd-in{from{opacity:0;transform:translateY(6px) scale(.98);}to{opacity:1;transform:none;}}',
-      '@keyframes zcd-pulse{50%{opacity:.35;}}',
     ].join('\n');
 
     /* ZB-21（用户报告「面板发生重影，变成透明在左上角」）：
@@ -1475,13 +1432,16 @@ window.__ModuleLoader__.load({
 
       render() {
         if (!this.state.err) return this.props.children;
+        /* ZB-27：错误兜底卡片改为**就地**渲染（出现在弹窗里），不再固定到右下角 ——
+         * 浮窗本体已取消，固定定位只会在屏幕角落单开一块无主 UI。 */
         return h('div', {
-          className: 'zcd-root',
+          className: 'zcd-menu',
+          role: 'alert',
           style: {
-            position: 'fixed', right: '24px', bottom: '24px', zIndex: Z_INDEX, maxWidth: '340px', pointerEvents: 'auto',
-            padding: '8px 10px', fontSize: '12px', lineHeight: 1.5,
+            width: '340px', maxWidth: 'calc(100vw - 32px)',
+            padding: '10px 12px', fontSize: '12px', lineHeight: 1.5,
             color: T.text, background: T.bg, border: '1px solid ' + T.border,
-            borderRadius: '8px', boxShadow: T.shadow,
+            borderRadius: 'var(--dsw-radius-lg,12px)', boxShadow: T.shadow,
           },
         },
         h('div', { style: { fontWeight: 600, marginBottom: '4px' } }, 'ZCode 派发台渲染失败'),
@@ -2219,73 +2179,58 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /* ─────────────── ZB-24：会话标题行入口 ───────────────
+    /* ─────────────── ZB-27：会话标题行入口（点开即弹窗）───────────────
      * 与 DSH 自带的「N 个子智能体 / 智能体团队 / 创造模式 / 后台任务」同槽位、同形态：
-     * 一枚小胶囊，点一下就开/收右下角的派发台面板（面板本体不变，仍由 shell.overlay 承载）。
+     * 一枚**无边框文字按钮**（12px / label-tertiary / min-height 28px / gap 3px，取自
+     * dsh-client-ui-jobs 的 job-list 触发样式）+ 一个挂在它下方的**悬浮弹窗**。
      *
-     * 三条设计约束（都是有意的）：
-     *   ① **不建 wire**：状态全部来自共享 store（写入方是 FloatingPanel）。若这里调 useWire()，
-     *      每个会话都会多一条 1s 轮询 —— 只为显示一个数字，不值。
-     *   ② **不复制面板**：点击只切 store 的 minimized；面板是单实例（浮层是 frame-wide 的）。
-     *   ③ 主题令牌只能用 T.*（带 --dsw-alias-* 回退）—— 这枚胶囊不在 .zcd-root 子树内，
-     *      拿不到 --zcd-* 自定义属性（见 CSS 注释）。 */
+     * 三条约束（都是有意的）：
+     *   ① 入口自身**不建 wire**（不为一个入口多一条 1s 轮询）：弹窗打开时里面的 PanelBody
+     *      才建 wire 并显示实时数据；
+     *   ② 关闭方式与系统一致：点外部 / Esc / 再点入口；弹窗贴右对齐（本入口在标题行右端）；
+     *   ③ 主题令牌只用 T.*（带 --dsw-alias-* 回退）—— 这枚入口不在 .zcd-menu 子树内，
+     *      拿不到 --zcd-* 自定义属性。 */
     function HeaderEntry() {
-      const ui = usePanelUi();
-      const n = (ui.running || 0) + (ui.queued || 0);
-      const active = !ui.minimized;
-      const dot = ui.running > 0 ? T.stRunning : ui.queued > 0 ? T.stQueued : T.stIdle;
-      return h('button', {
-        type: 'button',
-        className: 'zcd-head' + (active ? ' zcd-head-open' : ''),
-        title: t('headerTip'),
-        'aria-label': t('headerTip'),
-        'aria-expanded': active,
-        onClick: () => panelUi.set({ minimized: active }),
-      },
-        h('span', { className: 'zcd-head-dot', 'aria-hidden': true, style: { background: dot } }),
-        h('span', { className: 'zcd-head-label' }, t('title')),
-        n > 0 ? h('span', { className: 'zcd-head-n' }, String(n)) : null);
+      const [open, setOpen] = useState(false);
+      const rootRef = useRef(null);
+      /* 点组件外部关闭 + Esc 关闭（系统弹层同款交互；不引 primitives，避免多声明一个客户端依赖）。 */
+      useEffect(() => {
+        if (!open) return undefined;
+        const onDown = (e) => {
+          const el = rootRef.current;
+          if (el && e && e.target && el.contains(e.target)) return;
+          setOpen(false);
+        };
+        const onKey = (e) => { if (e && (e.key === 'Escape' || e.key === 'Esc')) setOpen(false); };
+        try { document.addEventListener('pointerdown', onDown, true); } catch { /* 无 document（测试桩） */ }
+        try { document.addEventListener('keydown', onKey, true); } catch { /* 同上 */ }
+        return () => {
+          try { document.removeEventListener('pointerdown', onDown, true); } catch { /* 同上 */ }
+          try { document.removeEventListener('keydown', onKey, true); } catch { /* 同上 */ }
+        };
+      }, [open]);
+
+      return h('div', { className: 'zcd-entry', ref: rootRef },
+        h('button', {
+          type: 'button',
+          className: 'zcd-chip',
+          title: t('headerTip'),
+          'aria-label': t('headerTip'),
+          'aria-expanded': open,
+          'aria-haspopup': 'dialog',
+          onClick: () => setOpen((v) => !v),
+        },
+          h('span', { className: 'zcd-chip-label' }, t('title')),
+          h('span', { className: 'zcd-chip-chevron' + (open ? ' zcd-chip-chevronOpen' : ''), 'aria-hidden': true },
+            h(IconChevron, { up: false }))),
+        open ? h(PanelBoundary, null, h(PanelBody)) : null);
     }
 
-    function FloatingPanel() {
-      /* ZB-07/10/11：位置持久化。ZB-11 起存的是**锚定信息**（贴哪条边 + 四条边距），
-       * 而不是单纯的绝对 {left, top} —— 这样窗口尺寸变化时位置可被正确推导（见 anchorOf/resolvePos）。
-       * 载入时按当前视口解析一次；旧格式（只有 left/top）自动按"贴左+贴上"兼容。
-       * 初始化阶段拿不到面板真实尺寸（还没渲染），用保存的宽高 / 默认值估计；
-       * 挂载后 ZB-10 会用真实测量尺寸再解析一次。 */
-      /* ZB-11：**锚定记录**（贴哪条边 + 四条边距）—— 必须在 pos 的 useState 之前声明：
-       * 那个初始化函数会把落盘的锚定种进来（否则 TDZ：Cannot access before initialization）。 */
-      const anchorRef = useRef(null);
-      const [pos, setPos] = useState(() => {
-        const saved = loadJson(LS.pos, null);
-        if (!saved) return null;
-        const savedSize = loadJson(LS.size, null) || {};
-        /* ★ 关键：把落盘的**锚定记录**同时种进 anchorRef —— 渲染位置由它推导。
-         * 旧格式（只有 left/top，无 ax/ay）在这里补一次 anchorOf，于是老数据也能获得
-         * "贴边跟随"的新行为（否则首次升级后会一直用绝对坐标）。 */
-        const view = {
-          vw: (typeof window !== 'undefined' && window.innerWidth) || 0,
-          vh: (typeof window !== 'undefined' && window.innerHeight) || 0,
-          w: Number(savedSize.width) || WIDTH.def,
-          h: Number(savedSize.height) || 320,
-        };
-        anchorRef.current = (saved.ax && saved.ay)
-          ? saved
-          : anchorOf({ left: Number(saved.left) || 0, top: Number(saved.top) || 0 }, view);
-        return resolvePos(saved, view);
-      });
-      const [width, setWidth] = useState(() => clampWidth(loadJson(LS.size, null)?.width));
-      /* ZB-06：高度初值。无保存值 → null = auto（保持旧观感）；有则钳到当前视口允许范围。 */
-      const [height, setHeight] = useState(() => {
-        const h = loadJson(LS.size, null)?.height;
-        return h == null ? null : clampHeight(h);
-      });
-      const [collapsed, setCollapsed] = useState(() => !!loadJson(LS.collapsed, false));
-      /* ZB-08：固定（锁定位置）。持久化 —— 固定是"我把面板安置好了"的意图，跨会话应当保持。 */
-      const [pinned, setPinned] = useState(() => !!loadJson(LS.pinned, false));
-      /* ZB-24：最小化（胶囊）状态改用**模块级共享 store** —— 会话头入口要读同一个事实，
-       * 否则「头入口显示已打开、面板却已收成胶囊」这类不一致就必然出现。 */
-      const ui = usePanelUi();
+
+    /** 面板主体（ZB-27）：由「右下角浮窗」改为**挂在会话标题行入口下的悬浮弹窗**。
+     * 形态与样式对齐 DSH 自带的 job-list / 子智能体目录（menu 令牌 + 由 .zcd-menu 那条 CSS 负责定位）。
+     * ZB-06/07/10/11 的拖拽、缩放、固定位置、位置持久化与最小化胶囊随浮窗一并去掉。 */
+    function PanelBody() {
       const [lastJobId, setLastJobId] = useState(null);
       const [feedback, setFeedback] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -2294,47 +2239,8 @@ window.__ModuleLoader__.load({
         channels, channelGet, channelSet, retry, fallbackGet, fallbackSet,
         switchSet,
       } = useWire();
-      /* ZB-24：把「运行中/排队中/连接态」发布到共享 store ——
-       * 会话头入口据此显示计数徽标，而它**不必**自己再建一条 wire（ZB-24 的解耦点：
-       * 面板是唯一持 wire 者，头入口是纯读者）。panelUi.set 内部做值变化去重，
-       * 面板每秒重渲染不会白刷读者。 */
-      useEffect(() => {
-        const counts = (snapshot && snapshot.counts) || {};
-        panelUi.set({ running: Number(counts.running) || 0, queued: Number(counts.queued) || 0, conn });
-      }, [snapshot, conn]);
-      const rootRef = useRef(null);
-      /* ZB-11：这里保存的是**锚定记录**（贴哪条边 + 四条边距），而不是解析后的坐标。
-       * 渲染时才用 resolvePos 推导实际 left/top（见 rootStyle），故窗口尺寸一变，
-       * 位置会随锚定边自动重算 —— 这才是"固定在右上角"应有的跨尺寸行为。
-       *
-       * ★ ZB-10 的错误（本轮修正）：当时把**解析后的绝对坐标**写回 pos 并落盘，
-       * 窗口一缩，钳制后的坐标就固化成"新位置"（落在中间），用户意图被永久破坏；
-       * 再放大也不会还原。现在渲染值不落盘，落盘的只有意图（锚定）。 */
-      /* （anchorRef 已上移到 pos 的 useState 之前 —— 那里要用它种入落盘的锚定） */
-      /** 读取当前视口与面板真实尺寸（拿不到时退化为 0，由各纯函数自行处理）。 */
-      const viewMetrics = useCallback(() => {
-        const el = rootRef.current;
-        return {
-          vw: (typeof window !== 'undefined' && window.innerWidth) || 0,
-          vh: (typeof window !== 'undefined' && window.innerHeight) || 0,
-          w: (el && el.offsetWidth) || WIDTH.def,
-          h: (el && el.offsetHeight) || 320,
-        };
-      }, []);
-      /* ZB-10/11：视口尺寸变化时**按锚定重算**（不是把坐标钳死）。
-       * 用 forcePos 触发一次重渲染即可 —— 真正的坐标由渲染期的 resolvePos 推导。 */
-      const [, forcePos] = useState(0);
-      useEffect(() => {
-        const onResize = () => forcePos((n) => n + 1);
-        window.addEventListener('resize', onResize);
-        return () => window.removeEventListener('resize', onResize);
-      }, []);
-      /* 挂载后也要重算一次：初始渲染时面板还没有真实尺寸（offsetWidth=0），
-       * 用估计值推导过一次；挂载后尺寸已知，需要纠正。 */
-      useEffect(() => { forcePos((n) => n + 1); }, [collapsed, ui.minimized, width, height]);
       /* ZB-21：样式只注入一次到 document.head（脱离 React 重渲染路径）。
-       * 卸载时移除，保持"插件卸载即清理"的原有语义。
-       * 依赖数组为空 ⇒ 只在挂载/卸载时执行，轮询重渲染不会碰它（这正是修复点）。 */
+       * 弹窗关闭即卸载组件 ⇒ 随之移除（保持"卸载即清理"语义）。 */
       useEffect(() => {
         ensureStyle();
         return () => detachStyle();
@@ -2416,106 +2322,9 @@ window.__ModuleLoader__.load({
 
       // 交互元素上按下不启动拖动（否则标题栏的 setPointerCapture 会吃掉子按钮的 click）
       // （isInteractive 已上移模块级：与 JobRow 行头点击守卫共用）
-      const startDrag = useCallback((e) => {
-        if (e.button !== 0) return;
-        if (pinned) return; // ZB-08：已固定 → 标题栏不响应拖动（按钮仍有各自的 stopPropagation）
-        if (isInteractive(e.target)) return;
-        const el = rootRef.current;
-        if (!el) return;
-        const rect = el.getBoundingClientRect();
-        const offX = e.clientX - rect.left;
-        const offY = e.clientY - rect.top;
-        const target = e.currentTarget;
-        const last = { left: rect.left, top: rect.top };
-        /* ZB-11：拖动过程中即按"当前位置"重算锚定（贴哪条边随拖动实时变化），
-         * 松手时把**锚定记录**落盘 —— 落盘的是意图（贴右上角），不是某一时刻的绝对坐标。 */
-        const commitAnchor = () => {
-          const a = anchorOf({ left: last.left, top: last.top }, {
-            vw: (typeof window !== 'undefined' && window.innerWidth) || 0,
-            vh: (typeof window !== 'undefined' && window.innerHeight) || 0,
-            w: el.offsetWidth || WIDTH.def,
-            h: el.offsetHeight || 320,
-          });
-          anchorRef.current = a;
-          return a;
-        };
-        const move = (ev) => {
-          const w = el.offsetWidth || 1;
-          const ht = el.offsetHeight || 1;
-          last.left = Math.min(Math.max(EDGE, ev.clientX - offX), Math.max(EDGE, window.innerWidth - w - EDGE));
-          last.top = Math.min(Math.max(EDGE, ev.clientY - offY), Math.max(EDGE, window.innerHeight - ht - EDGE));
-          const a = commitAnchor();
-          setPos({ left: a.left, top: a.top }); // pos 状态仍用于触发重渲染
-        };
-        const up = () => {
-          target.removeEventListener('pointermove', move);
-          target.removeEventListener('pointerup', up);
-          target.removeEventListener('pointercancel', up);
-          saveJson(LS.pos, commitAnchor()); // 落盘锚定记录（含 ax/ay 与四条边距）
-        };
-        try {
-          target.setPointerCapture(e.pointerId);
-        } catch { /* 无捕获也能拖（老内核） */ }
-        target.addEventListener('pointermove', move);
-        target.addEventListener('pointerup', up);
-        target.addEventListener('pointercancel', up);
-      }, [pinned]); // ZB-08：pinned 参与判断 ⇒ 必须进依赖，否则闭包永远读到初始值
-
-      const startResize = useCallback((e) => {
-        if (e.button !== 0) return;
-        const startX = e.clientX;
-        const startY = e.clientY;
-        const el = rootRef.current;
-        const startW = el ? el.offsetWidth : WIDTH.def;
-        // ZB-06：起点高度取实际渲染高度（auto 时即当前内容高度），拖拽后转为固定高度
-        const startH = el ? el.offsetHeight : clampHeight(0);
-        /* ZB-11：手柄固定右下角 ⇒ 变宽/变高一律取正向（右移=变宽、下移=变高），手柄与光标同向。
-         * 这要求面板是 left/top 锚定：若还没被拖动过（pos 为空，CSS 是 right/bottom 锚定），
-         * 先把 left/top 按**当前实际几何**钉住 —— 取的就是当前 rect，视觉上零位移，
-         * 但从此右边缘/下边缘才是会动的那两条边，手柄与行为一致（ZB-10 那类"抓错角"不会再出现）。 */
-        if (!anchorRef.current && el) {
-          const r = el.getBoundingClientRect();
-          const a = anchorOf({ left: Math.round(r.left), top: Math.round(r.top) }, {
-            vw: (typeof window !== 'undefined' && window.innerWidth) || 0,
-            vh: (typeof window !== 'undefined' && window.innerHeight) || 0,
-            w: el.offsetWidth || WIDTH.def,
-            h: el.offsetHeight || 320,
-          });
-          anchorRef.current = a;
-          setPos({ left: a.left, top: a.top });
-          saveJson(LS.pos, a);
-        }
-        const target = e.currentTarget;
-        let w = startW;
-        let h = startH;
-        const move = (ev) => {
-          w = clampWidth(startW + (ev.clientX - startX));
-          h = clampHeight(startH + (ev.clientY - startY));
-          setWidth(w);
-          setHeight(h);
-        };
-        const up = () => {
-          target.removeEventListener('pointermove', move);
-          target.removeEventListener('pointerup', up);
-          target.removeEventListener('pointercancel', up);
-          // ZB-06：宽高一起落盘（同一 localStorage 键，旧值 {width} 仍可读）
-          saveJson(LS.size, { width: w, height: h });
-        };
-        try {
-          target.setPointerCapture(e.pointerId);
-        } catch { /* 同上 */ }
-        target.addEventListener('pointermove', move);
-        target.addEventListener('pointerup', up);
-        target.addEventListener('pointercancel', up);
-      }, [pos]); // ZB-10：pos 决定手柄侧与变宽方向 ⇒ 必须进依赖（同 pinned 那次教训）
-
-      // 主题令牌以 CSS 自定义属性注入，TOKENS(T) 是唯一替换点
+      /* ZB-27：只保留**主题令牌**注入 —— 浮窗时代的 --zcd-w / --zcd-h（用户拖拽出来的宽高）
+       * 随拖拽功能一起去掉：弹窗宽高由 .zcd-menu 的 CSS 决定（width: min(440px, 100vw-32px)）。 */
       const cssVars = {
-        '--zcd-w': `${width}px`,
-        // ZB-06：仅在用户设定过高度时才注入（未设定 = 不写，CSS 回退 auto + 72vh 上限）
-        /* ZB-11：收起时必须**不**注入 --zcd-h —— 否则 body 已被移除、面板却被用户设过的高度撑着，
-         * 屏幕上留下一个只剩标题栏的大空盒子（用户现场报告：「内容收起了，实际面板还在」）。 */
-        ...(collapsed || height == null ? {} : { '--zcd-h': `${height}px` }),
         '--zcd-bg': T.bg, '--zcd-bgBar': T.bgBar, '--zcd-sunken': T.sunken, '--zcd-hover': T.hover,
         '--zcd-accent': T.accent, '--zcd-onAccent': T.onAccent, '--zcd-border': T.border, '--zcd-shadow': T.shadow,
         '--zcd-text': T.text, '--zcd-text2': T.text2, '--zcd-text3': T.text3, '--zcd-danger': T.danger, '--zcd-mono': T.mono,
@@ -2523,41 +2332,6 @@ window.__ModuleLoader__.load({
         '--zcd-st-failed': T.stFailed, '--zcd-st-killed': T.stKilled, '--zcd-st-interrupted': T.stInterrupted,
         '--zcd-st-idle': T.stIdle,
       };
-      /* ZB-11：渲染位置由**锚定记录**推导（窗口尺寸变化时自动跟随贴边）。
-       * anchorRef.current 为 null ⇒ 从未定位过，走默认右下角。 */
-      const metrics = viewMetrics();
-      const resolved = resolvePos(anchorRef.current, metrics);
-      const rootStyle = resolved
-        ? { ...cssVars, left: `${Math.round(resolved.left)}px`, top: `${Math.round(resolved.top)}px` }
-        : { ...cssVars, right: '24px', bottom: '24px' };
-
-      if (ui.minimized) {
-        const running = (snapshot && snapshot.counts && snapshot.counts.running) || 0;
-        const waiting = running + ((snapshot && snapshot.counts && snapshot.counts.queued) || 0);
-        /* ZB-06（用户报告「最小化后只能看到一点点内容」）：胶囊原先只画
-         * [状态点][数字或·]，空载时就是一个孤零零的圆点 + 中点，看不出这是什么、也点不着。
-         * 现在保留「ZCode 派发台」字样 + 实时状态，并给它一个明确的 title。
-         *
-         * ZB-07（用户报告「缩小后的胶囊跑到左上角、最上面了，还点击不了」）：
-         * 根因是胶囊**复用了面板的 pos**。面板 440×620、胶囊约 140×30，同一个 left/top
-         * 必然错位；面板拖到边界时存的极端值（负数 / 超出视口）更会把胶囊整个推出屏幕 ⇒ 点不到。
-         * 胶囊本就只是「回到派发台」的入口，位置不需要跟面板走 —— 固定右下角即可。 */
-        const status = running > 0 ? t('pillRunning') : waiting > 0 ? t('pillQueued') : t('pillIdle');
-        return h('div', {
-          className: 'zcd-root zcd-min',
-          style: { ...cssVars, right: '24px', bottom: '24px' }, // 不用 pos：见上
-        },
-          h('button', {
-            className: 'zcd-pill',
-            title: `${t('title')} · ${status}${waiting > 0 ? `（${waiting}）` : ''} — ${t('restore')}`,
-            'aria-label': `${t('restore')}：${t('title')}`,
-            onClick: () => panelUi.set({ minimized: false }),
-          },
-            h(StatusDot, { state: running > 0 ? 'running' : waiting > 0 ? 'queued' : 'idle' }),
-            h('span', { className: 'zcd-pill-title' }, t('title')),
-            waiting > 0 ? h('span', { className: 'zcd-pill-n' }, String(waiting)) : null,
-            h('span', { className: 'zcd-pill-state' }, status)));
-      }
 
       const runningNow = ((snapshot && snapshot.counts && snapshot.counts.running) || 0) > 0;
       const connLabel = conn === 'demo' ? t('connDemo') : conn === 'ext' ? t('connExt') : conn === 'live' ? t('connLive') : conn === 'offline' ? t('connOffline') : t('connConnecting');
@@ -2573,57 +2347,35 @@ window.__ModuleLoader__.load({
       // Z12：开关状态只认 live 快照携带的 snapshot.switch（宿主读真值文件）；其他数据源如实显示「未知/只读」
       const dispatchSwitch = snapshot && snapshot.switch ? snapshot.switch : null;
 
-      return h('div', { ref: rootRef, className: 'zcd-root', style: rootStyle, role: 'region', 'aria-label': t('title') },
-        h('div', { className: 'zcd-panel' },
-          h('div', { className: 'zcd-titlebar' + (pinned ? ' zcd-locked' : ''), onPointerDown: startDrag },
-            h(StatusDot, { state: runningNow ? 'running' : 'idle' }),
-            h('span', { className: 'zcd-title' }, t('title')),
-            h(SwitchBadge, { sw: dispatchSwitch, live: conn === 'live', onToggle: onSwitchToggle }),
-            h('span', { className: 'zcd-conn', title: offlineReason || connLabel, 'aria-label': connLabel }, connLabel),
-            /* ZB-08：固定/解锁面板位置（持久化）。固定后标题栏不再响应拖动。 */
-            h('button', {
-              className: 'zcd-iconbtn', title: pinned ? t('unpin') : t('pin'),
-              'aria-label': pinned ? t('unpin') : t('pin'), 'aria-pressed': pinned,
-              onPointerDown: (e) => e.stopPropagation(),
-              onClick: () => {
-                const nv = !pinned;
-                setPinned(nv);
-                saveJson(LS.pinned, nv);
-              },
-            }, h(IconPin, { on: pinned })),
-            h('button', {
-              className: 'zcd-iconbtn', title: t('collapse'), 'aria-label': t('collapse'), 'aria-expanded': !collapsed,
-              onPointerDown: (e) => e.stopPropagation(),
-              onClick: () => {
-                const nv = !collapsed;
-                setCollapsed(nv);
-                saveJson(LS.collapsed, nv);
-              },
-            }, h(IconChevron, { up: collapsed })),
-            h('button', { className: 'zcd-iconbtn', title: t('minimize'), 'aria-label': t('minimize'), onPointerDown: (e) => e.stopPropagation(), onClick: () => panelUi.set({ minimized: true }) }, h(IconMinus)),
-          ),
-          collapsed ? null : h('div', { className: 'zcd-body' },
-            /* ZB-01 ③：离线原因放在 body 首行（始终在默认折叠的各分区之外）——
-             * 免得排查时还要先展开「通道」分区才看得到。 */
-            showOfflineNote ? h('div', { className: 'zcd-note', role: 'status', title: offlineReason }, offlineReason) : null,
-            h(Section, { id: SEC.channel, title: t('secChannel'), collapsible: true },
-              /* 离线说明只在 body 首行渲染一处（去重）：这里不再重复同一句话。 */
-              h(ChannelSection, { channelsInfo, channel, fallback, onSwitch, onFallbackSet, offline: conn !== 'live', offlineReason })),
-            h(Section, { id: SEC.dispatch, title: t('secDispatch'), collapsible: true },
-              h(DispatchBar, { snapshot, lastJobId, feedback, busy, channel, swBlocked: dispatchSwitch != null && dispatchSwitch.enabled === false, onSubmit })),
-            /* ZB-12（用户要求）：用量移到**派发下面** —— 派发前先看额度/套餐余量是自然顺序。
-             * 当前完整顺序：通道 → 派发 → 用量 → 进程 → 单写者/文件锁。
-             * 分区 id 不变 ⇒ 各自展开状态与持久化键不受影响。 */
-            h(Section, { id: SEC.quota, title: t('secQuota'), collapsible: true },
-              h(QuotaCards, { quota, planQuota })),
-            h(Section, { id: SEC.jobs, title: t('secJobs'), collapsible: true },
-              h(JobList, { snapshot, onKill, onDismiss, onTail: tail, onRetry, onContinue, channels: channelsInfo.channels, refreshKey: (snapshot && snapshot.generatedAt) || '', offline: conn === 'offline' })),
-            /* ZB-09：单写者/文件锁紧跟在进程列表之后（排查并发问题时与进程对照着看更顺）。 */
-            h(Section, { id: SEC.locks, title: t('secLocks'), collapsible: true },
-              h(LockStatus, { snapshot })),
-          ),
+      /* ZB-27：容器改用系统菜单样式（.zcd-menu，见 CSS —— 令牌与 job-list 的弹层同一套）。
+       * --zcd-* 自定义属性挂在**这一层**，下面的各分区样式照旧解析。 */
+      return h('div', { className: 'zcd-menu', style: cssVars, role: 'dialog', 'aria-label': t('title') },
+        h('div', { className: 'zcd-panelHead' },
+          h(StatusDot, { state: runningNow ? 'running' : 'idle' }),
+          h('span', { className: 'zcd-panelTitle' }, t('title')),
+          h(SwitchBadge, { sw: dispatchSwitch, live: conn === 'live', onToggle: onSwitchToggle }),
+          h('span', { className: 'zcd-conn', title: offlineReason || connLabel, 'aria-label': connLabel }, connLabel),
         ),
-        collapsed ? null : h('div', { className: 'zcd-grip', title: t('grip'), 'aria-label': t('grip'), onPointerDown: startResize }, h(IconResizeMark)),
+        /* ZB-01 ③：离线原因放在 body 首行（始终在默认折叠的各分区之外）——
+         * 免得排查时还要先展开「通道」分区才看得到。 */
+        showOfflineNote ? h('div', { className: 'zcd-note', role: 'status', title: offlineReason }, offlineReason) : null,
+        h('div', { className: 'zcd-body' },
+          h(Section, { id: SEC.channel, title: t('secChannel'), collapsible: true },
+            /* 离线说明只在 body 首行渲染一处（去重）：这里不再重复同一句话。 */
+            h(ChannelSection, { channelsInfo, channel, fallback, onSwitch, onFallbackSet, offline: conn !== 'live', offlineReason })),
+          h(Section, { id: SEC.dispatch, title: t('secDispatch'), collapsible: true },
+            h(DispatchBar, { snapshot, lastJobId, feedback, busy, channel, swBlocked: dispatchSwitch != null && dispatchSwitch.enabled === false, onSubmit })),
+          /* ZB-12（用户要求）：用量移到**派发下面** —— 派发前先看额度/套餐余量是自然顺序。
+           * 当前完整顺序：通道 → 派发 → 用量 → 进程 → 单写者/文件锁。
+           * 分区 id 不变 ⇒ 各自展开状态与持久化键不受影响。 */
+          h(Section, { id: SEC.quota, title: t('secQuota'), collapsible: true },
+            h(QuotaCards, { quota, planQuota })),
+          h(Section, { id: SEC.jobs, title: t('secJobs'), collapsible: true },
+            h(JobList, { snapshot, onKill, onDismiss, onTail: tail, onRetry, onContinue, channels: channelsInfo.channels, refreshKey: (snapshot && snapshot.generatedAt) || '', offline: conn === 'offline' })),
+          /* ZB-09：单写者/文件锁紧跟在进程列表之后（排查并发问题时与进程对照着看更顺）。 */
+          h(Section, { id: SEC.locks, title: t('secLocks'), collapsible: true },
+            h(LockStatus, { snapshot })),
+        ),
       );
     }
 
@@ -2699,14 +2451,9 @@ window.__ModuleLoader__.load({
               });
             }
           } catch { /* 子 fiber 建立失败：仍可用 createWire 的即时探测兜底 */ }
-          // list 型槽位：id 必填且同 priority 下唯一；id 遵循宿主先例的 <功能>.<物> 命名
-          // （对照 chat.quota-notice / plugin-manager.refresh-toast / workspace.row-toast）
-          ctx.slots.inject(SLOT, () => ctx.slots.register({ name: SLOT, id: 'zcode-dispatch.console', order: 20 },
-            () => h(PanelBoundary, null, h(FloatingPanel))));
-          /* ZB-24：会话标题行入口（用户要求）。槽位/占用者见文件头 HEADER_SLOT 注释：
-           * 与 DSH 自带的 subagent-catalog(-30) / agent-team(-20) / agent-preset(-10) 同一行，
-           * 取 order 10 ⇒ 排在「创造模式」之后、自带「后台任务」(20) 之前。
-           * id 用 `zcode-dispatch`（不带 .console 后缀）—— 与浮层那条是两个不同槽位的 cell。 */
+          /* ZB-27（用户要求）：**只在会话标题行注册一个入口**，弹窗挂在它下面。
+           * 原先那条注册到 shell.overlay 的右下角浮窗（id `zcode-dispatch.console`，order 20）
+           * 与它的最小化胶囊一并取消 —— 两份 UI 会让"哪个才是派发台"变得含糊。 */
           ctx.slots.inject(HEADER_SLOT, () => ctx.slots.register({ name: HEADER_SLOT, id: 'zcode-dispatch', order: 10 },
             () => h(HeaderEntry)));
         } catch (e) {

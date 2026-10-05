@@ -2,7 +2,7 @@
 
 在 DSH Harness 里派发/监视多个 ZCode 无头进程（`zcode-run.mjs`）：单写者互斥、用量与上下文、套餐通道。
 Host 半边（`index.js` + `wire.host.mjs` + `core/*`）跑进程调度并暴露 agent 工具 `zcode_dispatch`；
-Client 半边（`client.js` + `wire.client.mjs`）在 Web 页面渲染右下角悬浮窗（拖拽 / 折叠 / 最小化胶囊）。
+Client 半边（`client.js` + `wire.client.mjs`）在 Web 页面**会话标题行**渲染一枚「ZCode 派发台」入口（与「N 个子智能体 / 智能体团队 / 创造模式」同一行），点开即在入口下方弹出面板。
 
 > ⚠ **标准模式不可安装**：标准模式 DSH 会话没有 `plugin_manager` / `cordis_inspect_query`，
 > 本包只能被写出、不能被安装验证。安装由**创造模式（creator preset）会话**执行（见下）。
@@ -19,7 +19,7 @@ zcode-dispatch/
 ├─ notify.mjs            ZB-22 落地自动唤醒（job 落地 → 唤醒发起会话；零 @deepseek-ai 依赖）
 ├─ wire.host.mjs         Host 接线适配器＋动作唯一实现 createActionHandler（creator TODO 已于 Z8-01 清偿）
 ├─ wire.client.mjs       Client 接线适配器＋轮询/demo 降级
-├─ client.js             UI 半边：悬浮窗（React.createElement，无构建）；内嵌降级 wire
+├─ client.js             UI 半边：标题行入口 + 悬浮弹窗（React.createElement，无构建）；内嵌降级 wire
 ├─ core/                 Z1 交付的派发核心（dispatch-core.mjs / quota.mjs，Z3 增 appserver-rpc.mjs）——只 import，不改
 ├─ bin/zcd.mjs           Z1 的独立 CLI（与插件同 core，可做对照排查）
 ├─ locale/{zh,en}.json   meta + 界面文案（ui 段与 client.js 内嵌 STRINGS 同源）
@@ -47,7 +47,7 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 
 | 字段 | 类型/默认 | 说明 |
 |---|---|---|
-| `demo` | boolean / `false` | UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher |
+| `demo` | boolean / `false` | UI 演示模式：客户端用内置假数据渲染面板，不触达 dispatcher |
 | `maxConcurrent` | integer / `1` | 同时运行的 run 上限。**注意：它与单写者锁是两道独立的闸，实际并发 = min(两者)**，见下节 |
 | `runnerPath` | string / `''` | runner 绝对路径（通用工具仓库 `<本仓库>/collab-kit/zcode-run.mjs`，只读使用）。**与 `workRoot` 任一为空则不创建 dispatcher**（UI 走 demo 降级，工具动作返回可读错误） |
 | `runnerCwd` | string / `''` | runner 子进程的工作目录（通常设为宿主项目根）。runner 已迁出通用工具仓库、无法从自身位置推项目根，故它与「从绝对 `--task` 反推」构成**双保险**；留空 = 用 DSH 进程 cwd |
@@ -373,7 +373,7 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 ## 验证步骤（creator 会话，安装后）
 
 1. `cordis_inspect_query`：确认新行已挂（`Config.listConfigs` 过滤本包名 → 查 `entry`；插槽注册）。
-2. 页面出现右下角悬浮窗：可拖拽（标题栏按住）、可折叠、可最小化成胶囊；五个分区
+2. 会话标题行出现「ZCode 派发台」入口：点开出面板（点外部 / Esc / 再点入口关闭）；五个分区
    （通道 / 派发栏 / 进程列表 / 用量卡片 / 单写者状态）可折叠（通道/派发/单写者默认收起）；浅色/深色主题各看一眼。
 3. 双调用方一致性：agent 跑工具 `zcode_dispatch` `action: list`，与 UI 列表一致；
    `action: quota` 的三窗口数字与 `node bin/zcd.mjs quota` 一致。
@@ -393,13 +393,9 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/channel-retry.test.mjs` | 9 | 通道切换、续跑（含 `--resume` 不得带 `--model` 的 F2 回归） |
 | `node test/quota-rpc.test.mjs` | 16 | 额度 RPC 与聚合 |
 | `node test/tail-scroll.test.mjs` | 13 | 输出框滚动决策（ZB-05：不闪烁、不弹回、底部跟随） |
-| `node test/pill.test.mjs` | 16 | 最小化胶囊（ZB-06：保留标题字样、locale 对称） |
-| `node test/pill-position.test.mjs` | 16 | 胶囊定位与面板位置视口钳制（ZB-07：胶囊固定右下角、脏 pos 不出屏） |
 | `node test/file-lock.test.mjs` | 9 | 细粒度文件锁（ZB-08：声明 write 才生效、未声明回退粗粒度、路径归一化、防死锁、无泄漏） |
 | `node test/wait-action.test.mjs` | 6 | `wait` 动作（ZB-08：等终态 / paused 也返回 / 超时不谎报 / 参数校验） |
 | `node test/section-order.test.mjs` | 9 | 面板分区渲染顺序（ZB-09：单写者/文件锁紧跟进程、用量置末） |
-| `node test/panel-reclamp.test.mjs` | 9 | 任意视口下位置可见（ZB-10 初衷；ZB-11 改锚定后仍保证） |
-| `node test/panel-anchor.test.mjs` | 22 | 面板锚定语义（ZB-11：贴边跟随，缩窗不挤到中间、放大回原位） |
 | `node test/elapsed-format.test.mjs` | 15 | 耗时展示格式（ZB-13：恒定三段 XX时XX分XX秒；数据层仍为秒数） |
 | `node test/ctx-format.test.mjs` | 23 | 上下文占用展示（ZB-14：`180.9k / 200k`，截断非四舍五入） |
 | `node test/lock-model.test.mjs` | 8 | 锁模型（ZB-16：删除 memory 锁；不同文件集可并发；同文件排队；跨层级互斥） |
@@ -407,10 +403,10 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/lock-priority.test.mjs` | 4 | 调度优先级（ZB-17：文件锁任务优先放行；同类内 FIFO；整仓库锁执行时文件锁等待） |
 | `node test/lock-badge.test.mjs` | 34 | 进程行锁徽标（ZB-18：区分整仓库锁 / 文件锁 N / 不取锁 / 旧版记录）+ **全仓防复发扫描**（ZB-19） |
 | `node test/memory-ban.test.mjs` | 4 | 记忆禁令注入（ZB-20：prompt/target 注入；**task 注入不进去 ⇒ memoryBanApplied=false**） |
-| `node test/panel-style.test.mjs` | 24 | 面板样式注入（ZB-21：样式只注入 head 一次，重渲染不再触碰 ⇒ 不透明/不塌左上角） |
+| `node test/panel-style.test.mjs` | 21 | 样式注入与作用域（ZB-21/27：样式只注入 head 一次、重渲染不触碰；border-box 限定 .zcd-menu 子树） |
 | `node test/notify.test.mjs` | 21 | 落地自动唤醒（ZB-22：空闲 followup / 忙碌 inject、幂等、自己 kill/wait 的抑制、唤醒预算、卸载退订、工具层译码） |
 | `node test/wake-integration.test.mjs` | 3 | 落地唤醒**全链路接线**（ZB-22：`apply()` → inject agents/systemPrompt → 派发 → 落地 → 唤醒 + 信标 `wakeActive`；关配置 / 无服务时降级） |
-| `node test/header-entry.test.mjs` | 29 | 会话标题行入口（ZB-24：槽位/id/order、入口不建 wire、真点击切共享 store、文案双侧） |
+| `node test/header-entry.test.mjs` | 38 | 会话标题行入口 + 悬浮弹窗（ZB-27：槽位/order、**入口样式与同排一致**、系统菜单令牌、点外部/Esc 关闭、入口不建 wire、真点击开合） |
 | `node test/single-source.test.mjs` | 31 | **单源哨兵**（ZB-25：动作清单 ≡ switch、状态集合引用同一性、三表方法集相等、协议常量逐字相等、STRINGS ↔ locale 逐值） |
 | `node test/hardening.test.mjs` | 5 | **核对硬化**（ZB-26：B1 锁 realpath / B2 ownerPid 不改写活 job / B3 多进程不丢更新 / B4 tail 不读越界 / A2 非法 config 只 warn 不阻断激活） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
