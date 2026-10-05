@@ -2256,6 +2256,8 @@ window.__ModuleLoader__.load({
      *      拿不到 --zcd-* 自定义属性。 */
     function HeaderEntry() {
       const [open, setOpen] = useState(false);
+      /* ZB-27i：悬停/聚焦态用 React 状态表达（颜色改走内联兜底，见下面的 style）。 */
+      const [hover, setHover] = useState(false);
       const rootRef = useRef(null);
       /* 点组件外部关闭 + Esc 关闭（系统弹层同款交互；不引 primitives，避免多声明一个客户端依赖）。 */
       useEffect(() => {
@@ -2282,12 +2284,21 @@ window.__ModuleLoader__.load({
         h('button', {
           type: 'button',
           className: 'zcd-chip',
-          style: { background: 'transparent', backgroundImage: 'none', border: 0, boxShadow: 'none', outline: 'none' },
+          style: {
+            background: 'transparent', backgroundImage: 'none', border: 0, boxShadow: 'none', outline: 'none',
+            /* ZB-27i：颜色也内联兜底（内联优先于任何非 !important 的样式表规则，含伪类）；
+             * 悬停/聚焦态改用 React 状态表达，不再依赖伪类命中。值仍只用主题令牌。 */
+            color: (open || hover) ? T.text2 : T.text3,
+          },
           title: t('headerTip'),
           'aria-label': t('headerTip'),
           'aria-expanded': open,
           'aria-haspopup': 'dialog',
           onClick: () => setOpen((v) => !v),
+          onMouseEnter: () => setHover(true),
+          onMouseLeave: () => setHover(false),
+          onFocus: () => setHover(true),
+          onBlur: () => setHover(false),
         },
           h('span', { className: 'zcd-chip-label' }, t('title')),
           /* 展开指示用**系统同款图标与几何**（size 14 / viewBox 16 / strokeWidth 1），

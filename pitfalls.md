@@ -81,6 +81,23 @@
 - **纪律**：凡是"要与系统某元素一致"，先找**同用法的官方实现**读源码对齐；不要从压缩产物反推，
   更不要凭截图猜度量。
 
+### 方法：第三方插件的 UI 排查要"查三条链"（profile 装载链 / 令牌定义链 / 级联链），别只看截图
+
+排查「入口颜色/字号与系统不一致」时，按顺序用**可验证事实**排除，比反复对截图快得多：
+
+1. **装载链**：profile 里的插件是 **Junction 软链**还是安装时拷贝？
+   `Get-Item <profile>\node_modules\@local\<pkg> -Force | Select LinkType,Target` +
+   比对 `Get-FileHash` —— 软链且哈希一致才说明"用户跑的就是我改的文件"（本轮据此排除了"旧缓存"假设）。
+2. **令牌定义链**：client Inspect 有 **`Theme.listTokens`**（当前构建的官方令牌清单与说明），
+   再用 `asar-grep '--dsw-alias-xxx:'` 到 `dsh-client-ui-theme` 里读**真实取值**。
+   本轮实测（暗色）：`label-primary`=bluish-50、`label-secondary`=bluish-300、`label-tertiary`=bluish-400
+   ⇒ 邻居那种灰 = tertiary，而 `:hover/:focus-visible` 变亮到 secondary（官方 jobs 的 `.trigger:hover` 同款）。
+3. **级联链**：把**运行时会注入的 CSS 文本导出来体检**（括号平衡、规则原文、有没有被吞掉的声明）。
+   做法：用 React 桩在 Node 里 `mod.apply(...)` → 读 `document.head` 里那条 `<style>.textContent`，
+   检查 `{/}` 计数与目标规则原文。本轮 94/94 平衡、规则原文正确 ⇒ CSS 不是嫌疑。
+4. 三条都干净时，**剩下的差异基本就是"交互态"**（对方的截图里指针停在我的入口上）。
+   与其继续调数值，不如把状态差异也变成确定性代码（颜色改内联 + React 状态表达），并请用户**移开指针**再截图。
+
 ### 另记：清理"死代码"时要先确认它真的没人用
 
 删浮窗样式时把 `.zcd-iconbtn` 当死代码删掉，随后发现 **JobRow 的终止/重跑/续接/关闭四个按钮仍在用它**。

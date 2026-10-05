@@ -73,6 +73,12 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(/max-height:min\(480px,calc\(100vh - 140px\)\)/.test(mcss), '★ B28 max-height min(480px,100vh-140px)（官方同值）');
   ok(/right:0/.test(mcss), 'B29 贴右展开（**有意偏离**：官方用 left:0 + JS menuShift；本入口在标题行最右端）');
   ok(/overflow:auto/.test(mcss), 'B30 内容滚动');
+  /* ZB-27i：颜色内联兜底（现场实测：resting 令牌与邻居相同，但为排除未知宿主规则，颜色也走内联）。 */
+  ok(/color: \(open \|\| hover\) \? T\.text2 : T\.text3/.test(src), '★ B31 颜色内联：resting=T.text3(label-tertiary) / 悬停或展开=T.text2(label-secondary)（与官方 .trigger 同色阶）');
+  ok(/onMouseEnter: \(\) => setHover\(true\)/.test(src) && /onMouseLeave: \(\) => setHover\(false\)/.test(src), '★ B32 悬停态用 React 状态表达（不依赖宿主伪类命中）');
+  ok(/onFocus: \(\) => setHover\(true\)/.test(src) && /onBlur: \(\) => setHover\(false\)/.test(src), '★ B33 聚焦态同上（键盘可达时的视觉反馈）');
+  ok(/const \[hover, setHover\] = useState\(false\)/.test(src), 'B34 hover 状态声明');
+  ok(/color: \(open \|\| hover\) \? T\.text2 : T\.text3/.test(src) && !/#[0-9a-fA-F]{3,8}\b/.test(src.match(/color: \(open[^\n]*/)[0]), 'B35 内联色只用主题令牌（无字面色值 ⇒ 明暗自适应）');
 }
 
 console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{
@@ -106,7 +112,7 @@ console.log('\nG. ZB-27f：入口是 <button>（与邻居同元素 ⇒ 同 UA �
   ok(/type: 'button'/.test(code), "G2 type='button'（不触发提交行为）");
   ok(/'aria-haspopup': 'dialog'/.test(code) && /'aria-expanded': open/.test(code), 'G3 无障碍属性保留（aria-expanded / aria-haspopup）');
   /* 双层防宿主高亮：内联样式挡住一切非 important 的样式表规则（含伪类），CSS !important 挡住 important。 */
-  ok(/style: \{ background: 'transparent', backgroundImage: 'none', border: 0, boxShadow: 'none', outline: 'none' \}/.test(src),
+  ok(/style: \{[\s\S]{0,120}background: 'transparent', backgroundImage: 'none', border: 0, boxShadow: 'none', outline: 'none',/.test(src),
     '★ G4 内联样式兜底（内联优先于 :hover/:focus 等非 important 规则）');
   /* 外层容器：宿主可能把高亮加在槽位 cell（我们的根 div）上 —— 芯片自身的重置救不了。 */
   ok(/\.zcd-entry\{position:relative;display:inline-flex;background:transparent !important/.test(code),
