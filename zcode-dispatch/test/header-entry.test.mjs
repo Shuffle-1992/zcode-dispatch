@@ -83,11 +83,11 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(/getComputedStyle\(n\)/.test(src) && /getBoundingClientRect\(\)/.test(src), 'B37 诊断：采集计算样式 + 真实几何');
   ok(/mates: mates\.map\(snap\)/.test(src) && /querySelectorAll\(/.test(src), 'B38 诊断：同时采集同排邻居入口以便逐项对比');
   /* ZB-27i：颜色内联兜底（现场实测：resting 令牌与邻居相同，但为排除未知宿主规则，颜色也走内联）。 */
-  ok(/color: \(open \|\| hover\) \? T\.text2 : T\.text3/.test(src), '★ B31 颜色内联：resting=T.text3(label-tertiary) / 悬停或展开=T.text2(label-secondary)（与官方 .trigger 同色阶）');
+  ok(/color: hover \? T\.text2 : T\.text3/.test(src), '★ B31 颜色内联且**仅 hover** 高亮（resting=label-tertiary / hover=label-secondary）—— 官方 .trigger:hover 语义，展开态不再保持高亮');
   ok(/onMouseEnter: \(\) => setHover\(true\)/.test(src) && /onMouseLeave: \(\) => setHover\(false\)/.test(src), '★ B32 悬停态用 React 状态表达（不依赖宿主伪类命中）');
   ok(/onFocus: \(\) => setHover\(true\)/.test(src) && /onBlur: \(\) => setHover\(false\)/.test(src), '★ B33 聚焦态同上（键盘可达时的视觉反馈）');
   ok(/const \[hover, setHover\] = useState\(false\)/.test(src), 'B34 hover 状态声明');
-  ok(/color: \(open \|\| hover\) \? T\.text2 : T\.text3/.test(src) && !/#[0-9a-fA-F]{3,8}\b/.test(src.match(/color: \(open[^\n]*/)[0]), 'B35 内联色只用主题令牌（无字面色值 ⇒ 明暗自适应）');
+  ok(/color: hover \? T\.text2 : T\.text3/.test(src) && !/#[0-9a-fA-F]{3,8}\b/.test(src.match(/color: hover[^\n]*/)[0]), 'B35 内联色只用主题令牌（无字面色值 ⇒ 明暗自适应）');
 }
 
 console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{
@@ -102,13 +102,15 @@ console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{
   ok(/\.zcd-menu,\.zcd-menu \*\{box-sizing:border-box;\}/.test(code), 'C7 ★ box-sizing 作用域改到 .zcd-menu（ZB-17 的输入框撑破回归不能复发）');
   ok(/addEventListener\('pointerdown'/.test(code), 'C8 点外部关闭');
   /* ZB-27l：悬浮展开 / 失焦关闭（用户要求：「改成悬浮展开，失焦关闭」）。 */
-  ok(/onMouseEnter: \(\) => \{ setHover\(true\); setOpen\(true\); \}/.test(src), '★ C8b 指针进入入口即**展开**（无需点击）');
-  ok(/onMouseLeave: close/.test(src), '★ C8c 指针离开整个入口子树即**关闭**（弹窗是子节点 ⇒ 移入弹窗不关）');
-  ok(/const onWinBlur = \(\) => \{ setOpen\(false\); \}/.test(src) && /addEventListener\('blur', onWinBlur\)/.test(src),
+  ok(/const scheduleOpen = \(\) => \{/.test(src) && /setTimeout\(\(\) => \{ openTimer\.current = null; setOpen\(true\); \}, 150\)/.test(src),
+    '★ C8b 悬浮展开：150ms 延时（官方 CatalogDropdown scheduleHoverOpen 同值，穿过缝隙不闪）');
+  ok(/const scheduleClose = \(\) => \{/.test(src) && /setTimeout\(\(\) => \{ closeTimer\.current = null; setOpen\(false\); setHover\(false\); \}, 120\)/.test(src),
+    '★ C8c 离开即关：120ms 延时（官方 scheduleHoverClose 同值）');
+  ok(/const onWinBlur = \(\) => \{ closeNow\(\); \}/.test(src) && /addEventListener\('blur', onWinBlur\)/.test(src),
     '★ C8d 窗口/应用失焦时关闭');
-  ok(/onBlur: \(e\) => \{[\s\S]{0,600}el\.contains\(e\.relatedTarget\)\) return;[\s\S]{0,80}close\(\);/.test(src),
+  ok(/onBlur: \(e\) => \{[\s\S]{0,600}el\.contains\(e\.relatedTarget\)\) return;[\s\S]{0,200}scheduleClose\(\);/.test(src),
     '★ C8e 焦点离开子树时关闭、仍在子树内（移入弹窗）则不关（用 currentTarget/ref 做包含判断）');
-  ok(/onClick: \(\) => \{ setOpen\(true\); setHover\(true\); \}/.test(src),
+  ok(/onClick: \(\) => \{ setOpen\(true\); setHover\(true\); clearTimers\(\); \}/.test(src),
     '★ C8f 点击只负责"打开"（供触屏/键盘），不再切换 —— 避免指针停在入口上时一点就关');
   ok(/Escape/.test(code), 'C9 Esc 关闭');
   ok(/aria-expanded/.test(code) && /aria-haspopup/.test(code), 'C10 无障碍属性：aria-expanded / aria-haspopup');
@@ -251,13 +253,16 @@ console.log('\nE. 真渲染（React 桩）：开合与弹窗内容');
   ok(typeof entryOf(tree)?.props?.onMouseEnter === 'function', 'E9 外层容器带 onMouseEnter（悬浮展开挂点）');
   chipOf(tree).props.onClick();
   tree = render();
-  ok(menuCount(tree) === 1, '★ E10 再次点击**不再收起**（悬浮展开语义：点击只保证打开，避免指针停在入口上一点就关）');
+  ok(menuCount(tree) === 1, '★ E10 再次点击**不再收起**（点击只负责打开，避免指针停在入口上一点就关）');
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   entryOf(tree).props.onMouseLeave();
+  await wait(180);
   tree = render();
-  ok(menuCount(tree) === 0, '★ E11 指针离开整个入口子树 ⇒ 弹窗收起');
+  ok(menuCount(tree) === 0, '★ E11 指针离开 ⇒ 120ms 后收起（官方同款延时可避免穿过缝隙时闪）');
   entryOf(tree).props.onMouseEnter();
+  await wait(200);
   tree = render();
-  ok(menuCount(tree) === 1, '★ E12 指针进入入口 ⇒ 弹窗展开（无需点击）');
+  ok(menuCount(tree) === 1, '★ E12 指针进入 ⇒ 150ms 后展开（无需点击）');
   /* 焦点离开子树（键盘 Tab 走开）也应关闭；焦点仍在子树内（如移进弹窗）时不关。 */
   const inside = chipOf(tree);
   const fakeRoot = { contains: (n) => n === inside };
@@ -265,8 +270,9 @@ console.log('\nE. 真渲染（React 桩）：开合与弹窗内容');
   tree = render();
   ok(menuCount(tree) === 1, 'E13 焦点仍在子树内（移入弹窗/入口）⇒ 不关');
   entryOf(tree).props.onBlur({ currentTarget: fakeRoot, relatedTarget: null });
+  await wait(180);
   tree = render();
-  ok(menuCount(tree) === 0, '★ E14 焦点离开子树 ⇒ 关闭');
+  ok(menuCount(tree) === 0, '★ E14 焦点离开子树 ⇒ 120ms 后关闭');
 }
 
 console.log(`\n===== ZB-27：${pass} PASS / 0 FAIL =====`);

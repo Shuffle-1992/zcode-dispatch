@@ -2275,24 +2275,42 @@ window.__ModuleLoader__.load({
       /* ZB-27i：悬停/聚焦态用 React 状态表达（颜色改走内联兜底，见下面的 style）。 */
       const [hover, setHover] = useState(false);
       const rootRef = useRef(null);
-      /* ZB-27l（用户要求）：「改成悬浮展开，失焦关闭」——
-       * 展开：指针进入入口（或其弹窗）即开；无需点击。
-       * 关闭：① 指针离开整个入口子树（弹窗是入口的子节点，故移入弹窗不会关）；
-       *       ② 焦点离开入口子树（onBlur/focusout，键盘 Tab 走开即关）；
-       *       ③ 整个窗口/应用失焦（window blur）；④ Esc；⑤ 点组件外部。
-       * 之所以这么改：点击会让按钮长期保持 :focus/:hover，视觉态一直与旁边未被操作的入口不同，
-       * 用户反复看到的"不一样"其实是被操作态。悬浮展开后，入口只在指针真的停留时才变亮。 */
-      const close = () => { setOpen(false); setHover(false); };
+      /* ZB-27m（用户现场：红箭头指着"智能体团队"——被悬浮的入口字变亮且弹窗展开）：
+       * 官方入口语义是「**悬浮**即高亮 + **悬浮**即展开」，而我上一版把「弹窗开着」也算成高亮条件
+       * （`open || hover`）—— 指针一移进面板，我的字还亮着，而旁边没有这个状态（用户：失焦后就变了）。
+       * 现按 **ui-subagent/CatalogDropdown 源码**逐字对齐时序：
+       *   scheduleHoverOpen()  ：取消两个定时器 → 150ms 后展开
+       *   scheduleHoverClose() ：取消两个定时器 → 120ms 后收起
+       * 两个延时是为了"从入口移进弹窗"途中穿过那 5px 缝隙时**不闪**（官方源码即如此）。
+       * 高亮条件同时收窄为**仅 hover**（官方 .trigger:hover/:focus-visible 才变色）。 */
+      const openTimer = useRef(null);
+      const closeTimer = useRef(null);
+      const clearTimers = () => {
+        if (openTimer.current != null) { clearTimeout(openTimer.current); openTimer.current = null; }
+        if (closeTimer.current != null) { clearTimeout(closeTimer.current); closeTimer.current = null; }
+      };
+      const scheduleOpen = () => {
+        clearTimers();
+        if (open) return;
+        openTimer.current = setTimeout(() => { openTimer.current = null; setOpen(true); }, 150);
+      };
+      const scheduleClose = () => {
+        clearTimers();
+        closeTimer.current = setTimeout(() => { closeTimer.current = null; setOpen(false); setHover(false); }, 120);
+      };
+      const closeNow = () => { clearTimers(); setOpen(false); setHover(false); };
+      /* 卸载时清掉挂起的定时器（否则会话切走后回调仍会 setState）。 */
+      useEffect(() => clearTimers, []);
       useEffect(() => {
         if (!open) return undefined;
         const onDown = (e) => {
           const el = rootRef.current;
           if (el && e && e.target && el.contains(e.target)) return;
-          setOpen(false);
+          closeNow();
         };
-        const onKey = (e) => { if (e && (e.key === 'Escape' || e.key === 'Esc')) setOpen(false); };
+        const onKey = (e) => { if (e && (e.key === 'Escape' || e.key === 'Esc')) closeNow(); };
         /* 失焦关闭（③）：整个窗口失焦时收起，避免"以为关了其实还挂着"。 */
-        const onWinBlur = () => { setOpen(false); };
+        const onWinBlur = () => { closeNow(); };
         try { document.addEventListener('pointerdown', onDown, true); } catch { /* 无 document（测试桩） */ }
         try { document.addEventListener('keydown', onKey, true); } catch { /* 同上 */ }
         try { window.addEventListener('blur', onWinBlur); } catch { /* 同上 */ }
@@ -2350,9 +2368,9 @@ window.__ModuleLoader__.load({
       return h('div', {
         className: 'zcd-entry',
         ref: rootRef,
-        onMouseEnter: () => { setHover(true); setOpen(true); },
-        onMouseLeave: close,
-        onFocus: () => setHover(true),
+        onMouseEnter: () => { setHover(true); scheduleOpen(); },
+        onMouseLeave: () => { setHover(false); scheduleClose(); },
+        onFocus: () => { setHover(true); scheduleOpen(); },
         onBlur: (e) => {
           /* 优先用事件的 currentTarget（真实 DOM 里就是外层容器），没有则退回 ref ——
            * 两种来源都能做"焦点是否仍在子树内"的包含判断，键盘 Tab / 移入弹窗都能正确区分。 */
@@ -2360,7 +2378,8 @@ window.__ModuleLoader__.load({
             ? e.currentTarget
             : rootRef.current;
           if (el && e && e.relatedTarget && el.contains(e.relatedTarget)) return;
-          close();
+          setHover(false);
+          scheduleClose();
         },
       },
         /* ZB-27f：**必须是 <button>** —— 邻居都是 button，元素相同才能拿到同一套 UA/平台按钮字体
@@ -2372,17 +2391,17 @@ window.__ModuleLoader__.load({
           className: 'zcd-chip',
           style: {
             background: 'transparent', backgroundImage: 'none', border: 0, boxShadow: 'none', outline: 'none',
-            /* ZB-27i：颜色也内联兜底（内联优先于任何非 !important 的样式表规则，含伪类）；
-             * 悬停/聚焦态改用 React 状态表达，不再依赖伪类命中。值仍只用主题令牌。 */
-            color: (open || hover) ? T.text2 : T.text3,
+            /* ZB-27m：高亮条件**只有 hover**（与会展开的官方入口一致：`.trigger:hover/:focus-visible`）。
+             * 之前写 `(open || hover)` ⇒ 指针移进面板后我的字还亮着，而旁边没有这个状态。 */
+            color: hover ? T.text2 : T.text3,
           },
           title: t('headerTip'),
           'aria-label': t('headerTip'),
           'aria-expanded': open,
           'aria-haspopup': 'dialog',
-          /* 悬浮展开语义下，点击**不再切换**（否则指针停在入口上时一点就关，很别扭）；
-           * 点击只保证"打开"，供触屏与键盘（Enter/Space 触发 click）使用；关闭一律走离开/失焦/Esc。 */
-          onClick: () => { setOpen(true); setHover(true); },
+          /* 悬浮展开语义下点击**不再切换**（否则指针停在入口上时一点就关）；
+           * 点击只负责"立刻打开"，供触屏与键盘（Enter/Space 触发 click）使用；关闭走离开/失焦/Esc。 */
+          onClick: () => { setOpen(true); setHover(true); clearTimers(); },
           onMouseEnter: () => setHover(true),
           onMouseLeave: () => setHover(false),
           onFocus: () => setHover(true),
