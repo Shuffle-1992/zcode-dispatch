@@ -38,8 +38,9 @@ console.log('\nB. 入口样式与同排一致（取自 dsh-client-ui-jobs 的 jo
   ok(/min-height:28px/.test(css), 'B6 min-height 28px');
   ok(/gap:5px/.test(css), 'B7 图标/文字间距 5px（与 agent-team .EBLgjq_trigger 同值 —— 同排最接近的入口）');
   ok(/T\.text3/.test(css), 'B8 常态色用 label-tertiary（T.text3）');
-  ok(/font:button/.test(css), '★ B8b 字体族用系统字体关键字 font:button（等同邻居 <button> 的平台按钮字体；span 若继承应用字体，同 12px 观感也不同）');
-  ok(/font-weight:400 !important/.test(css), '★ B8c 字重锁 400（邻居 button 的有效字重是 UA 400；inherit 会更粗、看着更大）');
+  ok(!/font-family/.test(css), '★ B8b 芯片**不声明 font-family** —— 邻居 <button> 用 UA/平台按钮字体；写 font-family:inherit 会切成应用字体，同 12px 观感也不同（这是三轮反馈的真凶）');
+  ok(!/font:button/.test(css), '★ B8c 不再使用无效的 `font:button`（系统字体关键字只有 caption/icon/menu/message-box/small-caption/status-bar）');
+  ok(/font-weight:400 !important/.test(css), '★ B8d 字重锁 400（邻居 button 的有效字重是 UA 400；inherit 会更粗、看着更大）');
   /* 颜色规则单独找 —— 第一条 `.zcd-chip:hover` 命中的是"所有交互态统一无底色"那条（不含颜色）。 */
   const colorRule = code.split('\n').find((l) => l.includes('.zcd-chip:hover') && l.includes('color:'));
   ok(!!colorRule && /T\.text\b/.test(colorRule), 'B9 hover/展开 变 label-primary（T.text，与子智能体一致）');
@@ -91,19 +92,19 @@ console.log('\nD. 解耦：入口不建 wire；浮窗时代的状态与交互不
   ok(!/zcd-pill|zcd-min|className: 'zcd-root'|zcd-titlebar|zcd-grip/.test(code), '★ D5 药丸/浮窗类名与标记已清除');
 }
 
-console.log('\nG. ZB-27d：入口不是 <button>（宿主 button 状态样式无法枚举）+ 容器同权重置');
+console.log('\nG. ZB-27f：入口是 <button>（与邻居同元素 ⇒ 同 UA 字体）+ 双层防高亮 + 容器同权重置');
 {
-  ok(/h\('span', \{[\s\S]{0,80}role: 'button'/.test(src), '★ G1 入口用 span + role=button（不是 <button> ⇒ 免疫宿主针对 button 元素的 :focus/:active/原生外观规则）');
-  ok(!/h\('button', \{[^}]*className: 'zcd-chip'/.test(code), '★ G2 不再渲染 <button class="zcd-chip">');
+  ok(/h\('button', \{[\s\S]{0,220}className: 'zcd-chip'/.test(src), '★ G1 入口是 <button>（与邻居同元素类型 ⇒ 自然拿到同一套 UA/平台按钮字体）');
+  ok(/type: 'button'/.test(code), "G2 type='button'（不触发提交行为）");
   ok(/'aria-haspopup': 'dialog'/.test(code) && /'aria-expanded': open/.test(code), 'G3 无障碍属性保留（aria-expanded / aria-haspopup）');
-  ok(/tabIndex: 0/.test(code), '★ G4 tabIndex=0（保持键盘可达）');
-  ok(/onKeyDown:[\s\S]{0,320}key === 'Enter'/.test(code) && /key === ' '/.test(code),
-    '★ G5 Enter/Space 键盘开合（换 span 后必须自己实现，否则可达性退化）');
+  /* 双层防宿主高亮：内联样式挡住一切非 important 的样式表规则（含伪类），CSS !important 挡住 important。 */
+  ok(/style: \{ background: 'transparent', backgroundImage: 'none', border: 0, boxShadow: 'none', outline: 'none' \}/.test(src),
+    '★ G4 内联样式兜底（内联优先于 :hover/:focus 等非 important 规则）');
   /* 外层容器：宿主可能把高亮加在槽位 cell（我们的根 div）上 —— 芯片自身的重置救不了。 */
   ok(/\.zcd-entry\{position:relative;display:inline-flex;background:transparent !important/.test(code),
-    '★ G6 外层 .zcd-entry 也重置背景/边框/阴影');
+    '★ G5 外层 .zcd-entry 也重置背景/边框/阴影');
   ok(/\.zcd-entry:focus-within,\.zcd-entry:active\{background:transparent !important/.test(code),
-    '★ G7 .zcd-entry 的 :focus-within / :active 也重置（祖先型高亮）');
+    '★ G6 .zcd-entry 的 :focus-within / :active 也重置（祖先型高亮）');
   ok(/outline:none !important/.test(code), '★ G8 交互态清掉 outline（若宿主用焦点环填充则一并消除）');
 }
 

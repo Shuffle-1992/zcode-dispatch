@@ -41,6 +41,25 @@
 - **门禁**：`header-entry.test.mjs` 新增 B11–B15（作用域/appearance/透明底/无字面色值）与 F1–F3
   （apply 内注入且早于注册）——「入口样式来自哪里、什么时候注入」现在是可断言的事实。
 
+### 事故：给第三方入口写 `font-family:inherit` → 与同排官方入口"字号不一致"（查了三轮）
+
+- **现象**：会话标题行的「ZCode 派发台」入口字号看着比同排的「子智能体/智能体团队/创造模式」大，
+  反复调 `font-size` 都不对（12px 明明与官方实现声明值相同）。
+- **真因**：**font-family 不同，不是 font-size**。邻居都是 `<button>`，而全仓**没有**全局
+  `button{font:inherit}` ⇒ 它们渲染用的是 **UA/平台按钮字体**；我写了 `font-family:inherit`
+  ⇒ 用**应用字体**。同为 12px，应用字体 x-height 更大 ⇒ 观感更大。
+- **又一个坑**：中途想用系统字体关键字补救，写了 `font:button` —— **这是无效声明**
+  （CSS 系统字体关键字只有 `caption/icon/menu/message-box/small-caption/status-bar`，**没有 button**），
+  整条被丢弃，于是"改了等于没改"。
+- **正解**：**元素类型与邻居一致**（`<button>`）+ **不声明 font-family**（让 UA 按钮字体生效），
+  只用 `!important` 锁 `font-size/font-weight/line-height` 到与邻居相同的**有效**值
+  （邻居 button 的有效字重是 UA 的 400 —— 写 `inherit` 会继承容器权重、更粗）。
+- **方法论**：要"与系统某元素一致"，先去 asar 里读**同槽位官方插件**的 CSS，并把"元素类型"
+  也算进一致性的一部分；**别在第三方入口上写 font-family:inherit**，那等于主动与按钮类邻居分家。
+- **判据工具**：`node tools/asar-cat.mjs /dsh/node_modules/@deepseek-ai/dsh-client-ui-<pkg>/lib/client.js` +
+  正则找 `_trigger{`；比截图猜测快得多。桌面版（Electron）与网页版加载的是**同一份客户端 bundle**，
+  所以这类差异与"桌面/网页"无关。
+
 ### 另记：清理"死代码"时要先确认它真的没人用
 
 删浮窗样式时把 `.zcd-iconbtn` 当死代码删掉，随后发现 **JobRow 的终止/重跑/续接/关闭四个按钮仍在用它**。

@@ -244,15 +244,17 @@ window.__ModuleLoader__.load({
        * 宿主针对 `button` 元素的规则（`:focus` / `:active` / `[aria-expanded]` 填充、原生外观、
        * 焦点环）一律不再命中 —— 第三方插件无法枚举宿主的全部 button 选择器，换元素是唯一彻底做法。
        * 可访问性不受影响：role=button + tabindex=0 + Enter/Space 键盘处理（见组件）。 */
-      /* ZB-27e（用户：「背景色没了，但字体大小变了」）：换 <span> 后**字体族变了** ——
-       * 邻居是 <button>，全仓没有全局 `button{font:inherit}`，所以它们用的是**平台按钮字体**；
-       * 而 span 默认继承应用字体，同是 12px 字面观感也不同（应用字体 x-height 更大 ⇒ 看着更大）。
-       * 解决：用 CSS 系统字体关键字 `font: button` 把**平台按钮字体**要回来（不支持的引擎会整条忽略、
-       * 退回继承，不会更糟），随后用 !important 把 size/weight/line-height 锁成与邻居相同的有效值
-       * （邻居 button 的有效 weight 是 UA 的 400，故这里显式 400，不再 inherit）。
-       * 间距对齐同排最接近的入口 dsh-experimental-client-ui-agent-team（.EBLgjq_trigger）：
-       *   padding:3px 7px; gap:5px; border-radius:6px。 */
-      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;border:0;background:transparent;box-shadow:none;outline:none;min-height:28px;padding:3px 7px;margin:0;font:button;font-size:12px !important;font-weight:400 !important;line-height:18px !important;letter-spacing:normal;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:5px;border-radius:6px;user-select:none;-webkit-user-select:none;}',
+      /* ZB-27f（用户第三次反馈「字体大小还是不对」）：真凶是 **font-family**，不是字号，也不是主题。
+       * 证据链：
+       *   · 邻居（子智能体/智能体团队/创造模式）都是 <button>，而全仓**没有**全局 `button{font:inherit}`
+       *     ⇒ 它们渲染用的是 **UA/平台按钮字体**；
+       *   · 我此前给芯片写了 `font-family:inherit` ⇒ 用**应用字体**；同 12px，应用字体 x-height 更大，
+       *     观感就是"更大"。
+       *   · ZB-27e 试图用 `font:button` 补救 —— **那是无效声明**（系统字体关键字只有 caption/icon/menu/
+       *     message-box/small-caption/status-bar，没有 button），整条被丢弃 ⇒ 自然"还是不行"。
+       * 正解：**元素与邻居保持一致（<button>）+ 不声明 font-family**，让 UA 按钮字体生效；
+       * 只把 size/weight/line-height 锁成与邻居相同的有效值（邻居 button 的有效字重是 UA 400）。 */
+      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;border:0;background:transparent;box-shadow:none;outline:none;min-height:28px;padding:3px 7px;margin:0;font-size:12px !important;font-weight:400 !important;line-height:18px !important;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:5px;border-radius:6px;user-select:none;-webkit-user-select:none;}',
       /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
        * 焦点可见性改由**颜色**承担（与子智能体触发按钮把 :focus-visible 变成 label-primary 同思路）。 */
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',
@@ -2260,24 +2262,19 @@ window.__ModuleLoader__.load({
       }, [open]);
 
       return h('div', { className: 'zcd-entry', ref: rootRef },
-        /* ZB-27d：**不是 <button>** —— 见 CSS 注释（宿主对 button 元素的状态样式无法枚举）。
-         * 用 span + role=button + tabIndex + Enter/Space 处理，键盘可达性不变。 */
-        h('span', {
-          role: 'button',
-          tabIndex: 0,
+        /* ZB-27f：**必须是 <button>** —— 邻居都是 button，元素相同才能拿到同一套 UA/平台按钮字体
+         * （这是"字体大小不一致"的唯一根因；span 会继承应用字体，怎么调都和邻居不是一个字面）。
+         * 宿主针对 button 的状态高亮由**两层**挡住：① 下面这组内联样式（内联优先于任何非 important
+         * 的样式表规则，包括 :hover/:focus/伪类）；② CSS 里那组成组重置（带 !important，挡住 important）。 */
+        h('button', {
+          type: 'button',
           className: 'zcd-chip',
+          style: { background: 'transparent', backgroundImage: 'none', border: 0, boxShadow: 'none', outline: 'none' },
           title: t('headerTip'),
           'aria-label': t('headerTip'),
           'aria-expanded': open,
           'aria-haspopup': 'dialog',
           onClick: () => setOpen((v) => !v),
-          onKeyDown: (e) => {
-            if (!e) return;
-            if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-              e.preventDefault();
-              setOpen((v) => !v);
-            }
-          },
         },
           h('span', { className: 'zcd-chip-label' }, t('title')),
           /* 展开指示用**系统同款图标与几何**（size 14 / viewBox 16 / strokeWidth 1），
