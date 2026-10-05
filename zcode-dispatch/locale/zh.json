@@ -5,7 +5,6 @@
   },
   "ui": {
     "title": "ZCode 派发台",
-    "headerShort": "派发台",
     "headerTip": "打开 / 收起 ZCode 派发台面板",
     "connConnecting": "连接中",
     "connDemo": "演示数据",

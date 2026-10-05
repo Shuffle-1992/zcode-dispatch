@@ -5,7 +5,6 @@
   },
   "ui": {
     "title": "ZCode Dispatch Console",
-    "headerShort": "Dispatch",
     "headerTip": "Open or hide the ZCode dispatch panel",
     "connConnecting": "connecting",
     "connDemo": "demo data",
