@@ -92,6 +92,9 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
     && /fontSmoothing: c\.webkitFontSmoothing/.test(src) && /textRendering: c\.textRendering/.test(src),
     '★ B42 补测渲染属性：letter-spacing / word-spacing / font-variant / font-feature-settings / text-rendering / font-smoothing / transform / zoom');
   ok(/selectNodeContents\(n\)/.test(src), '★ B43 实测字形盒（Range 紧贴文字，反映真实字形高宽）');
+  /* ZB-27t（用户选择）：会话头入口改用**纯中文短标签**，与邻居同类字面。 */
+  ok(/t\('headerShort'\)/.test(src), '★ B44 入口标签取自 headerShort（短标签）；面板标题/工具提示仍用 title');
+  ok(/headerShort: '派发台'/.test(src) && /headerShort: 'Dispatch'/.test(src), '★ B45 headerShort 中英文案齐备（locale 对称）');
   /* ZB-27i：颜色内联兜底（现场实测：resting 令牌与邻居相同，但为排除未知宿主规则，颜色也走内联）。 */
   ok(/color: hover \? T\.text : T\.text3/.test(src), '★ B31 颜色内联且**仅 hover** 高亮（resting=label-tertiary / hover=**label-primary**，与两个可见邻居 .trigger:hover 同值）');
   ok(/onMouseEnter: \(\) => setHover\(true\)/.test(src) && /onMouseLeave: \(\) => setHover\(false\)/.test(src), '★ B32 悬停态用 React 状态表达（不依赖宿主伪类命中）');
@@ -247,7 +250,8 @@ console.log('\nE. 真渲染（React 桩）：开合与弹窗内容');
   const chipOf = (t) => findAll(t, (n) => typeof n.props?.className === 'string' && n.props.className.includes('zcd-chip'))[0];
   const chip = chipOf(tree);
   ok(!!chip, 'E2 渲染出入口按钮（.zcd-chip）');
-  ok(texts(chip).includes('ZCode 派发台'), `E3 入口文字是「ZCode 派发台」（实际=${texts(chip)}）`);
+  ok(texts(chip).includes('派发台'), `★ E3 入口文字是**短标签「派发台」**（纯中文，与邻居同类字面；实际=${texts(chip)}）`);
+  ok(!texts(chip).includes('ZCode'), '★ E3b 入口不再显示拉丁前缀 ZCode（面板内标题仍保留完整名称）');
   ok(chip.props['aria-expanded'] === false, 'E4 初始未展开');
   ok(findAll(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('zcd-menu')).length === 0, 'E5 未展开时没有弹窗（不预先建 wire）');
 

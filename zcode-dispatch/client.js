@@ -360,6 +360,10 @@ window.__ModuleLoader__.load({
     const STRINGS = {
       zh: {
         title: 'ZCode 派发台',
+        /* ZB-27t（用户选择）：会话头入口用**纯中文短标签** —— 邻居三个入口都是纯中文，
+         * 而 "ZCode 派发台" 的拉丁+中文混排字面重心不同（实测字形宽 91.94px vs 87.77px），
+         * 在放大对比时容易被读成"变大"。面板内标题仍用 title（保留 ZCode 品牌）。 */
+        headerShort: '派发台',
         headerTip: '打开 / 收起 ZCode 派发台面板',
         connConnecting: '连接中', connDemo: '演示数据', connExt: '外部数据', connLive: '已连接', connOffline: '未连接',
         collapse: '折叠 / 展开', minimize: '最小化为胶囊', restore: '展开派发台', grip: '拖拽调整宽高（自动保存）',
@@ -408,6 +412,7 @@ window.__ModuleLoader__.load({
       },
       en: {
         title: 'ZCode Dispatch Console',
+        headerShort: 'Dispatch',
         headerTip: 'Open or hide the ZCode dispatch panel',
         connConnecting: 'connecting', connDemo: 'demo data', connExt: 'external', connLive: 'live', connOffline: 'offline',
         collapse: 'Collapse / Expand', minimize: 'Minimize to pill', restore: 'Restore console', grip: 'Drag to resize (saved automatically)',
@@ -2483,7 +2488,9 @@ window.__ModuleLoader__.load({
           onFocus: () => setHover(true),
           onBlur: () => setHover(false),
         },
-          h('span', { className: 'zcd-chip-label' }, t('title')),
+          /* ZB-27t：会话头入口用**短标签**（纯中文「派发台」，与邻居同类字面）；
+           * 面板内标题与 tooltip 仍是完整的「ZCode 派发台」。 */
+          h('span', { className: 'zcd-chip-label' }, t('headerShort')),
           /* 展开指示用**系统同款图标与几何**（size 14 / viewBox 16 / strokeWidth 1），
            * 旋转交给 CSS（`.zcd-chip[aria-expanded="true"] svg`）——与子智能体一致。 */
           h(IconChevronDownSystem, { className: 'zcd-chip-chevron' })),
