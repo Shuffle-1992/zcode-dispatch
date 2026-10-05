@@ -23,10 +23,17 @@ ok(/\(document\.head \|\| document\.documentElement\)\.appendChild\(s\)/.test(co
 
 console.log('\nB. 幂等与生命周期');
 ok(/function ensureStyle\(\)/.test(src), 'B1 有 ensureStyle()');
-ok(/if \(styleEl && styleEl\.isConnected\) return;/.test(src), 'B2 已注入则直接返回（幂等，不重复插入）');
+ok(/if \(!\(styleEl && styleEl\.isConnected\)\) \{/.test(src), 'B2 已注入则跳过插入（幂等，不重复插入）');
 ok(/const existing = document\.getElementById\(STYLE_ID\)/.test(src), 'B3 先按 id 查找已存在的样式（跨组件实例复用）');
 ok(/function detachStyle\(\)/.test(src), 'B4 有 detachStyle()（保持"卸载即清理"语义）');
-ok(/ensureStyle\(\);[\s\S]{0,120}return \(\) => detachStyle\(\);/.test(src), 'B5 useEffect 挂载时注入、卸载时移除');
+ok(/const release = ensureStyle\(\);/.test(src) && /return \(\) => \{ try \{ release\(\); \}/.test(src), 'B5 挂载时 ensureStyle() 取得引用、卸载时释放自己那一份');
+  /* ★ ZB-27u 回归：样式表是模块级单例（常驻入口 + 按需挂载的面板共用），必须引用计数。
+   * 真实 bug：面板关闭 ⇒ PanelBody 卸载 ⇒ 直接 detachStyle() 把整张表删掉 ⇒ 常驻入口瞬间掉样式
+   * （实测盒子从 h=28/top=51 变 h=19/top=56.5，即用户说的"悬浮失焦后就不正常了"）。 */
+  ok(/let STYLE_REFS = 0;/.test(src), '★ B6 样式表引用计数 STYLE_REFS');
+  ok(/STYLE_REFS \+= 1;/.test(src) && /STYLE_REFS = Math\.max\(0, STYLE_REFS - 1\);/.test(src) && /if \(STYLE_REFS === 0\) detachStyle\(\);/.test(src),
+    '★ B7 ensureStyle() 计数 +1 并返回释放函数；仅计数归零才 detachStyle()');
+  ok(!/return \(\) => detachStyle\(\);/.test(src), '★ B8 **禁止**任何组件卸载时直接 detachStyle()（会让常驻入口掉样式）');
 
 console.log('\nC. 样式作用域与历史缺陷的防复发');
 ok(/\.zcd-menu,\.zcd-menu \*\{box-sizing:border-box;\}/.test(code), '★ C1 border-box 作用域 = .zcd-menu 子树（输入框撑破右边界不会复发）');

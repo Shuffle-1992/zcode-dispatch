@@ -326,28 +326,42 @@ window.__ModuleLoader__.load({
      */
     const STYLE_ID = 'zcode-dispatch-style';
     let styleEl = null;
-    /** 把样式注入 document.head（幂等：已存在则复用，不重复插入）。 */
+    /* ★ ZB-27u（真实 bug，2026-10-05 现场定证）：样式表是**模块级单例**，却被两个组件各自
+     * "挂载时注入、卸载时移除"：会话头入口（常驻）+ 面板 PanelBody（**按需挂载**）。
+     * 于是面板一关闭，PanelBody 的清理函数就把整张样式表从 <head> 删掉 —— 入口随即失去全部样式，
+     * 退回浏览器默认按钮外观（实测：关闭瞬间盒子从 w=58 h=28 top=51 变成 w=66 h=19 top=56.5）。
+     * 这正是用户反复描述的「悬浮之前正常，悬浮失焦后就不正常」。
+     * 修法：**引用计数**。ensureStyle() 每被持有一份就 +1 并返回释放函数；只有计数归零才真正移除。
+     * apply() 也持有一份且永不释放 ⇒ 只要插件激活着，样式就一直在。 */
+    let STYLE_REFS = 0;
+    /** 把样式注入 document.head（幂等：已存在则复用）；返回释放函数（引用计数归零才移除）。 */
     function ensureStyle() {
+      STYLE_REFS += 1;
       try {
-        if (typeof document === 'undefined') return;
-        if (styleEl && styleEl.isConnected) return;
-        const existing = document.getElementById(STYLE_ID);
-        if (existing) {
-          styleEl = existing;
-          return;
+        if (typeof document === 'undefined') return () => { STYLE_REFS = Math.max(0, STYLE_REFS - 1); };
+        if (!(styleEl && styleEl.isConnected)) {
+          const existing = document.getElementById(STYLE_ID);
+          if (existing) {
+            styleEl = existing;
+          } else {
+            const s = document.createElement('style');
+            s.id = STYLE_ID;
+            /* 双保险：同时写 id 属性（真实 DOM 里 `s.id = x` 与 setAttribute 等价，
+             * 但某些测试桩/老内核只认其中一种；getElementById 依赖它做幂等查找）。 */
+            try { s.setAttribute('id', STYLE_ID); } catch { /* ignore */ }
+            s.setAttribute('data-plugin', 'zcode-dispatch');
+            s.textContent = CSS;
+            (document.head || document.documentElement).appendChild(s);
+            styleEl = s;
+          }
         }
-        const s = document.createElement('style');
-        s.id = STYLE_ID;
-        /* 双保险：同时写 id 属性（真实 DOM 里 `s.id = x` 与 setAttribute 等价，
-         * 但某些测试桩/老内核只认其中一种；getElementById 依赖它做幂等查找）。 */
-        try { s.setAttribute('id', STYLE_ID); } catch { /* ignore */ }
-        s.setAttribute('data-plugin', 'zcode-dispatch');
-        s.textContent = CSS;
-        (document.head || document.documentElement).appendChild(s);
-        styleEl = s;
       } catch { /* 注入失败不阻塞渲染（面板仍可用，只是样式可能不完整） */ }
+      return () => {
+        STYLE_REFS = Math.max(0, STYLE_REFS - 1);
+        if (STYLE_REFS === 0) detachStyle();
+      };
     }
-    /** 插件卸载时移除样式（保持"卸载即清理"的原有语义）。 */
+    /** 真正移除样式表（只应由引用计数归零时调用）。 */
     function detachStyle() {
       try {
         const s = (styleEl && styleEl.isConnected) ? styleEl : (typeof document !== 'undefined' ? document.getElementById(STYLE_ID) : null);
@@ -2307,6 +2321,13 @@ window.__ModuleLoader__.load({
         closeTimer.current = setTimeout(() => { closeTimer.current = null; setOpen(false); setHover(false); }, 120);
       };
       const closeNow = () => { clearTimers(); setOpen(false); setHover(false); };
+      /* ZB-27u：常驻入口自己也持有一份样式引用 —— 只要入口还在，样式表就不会被任何
+       * 按需挂载组件的卸载清理带走（这是"面板关闭后入口掉样式"那个 bug 的根治点）。 */
+      useEffect(() => {
+        const release = ensureStyle();
+        return () => { try { release(); } catch { /* ignore */ } };
+      }, []);
+
       /* 卸载时清掉挂起的定时器（否则会话切走后回调仍会 setState）。 */
       useEffect(() => clearTimers, []);
       useEffect(() => {
@@ -2510,11 +2531,14 @@ window.__ModuleLoader__.load({
         channels, channelGet, channelSet, retry, fallbackGet, fallbackSet,
         switchSet,
       } = useWire();
-      /* ZB-21：样式只注入一次到 document.head（脱离 React 重渲染路径）。
-       * 弹窗关闭即卸载组件 ⇒ 随之移除（保持"卸载即清理"语义）。 */
+      /* ZB-21 / ZB-27u：样式只注入一次到 document.head（脱离 React 重渲染路径）。
+       * ★ 必须用 **ensureStyle() 返回的释放函数**（引用计数），**绝不能**在卸载时直接 detachStyle() ——
+       *   面板关闭时若把整张样式表删掉，常驻的会话头入口会立刻失去全部样式（真实 bug，实测
+       *   关闭瞬间盒子从 h=28/top=51 变成 h=19/top=56.5，即用户说的"失焦后就不正常了"）。
+       *   面板只释放自己那一份；apply() 那份永不释放 ⇒ 插件活着，样式就在。 */
       useEffect(() => {
-        ensureStyle();
-        return () => detachStyle();
+        const release = ensureStyle();
+        return () => { try { release(); } catch { /* ignore */ } };
       }, []);
       // Z6：通道清单 / 默认通道 / 降级链（挂载时拉一次；切换即时回显，wire 返回后用权威值校正）
       const [channelsInfo, setChannelsInfo] = useState({ channels: [], warnings: [] });
@@ -2724,7 +2748,9 @@ window.__ModuleLoader__.load({
           } catch { /* 子 fiber 建立失败：仍可用 createWire 的即时探测兜底 */ }
           /* ZB-27b（用户现场：入口「字号不对 + 有背景色」）：样式必须在**入口出现之前**就注入。
            * 原先 ensureStyle() 只挂在弹窗的 effect 上 —— 弹窗要等用户点开才挂载，于是入口在首次
-           * 点开前完全没有样式，用的是宿主 <button> 默认样式。这里在激活时先注入一次（幂等）。 */
+           * 点开前完全没有样式，用的是宿主 <button> 默认样式。
+           * ZB-27u：这里注入的那一份**永不释放**（引用计数常驻 1）⇒ 只要插件激活，样式就不会被
+           * 任何组件卸载带走（面板关闭时只释放它自己那份）。 */
           try { ensureStyle(); } catch { /* 样式注入失败不影响注册（PanelBody 里还会再试） */ }
           /* ZB-27（用户要求）：**只在会话标题行注册一个入口**，弹窗挂在它下面。
            * 原先那条注册到 shell.overlay 的右下角浮窗（id `zcode-dispatch.console`，order 20）
