@@ -244,7 +244,15 @@ window.__ModuleLoader__.load({
        * 宿主针对 `button` 元素的规则（`:focus` / `:active` / `[aria-expanded]` 填充、原生外观、
        * 焦点环）一律不再命中 —— 第三方插件无法枚举宿主的全部 button 选择器，换元素是唯一彻底做法。
        * 可访问性不受影响：role=button + tabindex=0 + Enter/Space 键盘处理（见组件）。 */
-      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;border:0;background:transparent;box-shadow:none;outline:none;min-height:28px;padding:3px 2px;margin:0;font-family:inherit;font-size:12px;font-weight:inherit;line-height:18px;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--dsw-radius-sm,6px);user-select:none;-webkit-user-select:none;}',
+      /* ZB-27e（用户：「背景色没了，但字体大小变了」）：换 <span> 后**字体族变了** ——
+       * 邻居是 <button>，全仓没有全局 `button{font:inherit}`，所以它们用的是**平台按钮字体**；
+       * 而 span 默认继承应用字体，同是 12px 字面观感也不同（应用字体 x-height 更大 ⇒ 看着更大）。
+       * 解决：用 CSS 系统字体关键字 `font: button` 把**平台按钮字体**要回来（不支持的引擎会整条忽略、
+       * 退回继承，不会更糟），随后用 !important 把 size/weight/line-height 锁成与邻居相同的有效值
+       * （邻居 button 的有效 weight 是 UA 的 400，故这里显式 400，不再 inherit）。
+       * 间距对齐同排最接近的入口 dsh-experimental-client-ui-agent-team（.EBLgjq_trigger）：
+       *   padding:3px 7px; gap:5px; border-radius:6px。 */
+      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;border:0;background:transparent;box-shadow:none;outline:none;min-height:28px;padding:3px 7px;margin:0;font:button;font-size:12px !important;font-weight:400 !important;line-height:18px !important;letter-spacing:normal;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:5px;border-radius:6px;user-select:none;-webkit-user-select:none;}',
       /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
        * 焦点可见性改由**颜色**承担（与子智能体触发按钮把 :focus-visible 变成 label-primary 同思路）。 */
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',

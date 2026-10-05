@@ -33,11 +33,13 @@ console.log('\nB. 入口样式与同排一致（取自 dsh-client-ui-jobs 的 jo
   const css = chip[0];
   ok(/border:0/.test(css), 'B2 无边框（同排入口是纯文字按钮，不是药丸）');
   ok(/background:(0 0|transparent)/.test(css), 'B3 无底色');
-  ok(/font-size:12px/.test(css), 'B4 字号 12px（与同排一致）');
+  ok(/font-size:12px !important/.test(css), 'B4 字号 12px 且用 !important 锁死（宿主改不动）');
   ok(/line-height:18px/.test(css), 'B5 行高 18px');
   ok(/min-height:28px/.test(css), 'B6 min-height 28px');
-  ok(/gap:4px/.test(css), 'B7 图标/文字间距 4px（与子智能体 CatalogDropdown 触发按钮同值）');
+  ok(/gap:5px/.test(css), 'B7 图标/文字间距 5px（与 agent-team .EBLgjq_trigger 同值 —— 同排最接近的入口）');
   ok(/T\.text3/.test(css), 'B8 常态色用 label-tertiary（T.text3）');
+  ok(/font:button/.test(css), '★ B8b 字体族用系统字体关键字 font:button（等同邻居 <button> 的平台按钮字体；span 若继承应用字体，同 12px 观感也不同）');
+  ok(/font-weight:400 !important/.test(css), '★ B8c 字重锁 400（邻居 button 的有效字重是 UA 400；inherit 会更粗、看着更大）');
   /* 颜色规则单独找 —— 第一条 `.zcd-chip:hover` 命中的是"所有交互态统一无底色"那条（不含颜色）。 */
   const colorRule = code.split('\n').find((l) => l.includes('.zcd-chip:hover') && l.includes('color:'));
   ok(!!colorRule && /T\.text\b/.test(colorRule), 'B9 hover/展开 变 label-primary（T.text，与子智能体一致）');
