@@ -2,6 +2,36 @@
 
 > 按全局规则维护：遇到踩坑问题登记于此，避免重复踩坑。新条目置顶。
 
+## 2026-10-05 ZB-27（会话标题行入口改弹窗；以及「批量改大文件的锚点自伤」）
+
+用户反馈：入口与同排不一致、弹窗要像子智能体那样悬浮在旁边、取消右下角最小化药丸。
+样式对齐的权威来源是**同槽位的官方实现**（`dsh-client-ui-jobs` 的 job-list）：触发 `border:0;background:none;padding:3px 2px;min-height:28px;font-size:12px;line-height:18px;gap:3px;color:label-tertiary`，
+弹层 `position:absolute;top:calc(100% + 5px);background:var(--dsw-specific-menu);border-radius:var(--dsw-radius-lg);box-shadow:var(--dsw-elevation-prominent);max-height:min(480px,100vh-140px);overflow:auto`。
+**教训：要"与系统协调"就去抄同槽位官方实现的 CSS，别自己设计**（我第一版做成带边框圆角药丸 + 10px 徽标，一眼就不协调）。
+
+### 事故：用 `includes()` 找行锚点，撞上同一句话的第二处 → 一次删掉 2200 行
+
+- **怎么发生的**：改 `client.js`（2600+ 行）时用脚本按行号区间做替换，锚点写作
+  `lines.findIndex(l => l.includes('ZB-24：会话标题行入口'))`。这句话在文件里有**两处** ——
+  一处是第 44 行的 slot 注释，一处是第 2222 行 `HeaderEntry` 前的块注释；`findIndex` 取到第 44 行，
+  于是把 **44..2249 共 2200 行**整段替换掉了（CSS、STRINGS、四个 wire 实现、全部区间组件…）。
+- **为什么没当场发现**：`node --check client.js` **照样通过** —— 删剩的部分仍是合法 ES 语法
+  （引用了已不存在的标识符只是运行期错误，不是语法错误）。是随后跑测试才暴露。
+- **正解（三件套）**：
+  1. **先回滚**：`git restore -- <file>` 回到 HEAD（本轮这样做了，代价近零）；
+  2. **锚点从唯一标识反查边界**，不要拿"句子"当锚点：
+     向前找最近的块注释起点、向后找函数闭合或**已知的后续标记**（例如下一段函数的注释），
+     并对首末行各做一次 `includes()` 断言；
+  3. **写盘前打印首末行 + 不匹配就 abort**（本轮重做时脚本里加了 `die()`，四处 splice 全部先校验再写）。
+- **附带**：`Get-Content | Measure-Object -Line` 与 read 工具报的行数**不一致**（前者不统计空行：
+  同一文件 2659 vs 2718），别用它判断文件长度或做偏移。
+
+### 另记：清理"死代码"时要先确认它真的没人用
+
+删浮窗样式时把 `.zcd-iconbtn` 当死代码删掉，随后发现 **JobRow 的终止/重跑/续接/关闭四个按钮仍在用它**。
+教训：删 CSS 前用 `grep 'className: ...'` 反查类名在 JSX 里的使用点；`.zcd-root` 这类被删掉的**容器**类
+才适合整组删。
+
 ## 2026-10-05 ZB-22（派发台落地自动唤醒；以及「host 代码改动何时才真生效」）
 
 现场问题（用户报告）：「派发任务时会话窗口不等待、直接继续；任务跑完没人叫醒它，得我自己再发一句。
