@@ -287,12 +287,14 @@ window.__ModuleLoader__.load({
       /* 展开指示：与子智能体一致 —— 转的是 **svg 本身**，过渡 .12s。 */
       '.zcd-entry .zcd-chip svg{flex:none;transition:transform .12s;}',
       '.zcd-entry .zcd-chip[aria-expanded="true"] svg{transform:rotate(180deg);}',
-      /* 弹窗本体：与 job-list 的 .menu 同一套令牌（--dsw-specific-menu / elevation-prominent /
-       * radius-lg），贴入口右缘展开。与官方 ui-jobs 的 .menu 同值（gap:1px / padding:3px /
+      /* 弹窗本体：与官方 ui-jobs 的 .menu 同值（gap:1px / padding:3px /
        * max-height:min(480px,calc(100vh - 140px)) / backdrop-filter:var(--dsw-menu-backdrop-filter)）。
-       * **有意偏离一处**：官方用 `left:0` + JS 计算的 `menuShift` 防溢出；本入口位于标题行最右端，
-       * 改用 `right:0`（等价且免测量），宽度上限同样收敛到视口内。 */
-      '.zcd-menu{position:absolute;top:calc(100% + 5px);right:0;z-index:100;box-sizing:border-box;display:flex;flex-direction:column;gap:1px;width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));max-height:min(480px,calc(100vh - 140px));margin:0;padding:3px;overflow:auto;border:0;border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-specific-menu,' + T.bg + ');backdrop-filter:var(--dsw-menu-backdrop-filter,none);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-elevation-prominent,' + T.shadow + ');text-align:left;}',
+       * ZB-27x（用户要求「派发台现在往左侧展开，改成往右侧，参考智能体的」）：
+       * 定位由 `right:0` 改为 **`left:0`** —— 与入口**左对齐、向右展开**（官方 .menu 就是 left:0，
+       * 子智能体那份弹窗也是贴着入口左缘向右铺开）。入口已不在标题行最右端（order -25），
+       * 因此不会溢出；万一靠近右缘，则由 JS 计算的 menuShift（marginLeft 负值）兜回视口内
+       * —— 与官方 `style={{left: menuShift}}` 同一意图。 */
+      '.zcd-menu{position:absolute;top:calc(100% + 5px);left:0;z-index:100;box-sizing:border-box;display:flex;flex-direction:column;gap:1px;width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));max-height:min(480px,calc(100vh - 140px));margin:0;padding:3px;overflow:auto;border:0;border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-specific-menu,' + T.bg + ');backdrop-filter:var(--dsw-menu-backdrop-filter,none);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-elevation-prominent,' + T.shadow + ');text-align:left;}',
       '.zcd-panelHead{display:flex;align-items:center;gap:8px;padding:6px 8px 5px;border-bottom:.5px solid var(--dsw-alias-border-l1,' + T.border + ');}',
       '.zcd-panelTitle{flex:1;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + T.text + ';}',
       /* 行内小图标按钮（**仍在使用**：JobRow 的终止 / 重跑 / 续接 / 关闭）。ZB-27 清理浮窗样式时
@@ -2395,6 +2397,19 @@ window.__ModuleLoader__.load({
       const counts = (snapshot && snapshot.counts) || {};
       const runningCount = Number(counts.running) || 0;
       const queuedCount = Number(counts.queued) || 0;
+      /* ZB-27x：弹窗左对齐后若靠近视口右缘，用 menuShift（marginLeft 负值）把它拉回视口内 ——
+       * 与官方 JobListAction 的 `style={{ left: menuShift }}` 同一意图（也照抄其"打开时测一次"的做法）。 */
+      const [menuShift, setMenuShift] = useState(0);
+      useEffect(() => {
+        if (!open) return;
+        try {
+          const el = rootRef.current;
+          if (!el || typeof el.getBoundingClientRect !== 'function' || typeof window === 'undefined') return;
+          const r = el.getBoundingClientRect();
+          const over = (r.left + WIDTH.def + 16) - (window.innerWidth || 0);
+          setMenuShift(over > 0 ? -Math.ceil(over) : 0);
+        } catch { /* 测量失败则不动（CSS 的 max-width 仍会收敛） */ }
+      }, [open]);
 
       /* ZB-27l：**悬浮展开 / 离开即关**的挂点放在外层容器上 ——
        * 弹窗是容器的子节点，所以"从入口移进弹窗"不会触发 mouseleave（指针仍在子树内）；
@@ -2457,14 +2472,14 @@ window.__ModuleLoader__.load({
           /* 展开指示用**系统同款图标与几何**（size 14 / viewBox 16 / strokeWidth 1），
            * 旋转交给 CSS（`.zcd-chip[aria-expanded="true"] svg`）——与子智能体一致。 */
           h(IconChevronDownSystem, { className: 'zcd-chip-chevron' })),
-        open ? h(PanelBoundary, null, h(PanelBody)) : null);
+        open ? h(PanelBoundary, null, h(PanelBody, { menuShift })) : null);
     }
 
 
     /** 面板主体（ZB-27）：由「右下角浮窗」改为**挂在会话标题行入口下的悬浮弹窗**。
      * 形态与样式对齐 DSH 自带的 job-list / 子智能体目录（menu 令牌 + 由 .zcd-menu 那条 CSS 负责定位）。
      * ZB-06/07/10/11 的拖拽、缩放、固定位置、位置持久化与最小化胶囊随浮窗一并去掉。 */
-    function PanelBody() {
+    function PanelBody({ menuShift }) {
       const [lastJobId, setLastJobId] = useState(null);
       const [feedback, setFeedback] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -2586,7 +2601,8 @@ window.__ModuleLoader__.load({
 
       /* ZB-27：容器改用系统菜单样式（.zcd-menu，见 CSS —— 令牌与 job-list 的弹层同一套）。
        * --zcd-* 自定义属性挂在**这一层**，下面的各分区样式照旧解析。 */
-      return h('div', { className: 'zcd-menu', style: cssVars, role: 'dialog', 'aria-label': t('title') },
+      /* ZB-27x：menuShift 由入口按视口余量算出（左对齐后防右溢出），合并进容器样式。 */
+      return h('div', { className: 'zcd-menu', style: menuShift ? { ...cssVars, marginLeft: `${menuShift}px` } : cssVars, role: 'dialog', 'aria-label': t('title') },
         h('div', { className: 'zcd-panelHead' },
           h(StatusDot, { state: runningNow ? 'running' : 'idle' }),
           h('span', { className: 'zcd-panelTitle' }, t('title')),

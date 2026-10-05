@@ -76,7 +76,9 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
     'B26 背景/圆角/阴影用官方同款令牌');
   ok(/backdrop-filter:var\(--dsw-menu-backdrop-filter/.test(mcss), '★ B27 backdrop-filter 用 --dsw-menu-backdrop-filter（官方同值）');
   ok(/max-height:min\(480px,calc\(100vh - 140px\)\)/.test(mcss), '★ B28 max-height min(480px,100vh-140px)（官方同值）');
-  ok(/right:0/.test(mcss), 'B29 贴右展开（**有意偏离**：官方用 left:0 + JS menuShift；本入口在标题行最右端）');
+  ok(/left:0/.test(mcss) && !/right:0/.test(mcss), '★ B29 与入口**左对齐、向右展开**（官方 .menu 同款 left:0；用户要求「改成往右侧，参考智能体的」）');
+  ok(/const \[menuShift, setMenuShift\] = useState\(0\)/.test(src) && /marginLeft:/.test(src) && /\$\{menuShift\}px/.test(src),
+    '★ B29b 靠近视口右缘时用 menuShift（marginLeft 负值）兜回视口内 —— 与官方 JobListAction 的 style={{left: menuShift}} 同一意图');
   ok(/overflow:auto/.test(mcss), 'B30 内容滚动');
   /* ZB-27v：短标签试验已回退（真正的差异来自共享样式表被面板卸载带走，见 ZB-27u），
    * 入口恢复完整标题，且不留 headerShort 死键。 */
