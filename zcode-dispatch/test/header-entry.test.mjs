@@ -101,6 +101,15 @@ console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{
   ok(/max-height:min\(/.test(css) && /overflow:auto/.test(css), 'C6 限高 + 内部滚动（不高出视口）');
   ok(/\.zcd-menu,\.zcd-menu \*\{box-sizing:border-box;\}/.test(code), 'C7 ★ box-sizing 作用域改到 .zcd-menu（ZB-17 的输入框撑破回归不能复发）');
   ok(/addEventListener\('pointerdown'/.test(code), 'C8 点外部关闭');
+  /* ZB-27l：悬浮展开 / 失焦关闭（用户要求：「改成悬浮展开，失焦关闭」）。 */
+  ok(/onMouseEnter: \(\) => \{ setHover\(true\); setOpen\(true\); \}/.test(src), '★ C8b 指针进入入口即**展开**（无需点击）');
+  ok(/onMouseLeave: close/.test(src), '★ C8c 指针离开整个入口子树即**关闭**（弹窗是子节点 ⇒ 移入弹窗不关）');
+  ok(/const onWinBlur = \(\) => \{ setOpen\(false\); \}/.test(src) && /addEventListener\('blur', onWinBlur\)/.test(src),
+    '★ C8d 窗口/应用失焦时关闭');
+  ok(/onBlur: \(e\) => \{[\s\S]{0,600}el\.contains\(e\.relatedTarget\)\) return;[\s\S]{0,80}close\(\);/.test(src),
+    '★ C8e 焦点离开子树时关闭、仍在子树内（移入弹窗）则不关（用 currentTarget/ref 做包含判断）');
+  ok(/onClick: \(\) => \{ setOpen\(true\); setHover\(true\); \}/.test(src),
+    '★ C8f 点击只负责"打开"（供触屏/键盘），不再切换 —— 避免指针停在入口上时一点就关');
   ok(/Escape/.test(code), 'C9 Esc 关闭');
   ok(/aria-expanded/.test(code) && /aria-haspopup/.test(code), 'C10 无障碍属性：aria-expanded / aria-haspopup');
 }
@@ -235,9 +244,29 @@ console.log('\nE. 真渲染（React 桩）：开合与弹窗内容');
   const menuText = texts(menus[0]);
   ok(menuText.includes('派发'), `E8 弹窗里是原面板内容（含分区标题，实际片段=${menuText.slice(0, 40)}）`);
 
+  /* ZB-27l：改成**悬浮展开 / 离开即关**后的行为（真渲染 + 真事件回调）。 */
+  const entryOf = (t) => findAll(t, (n) => typeof n.props?.className === 'string' && n.props.className.includes('zcd-entry'))[0];
+  const menuCount = (t) => findAll(t, (n) => typeof n.props?.className === 'string' && n.props.className.includes('zcd-menu')).length;
+
+  ok(typeof entryOf(tree)?.props?.onMouseEnter === 'function', 'E9 外层容器带 onMouseEnter（悬浮展开挂点）');
   chipOf(tree).props.onClick();
   tree = render();
-  ok(findAll(tree, (n) => typeof n.props?.className === 'string' && n.props.className.includes('zcd-menu')).length === 0, 'E9 再点入口收起弹窗');
+  ok(menuCount(tree) === 1, '★ E10 再次点击**不再收起**（悬浮展开语义：点击只保证打开，避免指针停在入口上一点就关）');
+  entryOf(tree).props.onMouseLeave();
+  tree = render();
+  ok(menuCount(tree) === 0, '★ E11 指针离开整个入口子树 ⇒ 弹窗收起');
+  entryOf(tree).props.onMouseEnter();
+  tree = render();
+  ok(menuCount(tree) === 1, '★ E12 指针进入入口 ⇒ 弹窗展开（无需点击）');
+  /* 焦点离开子树（键盘 Tab 走开）也应关闭；焦点仍在子树内（如移进弹窗）时不关。 */
+  const inside = chipOf(tree);
+  const fakeRoot = { contains: (n) => n === inside };
+  entryOf(tree).props.onBlur({ currentTarget: fakeRoot, relatedTarget: inside });
+  tree = render();
+  ok(menuCount(tree) === 1, 'E13 焦点仍在子树内（移入弹窗/入口）⇒ 不关');
+  entryOf(tree).props.onBlur({ currentTarget: fakeRoot, relatedTarget: null });
+  tree = render();
+  ok(menuCount(tree) === 0, '★ E14 焦点离开子树 ⇒ 关闭');
 }
 
 console.log(`\n===== ZB-27：${pass} PASS / 0 FAIL =====`);

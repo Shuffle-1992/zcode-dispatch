@@ -2275,7 +2275,14 @@ window.__ModuleLoader__.load({
       /* ZB-27i：悬停/聚焦态用 React 状态表达（颜色改走内联兜底，见下面的 style）。 */
       const [hover, setHover] = useState(false);
       const rootRef = useRef(null);
-      /* 点组件外部关闭 + Esc 关闭（系统弹层同款交互；不引 primitives，避免多声明一个客户端依赖）。 */
+      /* ZB-27l（用户要求）：「改成悬浮展开，失焦关闭」——
+       * 展开：指针进入入口（或其弹窗）即开；无需点击。
+       * 关闭：① 指针离开整个入口子树（弹窗是入口的子节点，故移入弹窗不会关）；
+       *       ② 焦点离开入口子树（onBlur/focusout，键盘 Tab 走开即关）；
+       *       ③ 整个窗口/应用失焦（window blur）；④ Esc；⑤ 点组件外部。
+       * 之所以这么改：点击会让按钮长期保持 :focus/:hover，视觉态一直与旁边未被操作的入口不同，
+       * 用户反复看到的"不一样"其实是被操作态。悬浮展开后，入口只在指针真的停留时才变亮。 */
+      const close = () => { setOpen(false); setHover(false); };
       useEffect(() => {
         if (!open) return undefined;
         const onDown = (e) => {
@@ -2284,11 +2291,15 @@ window.__ModuleLoader__.load({
           setOpen(false);
         };
         const onKey = (e) => { if (e && (e.key === 'Escape' || e.key === 'Esc')) setOpen(false); };
+        /* 失焦关闭（③）：整个窗口失焦时收起，避免"以为关了其实还挂着"。 */
+        const onWinBlur = () => { setOpen(false); };
         try { document.addEventListener('pointerdown', onDown, true); } catch { /* 无 document（测试桩） */ }
         try { document.addEventListener('keydown', onKey, true); } catch { /* 同上 */ }
+        try { window.addEventListener('blur', onWinBlur); } catch { /* 同上 */ }
         return () => {
           try { document.removeEventListener('pointerdown', onDown, true); } catch { /* 同上 */ }
           try { document.removeEventListener('keydown', onKey, true); } catch { /* 同上 */ }
+          try { window.removeEventListener('blur', onWinBlur); } catch { /* 同上 */ }
         };
       }, [open]);
 
@@ -2333,7 +2344,25 @@ window.__ModuleLoader__.load({
         } catch { /* 诊断失败不影响功能 */ }
       }, []);
 
-      return h('div', { className: 'zcd-entry', ref: rootRef },
+      /* ZB-27l：**悬浮展开 / 离开即关**的挂点放在外层容器上 ——
+       * 弹窗是容器的子节点，所以"从入口移进弹窗"不会触发 mouseleave（指针仍在子树内）；
+       * 只有真正离开「入口 + 弹窗」整体才关。焦点同理（onBlur 的 relatedTarget 仍在子树内则忽略）。 */
+      return h('div', {
+        className: 'zcd-entry',
+        ref: rootRef,
+        onMouseEnter: () => { setHover(true); setOpen(true); },
+        onMouseLeave: close,
+        onFocus: () => setHover(true),
+        onBlur: (e) => {
+          /* 优先用事件的 currentTarget（真实 DOM 里就是外层容器），没有则退回 ref ——
+           * 两种来源都能做"焦点是否仍在子树内"的包含判断，键盘 Tab / 移入弹窗都能正确区分。 */
+          const el = (e && e.currentTarget && typeof e.currentTarget.contains === 'function')
+            ? e.currentTarget
+            : rootRef.current;
+          if (el && e && e.relatedTarget && el.contains(e.relatedTarget)) return;
+          close();
+        },
+      },
         /* ZB-27f：**必须是 <button>** —— 邻居都是 button，元素相同才能拿到同一套 UA/平台按钮字体
          * （这是"字体大小不一致"的唯一根因；span 会继承应用字体，怎么调都和邻居不是一个字面）。
          * 宿主针对 button 的状态高亮由**两层**挡住：① 下面这组内联样式（内联优先于任何非 important
@@ -2351,7 +2380,9 @@ window.__ModuleLoader__.load({
           'aria-label': t('headerTip'),
           'aria-expanded': open,
           'aria-haspopup': 'dialog',
-          onClick: () => setOpen((v) => !v),
+          /* 悬浮展开语义下，点击**不再切换**（否则指针停在入口上时一点就关，很别扭）；
+           * 点击只保证"打开"，供触屏与键盘（Enter/Space 触发 click）使用；关闭一律走离开/失焦/Esc。 */
+          onClick: () => { setOpen(true); setHover(true); },
           onMouseEnter: () => setHover(true),
           onMouseLeave: () => setHover(false),
           onFocus: () => setHover(true),
