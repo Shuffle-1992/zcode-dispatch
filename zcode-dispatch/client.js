@@ -2372,6 +2372,21 @@ window.__ModuleLoader__.load({
               transform: c.transform,
               zoom: c.zoom,
               glyph,
+              /* ZB-27s：三角图标是最后一个"未实测"的元素（此前只按源码推断 14×14）——
+               * 量它的真实盒、位置、strokeWidth 与 transform。 */
+              svg: (() => {
+                try {
+                  const g = typeof n.querySelector === 'function' ? n.querySelector('svg') : null;
+                  if (!g) return null;
+                  const r = g.getBoundingClientRect();
+                  const cs = window.getComputedStyle(g);
+                  return {
+                    w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100,
+                    top: Math.round(r.top * 100) / 100, left: Math.round(r.left * 100) / 100,
+                    strokeWidth: cs.strokeWidth, transform: cs.transform,
+                  };
+                } catch { return null; }
+              })(),
             };
           };
           /* ZB-27r：决定性实验 —— 用**同一段文字**分别套用"我的字体"与"邻居的字体"离屏渲染，
