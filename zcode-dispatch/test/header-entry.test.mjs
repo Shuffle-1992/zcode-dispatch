@@ -26,42 +26,53 @@ ok(/id: 'zcode-dispatch', order: 10/.test(code), 'A2 注册 id=zcode-dispatch、
 ok(!/ctx\.slots\.inject\(SLOT,/.test(code), '★ A3 不再注册 shell.overlay（右下角浮窗已取消，避免两份 UI）');
 ok(!/zcode-dispatch\.console/.test(code), '★ A4 旧浮层 cell id（zcode-dispatch.console）已移除');
 
-console.log('\nB. 入口样式**逐项镜像紧邻的右侧入口**「创造模式」(agent-preset .b06baG_label)');
+console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListAction —— 同槽位的「按钮 + 弹层」入口）');
 {
   const chip = code.match(/'\.[^']*zcd-chip\{[^]*?\}',/);
   ok(!!chip, 'B1 有 .zcd-chip 规则');
   const css = chip[0];
-  /* ZB-27g：权威源是 dsh-client-ui-agent-preset 的 .b06baG_label（<span>）：
-   *   height:22px; line-height:22px; gap:4px; padding:0 2px 0 0; font-size:12px;
-   *   font-family/weight 不声明（继承应用字体与容器字重）；color:label-tertiary；图标 size:14。 */
-  ok(/font-size:12px !important/.test(css), 'B2 字号 12px（与邻居同值，!important 锁死）');
-  ok(/line-height:22px !important/.test(css), '★ B3 行高 22px（邻居 .b06baG_label 是 22px，不是 18px）');
-  ok(/height:22px/.test(css) && !/min-height:28px/.test(css), '★ B4 盒高 22px（邻居是 height:22px，不是 min-height:28px）');
-  ok(/gap:4px/.test(css), '★ B5 图标/文字间距 4px（邻居同值；此前 5px 来自 agent-team）');
-  ok(/padding:0 2px 0 0/.test(css), '★ B6 内边距 0 2px 0 0（邻居同值；此前 3px 7px 来自 job-list）');
-  ok(/font-family:inherit !important/.test(css), '★ B7 字体族 inherit（邻居是 <span> ⇒ 应用字体；不是按钮 UA 字体）');
-  ok(/font-weight:inherit !important/.test(css), 'B8 字重 inherit（邻居不声明字重，随容器）');
-  ok(/T\.text3\b[^;]*!important/.test(css), '★ B9 基础态 label-tertiary 且 !important（防宿主压成 label-primary ⇒ 现场"我的字比邻居亮"）');
-  ok(/border:0/.test(css) && /background:transparent/.test(css), 'B10 无边框、无底色（用户要求"不要背景色"；邻居那点极淡填充不抄）');
-  ok(/border-radius:var\(--dsw-radius-xs/.test(css), 'B11 圆角用邻居同款 --dsw-radius-xs');
-  ok(/appearance:none/.test(css) && /-webkit-appearance:none/.test(css), 'B12 appearance:none（去原生外观）');
-  ok(/box-shadow:none/.test(css), 'B13 无描边/阴影');
-  ok(/letter-spacing/.test(css) === false, 'B14 不额外改字距（邻居也没改）');
-  const colorRule = code.split('\n').find((l) => l.includes('.zcd-chip:hover') && l.includes('color:'));
-  ok(!!colorRule && /T\.text\b[^;]*!important/.test(colorRule), 'B15 hover/展开 变 label-primary 且 !important（与系统触发按钮一致）');
-  ok(/zcd-chip-chevron/.test(code), 'B16 带展开指示箭头');
-  ok(/viewBox: '0 0 16 16'/.test(code) && /width: 14, height: 14/.test(code), '★ B17 三角图标 14×14 / viewBox 16（系统 IconChevronDownOutlineRegular 几何）');
+  /* 权威源（deepseek-ai/deepseek-harness）：
+   *   packages/client/ui-jobs/src/client/JobListAction.module.css  .trigger{…}
+   *   packages/client/ui-jobs/src/client/JobListAction.tsx          <button type="button" className={css.trigger}>
+   * 注意：源码**不声明 font-family / font-weight** —— 元素是 <button>，用 UA 按钮字体。 */
+  ok(/display:inline-flex/.test(css), 'B2 display:inline-flex');
+  ok(/gap:3px/.test(css), '★ B3 gap 3px（官方 .trigger 同值）');
+  ok(/min-height:28px/.test(css), '★ B4 min-height 28px（官方同值；不是 height:22px —— 那是被动装饰 agent-preset）');
+  ok(/padding:3px 2px/.test(css), '★ B5 padding 3px 2px（官方同值）');
+  ok(/border:0/.test(css), 'B6 border 0');
+  ok(/border-radius:var\(--dsw-radius-sm/.test(css), '★ B7 圆角 --dsw-radius-sm（官方同值）');
+  ok(/background:transparent/.test(css), 'B8 background transparent（官方同值；也是用户"不要背景色"的要求）');
+  ok(/font-size:12px/.test(css) && /line-height:18px/.test(css), '★ B9 字号 12px / 行高 18px（官方同值）');
+  ok(!/font-family/.test(css), '★ B10 不声明 font-family（官方 .trigger 也不声明 ⇒ <button> 用 UA 按钮字体；写 inherit 会变成应用字体，这是前几轮的坑）');
+  ok(!/font-weight/.test(css), '★ B11 不声明 font-weight（官方同值；UA 400）');
+  ok(/T\.text3/.test(css), 'B12 常态色 label-tertiary（T.text3）');
+  const hover = code.split('\n').find((l) => l.includes('.zcd-chip:hover') && l.includes('color:'));
+  ok(!!hover && /T\.text2/.test(hover), '★ B13 hover/focus-visible → label-secondary（T.text2，官方 .trigger 同值；官方此处不是 label-primary）');
+  ok(/\.zcd-chip svg\{flex:none;transition:transform \.12s;\}/.test(code), 'B14 箭头过渡 120ms（官方 .trigger svg{transition:transform 120ms ease}）');
+  ok(/\.zcd-chip\[aria-expanded="true"\] svg\{transform:rotate\(180deg\);?\}/.test(code), '★ B15 展开时旋转 **svg 本身**（官方 .triggerOpen 用法一致）');
+  ok(/width: 12, height: 12, viewBox: '0 0 16 16'/.test(code), '★ B16 箭头 size 12 / viewBox 16（官方 JobListAction.tsx: size={12}）');
   ok(/strokeWidth: 1\b/.test(code) && /M4 6L7\.29289 9\.29289C7\.68342 9\.68342 8\.31658 9\.68342 8\.70711 9\.29289L12 6/.test(code),
-    '★ B18 三角路径与 strokeWidth 逐字取自系统图标');
-  ok(/\.zcd-chip\[aria-expanded="true"\] svg\{transform:rotate\(180deg\);?\}/.test(code), 'B19 展开时旋转 svg 本身');
-  ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(css), '★ B20 无字面色值 ⇒ 明暗两套主题自适应（颜色只走 T.* 令牌）');
+    '★ B17 箭头路径与 strokeWidth 1 逐字取自官方 IconChevronDownOutlineRegular');
+  ok(/appearance:none/.test(css) && /background:transparent/.test(css), 'B18 appearance:none + 透明底（第三方入口必须自行消除宿主 button 外观）');
+  ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(css), '★ B19 无字面色值 ⇒ 明暗两套主题自适应（颜色只走 T.* 令牌）');
   const reset = code.split('\n').find((l) => l.includes('.zcd-chip[aria-expanded="true"]') && l.includes('background:transparent'));
-  ok(!!reset, '★ B21 有"所有交互态统一无底色"的成组重置（含 [aria-expanded="true"]）');
+  ok(!!reset, '★ B20 有"所有交互态统一无底色"的成组重置（含 [aria-expanded="true"]）');
   ok(!!reset && /:hover/.test(reset) && /:focus/.test(reset) && /:active/.test(reset) && /\[aria-expanded="false"\]/.test(reset),
-    '★ B22 重置覆盖 hover / focus / focus-visible / active / aria-expanded 真与假');
+    '★ B21 重置覆盖 hover / focus / focus-visible / active / aria-expanded 真与假');
   ok(!!reset && /background:transparent !important/.test(reset) && /background-image:none !important/.test(reset),
-    '★ B23 背景用 !important 且清掉 background-image');
-  ok(/\.zcd-chip\[aria-expanded="true"\] svg/.test(code), 'B24 展开态样式挂在 svg 上（与子智能体一致）');
+    '★ B22 背景 !important 且清 background-image（第三方类名挡宿主状态高亮；官方用自己的类名无此问题）');
+  /* 弹窗：官方 .menu 同值 */
+  const menu = code.match(/'\.[^']*zcd-menu\{[^]*?\}',/);
+  ok(!!menu, 'B23 有 .zcd-menu 规则');
+  const mcss = menu[0];
+  ok(/top:calc\(100% \+ 5px\)/.test(mcss), 'B24 挂入口下方 top:calc(100% + 5px)（官方同值）');
+  ok(/padding:3px/.test(mcss) && /gap:1px/.test(mcss), '★ B25 padding 3px / gap 1px（官方 .menu 同值）');
+  ok(/--dsw-specific-menu/.test(mcss) && /--dsw-radius-lg/.test(mcss) && /--dsw-elevation-prominent/.test(mcss),
+    'B26 背景/圆角/阴影用官方同款令牌');
+  ok(/backdrop-filter:var\(--dsw-menu-backdrop-filter/.test(mcss), '★ B27 backdrop-filter 用 --dsw-menu-backdrop-filter（官方同值）');
+  ok(/max-height:min\(480px,calc\(100vh - 140px\)\)/.test(mcss), '★ B28 max-height min(480px,100vh-140px)（官方同值）');
+  ok(/right:0/.test(mcss), 'B29 贴右展开（**有意偏离**：官方用 left:0 + JS menuShift；本入口在标题行最右端）');
+  ok(/overflow:auto/.test(mcss), 'B30 内容滚动');
 }
 
 console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{

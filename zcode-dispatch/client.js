@@ -240,32 +240,40 @@ window.__ModuleLoader__.load({
       /* 外层容器也要重置：宿主可能把高亮加在**槽位 cell**（我们的根 div）上，例如
        * `:focus-within` / `[aria-expanded]` 的祖先选择器 —— 那种情况芯片自身的重置救不了。 */
       '.zcd-entry:focus-within,.zcd-entry:active{background:transparent !important;box-shadow:none !important;}',
-      /* ZB-27d（用户第二次报「展开收回后仍有底色」）：入口从 <button> 换成 <span role="button">。
-       * 宿主针对 `button` 元素的规则（`:focus` / `:active` / `[aria-expanded]` 填充、原生外观、
-       * 焦点环）一律不再命中 —— 第三方插件无法枚举宿主的全部 button 选择器，换元素是唯一彻底做法。
-       * 可访问性不受影响：role=button + tabindex=0 + Enter/Space 键盘处理（见组件）。 */
-      /* ZB-27g（用户：「好多了，还是有些差别」+ 并排对照图）：**逐项镜像紧邻的右侧入口**。
-       * 权威源 = dsh-client-ui-agent-preset 的「创造模式」（`.b06baG_label`，实为 **<span>**）：
-       *   border-radius:var(--dsw-radius-xs); height:22px; line-height:22px; gap:4px;
-       *   padding:0 2px 0 0; font-size:12px; color:var(--dsw-alias-label-tertiary);
-       *   不声明 font-family/weight ⇒ 继承**应用字体**与容器字重；图标 14px（.icon{opacity:.7}）。
-       * 我此前用的 12px/18px + min-height:28px + gap:5px 来自 job-list/agent-team，
-       * 与紧邻的「创造模式」**不是同一套度量**（行高 18 vs 22、盒高 28 vs 22、gap 5 vs 4）——
-       * 这就是"还是有些差别"的来源；同时回退上一版"改用 button 的 UA 字体"的做法（邻居是 span）。
-       * 唯一不抄的是它那点极淡填充（--dsw-alias-fill-tsp-secondary）：用户明确要求"不要背景色"。 */
-      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;border:0;background:transparent;box-shadow:none;outline:none;height:22px;min-height:22px;padding:0 2px 0 0;margin:0;font-family:inherit !important;font-size:12px !important;font-weight:inherit !important;line-height:22px !important;white-space:nowrap;color:' + T.text3 + ' !important;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--dsw-radius-xs,4px);user-select:none;-webkit-user-select:none;}',
+      /* ZB-27h（用户：「不要猜，DSH 在 GitHub 是开源的」）：**改为逐项对齐官方源码**，
+       * 不再从 minify 产物或肉眼推测。权威源 = 与本插件用法完全相同的
+       *   deepseek-ai/deepseek-harness · packages/client/ui-jobs/src/client/JobListAction.{tsx,module.css}
+       * 它是同槽位的「按钮 + 弹层」入口（我们就是这一类），源码如下：
+       *   <div className={css.root}>                                  // .root{position:relative}
+       *     <button type="button" className={css.trigger} aria-expanded={open}>…
+       *       <IconChevronDownOutlineRegular size={12} className={open ? css.triggerOpen : undefined} />
+       *     {open ? <ul className={css.menu} style={{left:menuShift}}>…</ul> : null}
+       *   .trigger{ display:inline-flex; align-items:center; gap:3px; min-height:28px; padding:3px 2px;
+       *             border:0; border-radius:var(--dsw-radius-sm); background:transparent;
+       *             color:var(--dsw-alias-label-tertiary); font-size:12px; line-height:18px; cursor:pointer }
+       *   .trigger:hover,.trigger:focus-visible{ color:var(--dsw-alias-label-secondary) }
+       *   .trigger svg{ transition:transform 120ms ease }   .triggerOpen{ transform:rotate(180deg) }
+       * ⚠️ 注意源码**不声明 font-family / font-weight** —— 元素是 <button>，就该用 UA 按钮字体；
+       *    ZB-27g 我照「创造模式」写了 inherit，方向错了：官方注释明确它是
+       *    "static chrome, never a control"（被动装饰、窄屏优先隐藏），不是交互入口的比对基准。
+       * 唯一有意偏离官方的是"清除宿主状态高亮"（官方用自己的类名，不存在此问题；我们用第三方类名，
+       * 现场已复现宿主把底/焦点环加到 headerActions 里的 button 上）。 */
+      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;display:inline-flex;align-items:center;gap:3px;min-height:28px;padding:3px 2px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:' + T.text3 + ';font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap;}',
       /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
        * 焦点可见性改由**颜色**承担（与邻居把 :hover/:focus-visible 变成 label-primary 同思路）。 */
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',
       /* 颜色也带 !important：否则宿主可能把基础态压成 label-primary（用户现场看到"我的字比邻居亮"）。
        * 本条在后 ⇒ 同权重同重要性下覆盖上面的基础态，hover/展开仍是 label-primary（与系统一致）。 */
-      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip[aria-expanded="true"]{color:' + T.text + ' !important;}',
+      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible{color:' + T.text2 + ';}',
       /* 展开指示：与子智能体一致 —— 转的是 **svg 本身**，过渡 .12s。 */
       '.zcd-entry .zcd-chip svg{flex:none;transition:transform .12s;}',
       '.zcd-entry .zcd-chip[aria-expanded="true"] svg{transform:rotate(180deg);}',
       /* 弹窗本体：与 job-list 的 .menu 同一套令牌（--dsw-specific-menu / elevation-prominent /
-       * radius-lg），贴入口右缘展开（本入口位于标题行右端，left:0 会溢出视口）。 */
-      '.zcd-menu{position:absolute;top:calc(100% + 5px);right:0;z-index:100;box-sizing:border-box;display:flex;flex-direction:column;padding:3px;background:var(--dsw-specific-menu,' + T.bg + ');border:0;border-radius:var(--dsw-radius-lg,12px);box-shadow:var(--dsw-elevation-prominent,' + T.shadow + ');width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));max-height:min(560px,calc(100vh - 140px));overflow:auto;text-align:left;}',
+       * radius-lg），贴入口右缘展开。与官方 ui-jobs 的 .menu 同值（gap:1px / padding:3px /
+       * max-height:min(480px,calc(100vh - 140px)) / backdrop-filter:var(--dsw-menu-backdrop-filter)）。
+       * **有意偏离一处**：官方用 `left:0` + JS 计算的 `menuShift` 防溢出；本入口位于标题行最右端，
+       * 改用 `right:0`（等价且免测量），宽度上限同样收敛到视口内。 */
+      '.zcd-menu{position:absolute;top:calc(100% + 5px);right:0;z-index:100;box-sizing:border-box;display:flex;flex-direction:column;gap:1px;width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));max-height:min(480px,calc(100vh - 140px));margin:0;padding:3px;overflow:auto;border:0;border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-specific-menu,' + T.bg + ');backdrop-filter:var(--dsw-menu-backdrop-filter,none);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-elevation-prominent,' + T.shadow + ');text-align:left;}',
       '.zcd-panelHead{display:flex;align-items:center;gap:8px;padding:6px 8px 5px;border-bottom:.5px solid var(--dsw-alias-border-l1,' + T.border + ');}',
       '.zcd-panelTitle{flex:1;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + T.text + ';}',
       /* 行内小图标按钮（**仍在使用**：JobRow 的终止 / 重跑 / 续接 / 关闭）。ZB-27 清理浮窗样式时
@@ -1533,18 +1541,22 @@ window.__ModuleLoader__.load({
         h('path', { d: up ? 'M2 8 L6 4 L10 8' : 'M2 4 L6 8 L10 4', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
     }
     /**
-     * 会话头入口的展开指示三角 —— **逐字复刻系统图标** `IconChevronDownOutlineRegular`
-     * （官方客户端 primitives 包 `dsh-client-ui-primitives` 的导出，子智能体/后台任务入口用的就是它）：
-     *   size 14（不是 12）· viewBox "0 0 16 16" · fill:none · stroke:currentColor · strokeWidth 1。
+     * 会话头入口的展开指示三角 —— **逐字复刻官方图标** `IconChevronDownOutlineRegular`
+     * （`deepseek-ai/deepseek-harness` → `packages/client/ui-primitives` 的导出）。
      *
-     * 为什么单独做一个：ZB-27 第一版用了本文件既有的 IconChevron（12×12、viewBox 12、
-     * stroke-width 1.5、glyph 跨 8/12 单位）—— 用户现场对比后指出「三角形图标尺寸间距不对，参考
-     * 子智能体的」。实测两者差异：字形宽 8px vs 7px、描边 1.5px vs ≈0.88px ⇒ 明显更大更粗。
-     * 注意：几何与 strokeWidth 取自系统源码，改动即为偏离系统外观。
+     * 几何/描边**逐字取自官方源码**（不是自绘）：
+     *   viewBox "0 0 16 16" · fill:none · stroke:currentColor · strokeWidth 1 ·
+     *   path "M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6"
+     * 尺寸取 **12** —— 与我们的用法孪生的官方入口一致：
+     *   ui-jobs/src/client/JobListAction.tsx: `<IconChevronDownOutlineRegular size={12} … />`
+     *   （子智能体那份用的是默认 14，两者在官方代码里本就不同；我们按 jobs 对齐。）
+     *
+     * 为什么单独做一个：本文件既有的 IconChevron 是自绘的 12×12/viewBox 12/stroke-width 1.5，
+     * 字形更宽、描边更粗，与系统图标不是同一条路径。
      */
     function IconChevronDownSystem({ className }) {
       return h('svg', {
-        width: 14, height: 14, viewBox: '0 0 16 16', className, fill: 'none',
+        width: 12, height: 12, viewBox: '0 0 16 16', className, fill: 'none',
         xmlns: 'http://www.w3.org/2000/svg', 'aria-hidden': true, strokeWidth: 1,
       },
         h('path', {

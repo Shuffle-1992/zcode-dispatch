@@ -60,6 +60,27 @@
   正则找 `_trigger{`；比截图猜测快得多。桌面版（Electron）与网页版加载的是**同一份客户端 bundle**，
   所以这类差异与"桌面/网页"无关。
 
+### 教训：别对 minify 产物做"肉眼对照"，DSH 是开源的 —— 直接读源码
+
+- **背景**：为了把「ZCode 派发台」入口调成与同排一致，我连续三轮从 `app.asar` 里的 **minify 产物**
+  里抠 CSS 字符串、再并排比对截图，结果两次押错参照物（先按 job-list，再按「创造模式」）。
+- **正解**：DSH 开源在 **`github.com/deepseek-ai/deepseek-harness`**（"Everything is a Plugin"）。
+  源码路径与包一一对应，例如 `@deepseek-ai/dsh-client-ui-jobs` →
+  `packages/client/ui-jobs/src/client/JobListAction.{tsx,module.css}`。
+  读源码立刻拿到**产物里没有的东西**：
+  - **元素类型**（`<button type="button">`），而 CSS 里**根本不声明 `font-family`** —— 这正是"字号看着不一样"
+    的根因（第三方入口若写 `font-family:inherit` 就变成应用字体，与按钮类邻居分家）；
+  - **设计意图注释**：`AgentPresetLabel.module.css` 开头写着
+    "Session-header agent-preset label: **static chrome, never a control**" ——
+    「创造模式」是被动装饰（窄屏 `@container (max-width:540px)` 优先隐藏），**不该拿它当交互入口的参照**；
+  - **尺寸也不是猜的**：同槽位的 jobs 用 `<IconChevronDownOutlineRegular size={12} />`，
+    而子智能体用默认 14 —— 官方自己就不同，选谁取决于你模仿哪一个。
+- **取源方式**（本机 raw.githubusercontent.com 直连失败，走 git 那条代理即可）：
+  `Invoke-WebRequest -Proxy http://127.0.0.1:7897 -Uri https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/master/packages/client/<pkg>/src/client/<File>`
+  或先列目录：`https://api.github.com/repos/deepseek-ai/deepseek-harness/contents/<path>`。
+- **纪律**：凡是"要与系统某元素一致"，先找**同用法的官方实现**读源码对齐；不要从压缩产物反推，
+  更不要凭截图猜度量。
+
 ### 另记：清理"死代码"时要先确认它真的没人用
 
 删浮窗样式时把 `.zcd-iconbtn` 当死代码删掉，随后发现 **JobRow 的终止/重跑/续接/关闭四个按钮仍在用它**。
