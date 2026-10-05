@@ -112,8 +112,11 @@ console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{
     '★ C8c 离开即关：120ms 延时（官方 scheduleHoverClose 同值）');
   ok(/const onWinBlur = \(\) => \{ closeNow\(\); \}/.test(src) && /addEventListener\('blur', onWinBlur\)/.test(src),
     '★ C8d 窗口/应用失焦时关闭');
-  ok(/onBlur: \(e\) => \{[\s\S]{0,600}el\.contains\(e\.relatedTarget\)\) return;[\s\S]{0,200}scheduleClose\(\);/.test(src),
-    '★ C8e 焦点离开子树时关闭、仍在子树内（移入弹窗）则不关（用 currentTarget/ref 做包含判断）');
+  /* ZB-27aa：焦点语义 = "明确移到子树外才关"。两条分开断言，避免跨长注释的正则脆弱。 */
+  ok(/onBlur: \(e\) => \{[\s\S]{0,400}el\.contains\(e\.relatedTarget\)\) return;/.test(src),
+    '★ C8e 焦点仍在子树内（移入弹窗）⇒ 不关（用 currentTarget/ref 做包含判断）');
+  ok(/onBlur: \(e\) => \{[\s\S]{0,1400}if \(!\(e && e\.relatedTarget\)\) return;[\s\S]{0,200}scheduleClose\(\);/.test(src),
+    '★ C8g relatedTarget 为空（焦点落到 body）**不关**；明确移到子树外才 scheduleClose（修「点进程行面板就关」）');
   ok(/onClick: \(\) => \{ setOpen\(true\); setHover\(true\); clearTimers\(\); \}/.test(src),
     '★ C8f 点击只负责"打开"（供触屏/键盘），不再切换 —— 避免指针停在入口上时一点就关');
   ok(/Escape/.test(code), 'C9 Esc 关闭');
@@ -285,13 +288,20 @@ console.log('\nE. 真渲染（React 桩）：开合与弹窗内容');
   /* 焦点离开子树（键盘 Tab 走开）也应关闭；焦点仍在子树内（如移进弹窗）时不关。 */
   const inside = chipOf(tree);
   const fakeRoot = { contains: (n) => n === inside };
+  const outsideNode = { id: 'outside' };
   entryOf(tree).props.onBlur({ currentTarget: fakeRoot, relatedTarget: inside });
   tree = render();
   ok(menuCount(tree) === 1, 'E13 焦点仍在子树内（移入弹窗/入口）⇒ 不关');
+  /* ★ ZB-27aa：relatedTarget 为空 = 焦点落到 document.body（点击弹窗内不可聚焦元素的标准行为），
+   * 绝不能据此关闭 —— 否则"点进程行要展开内容"会把整个面板关掉（用户实际报告）。 */
   entryOf(tree).props.onBlur({ currentTarget: fakeRoot, relatedTarget: null });
   await wait(180);
   tree = render();
-  ok(menuCount(tree) === 0, '★ E14 焦点离开子树 ⇒ 120ms 后关闭');
+  ok(menuCount(tree) === 1, '★ E14 relatedTarget 为空（焦点落到 body，点弹窗内不可聚焦元素）⇒ **不关**（修「点进程行面板就关」）');
+  entryOf(tree).props.onBlur({ currentTarget: fakeRoot, relatedTarget: outsideNode });
+  await wait(180);
+  tree = render();
+  ok(menuCount(tree) === 0, '★ E15 焦点明确移到子树外的元素 ⇒ 120ms 后关闭（保持"失焦关闭"语义）');
 }
 
 console.log(`\n===== ZB-27：${pass} PASS / 0 FAIL =====`);

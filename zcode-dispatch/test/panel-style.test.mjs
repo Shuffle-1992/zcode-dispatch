@@ -42,8 +42,14 @@ ok(!/animation:zcd-in/.test(code) && !/@keyframes zcd-in/.test(code), 'C3 入场
 ok(!/\.zcd-pill/.test(code) && !/\.zcd-grip/.test(code), 'C4 药丸 / 缩放手柄样式已清除');
 ok(/\.zcd-iconbtn\{/.test(code), 'C5 行内小图标按钮样式**保留**（JobRow 仍在用）');
   /* ZB-27y：派发开关徽标与「已连接」同高（font-size/line-height 对齐 .zcd-conn），横向更紧凑。 */
-  ok(/button\.zcd-conn\.zcd-switch\{font-size:10px;line-height:1\.7;padding:1px 5px;border-radius:8px;\}/.test(code),
+  ok(/button\.zcd-conn\.zcd-switch\{font-size:10px;line-height:15px;padding:1px 5px;border-radius:8px;\}/.test(code),
     '★ C6 派发开关徽标：字号/行高与 .zcd-conn 一致（同高），横向 1px 5px 更小巧');
+  /* ★ ZB-27z：面板**基础字号**（原浮窗时代 .zcd-root{font-size:12px} 在重构中被丢掉 ⇒
+   * 未显式设字号的元素继承应用根部 ~14px，进程行等整体偏大）。官方弹层主行 = 12px/17px。 */
+  ok(/\.zcd-menu\{position:absolute;top:calc\(100% \+ 5px\);left:0;z-index:100;font-size:12px;line-height:17px;/.test(code),
+    '★ C7 面板容器有基础字号 12px/17px（与官方弹层主行同值；否则未显式设字号的元素会继承 ~14px）');
+  /* 字号阶梯收敛为官方三档：12/17 主 · 11/16 次 · 10/15 元 —— 不再出现 10.5px 这类中间值。 */
+  ok(!/font-size:10\.5px/.test(code), '★ C8 面板内不再出现 10.5px 中间值（统一到官方 12/11/10px 三档）');
 
 console.log('\nD. DOM 桩实测：注入一次且重渲染不再触碰 head');
 {

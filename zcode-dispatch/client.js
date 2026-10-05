@@ -129,7 +129,7 @@ window.__ModuleLoader__.load({
        * 实际宽度 = 100% + 18px，输入框必然冲出右边界（用户报告）。
        * 顺带消除同类隐患（所有带 padding 的 select/input/card 都受影响）。 */
       '.zcd-menu,.zcd-menu *{box-sizing:border-box;}',
-      '.zcd-conn{flex:none;font-size:10px;line-height:1.7;padding:1px 7px;border:1px solid ' + T.border + ';border-radius:8px;color:' + T.text2 + ';}',
+      '.zcd-conn{flex:none;font-size:10px;line-height:15px;padding:1px 7px;border:1px solid ' + T.border + ';border-radius:8px;color:' + T.text2 + ';}',
       // Z12 派发总开关徽标：非 live=只读 span；live=可点 button（hover 反馈，busy 半透明）
       '.zcd-switch{display:inline-flex;align-items:center;gap:4px;}',
       '.zcd-switch .zcd-dot{width:6px;height:6px;}',
@@ -140,7 +140,7 @@ window.__ModuleLoader__.load({
        * `button.zcd-switch{font:inherit}` 会把字号重置为继承值（≈13-14px）并压过 `.zcd-conn` 的
        * 10px ⇒ 开关徽标比「已连接」高。此条特异性更高（0,2,1）且排在后面：字号/行高与 .zcd-conn
        * 完全一致（10px/1.7 ⇒ 同高），横向再收 2px（1px 5px）让它整体更小巧。 */
-      'button.zcd-conn.zcd-switch{font-size:10px;line-height:1.7;padding:1px 5px;border-radius:8px;}',
+      'button.zcd-conn.zcd-switch{font-size:10px;line-height:15px;padding:1px 5px;border-radius:8px;}',
       '.zcd-body{display:flex;flex-direction:column;gap:10px;padding:10px;overflow:auto;min-height:0;overscroll-behavior:contain;}',
       /* ZB-16：**分区内部**的纵向节奏容器。此前 ChannelSection / QuotaCards 的根是
        * `h('div', null, …)` —— 没有 class、没有 gap，于是 `.zcd-sec` 的 gap 完全管不到它们内部，
@@ -149,7 +149,7 @@ window.__ModuleLoader__.load({
       '.zcd-stack{display:flex;flex-direction:column;gap:10px;min-width:0;}',
       '.zcd-dispatch{display:flex;flex-direction:column;gap:10px;min-width:0;}',
       '.zcd-sec{display:flex;flex-direction:column;gap:9px;padding:10px;border:1px solid ' + T.border + ';border-radius:8px;min-width:0;}',
-      '.zcd-sec-title{font-size:11px;font-weight:600;letter-spacing:.02em;color:' + T.text2 + ';}',
+      '.zcd-sec-title{font-size:11px;line-height:16px;font-weight:600;letter-spacing:.02em;color:' + T.text2 + ';}',
       // Z11 可折叠分区：整条标题栏可点击切换（含 hover/键盘焦点态与倒三角指示）
       '.zcd-sec-head{display:flex;align-items:center;gap:8px;min-height:22px;cursor:pointer;user-select:none;-webkit-user-select:none;border-radius:4px;transition:background-color .15s ease;}',
       '.zcd-sec-head:hover{background:' + T.hover + ';}',
@@ -170,16 +170,16 @@ window.__ModuleLoader__.load({
       '.zcd-btn:hover{filter:brightness(1.08);}',
       '.zcd-btn:active{transform:translateY(1px);}',
       '.zcd-btn:disabled{opacity:.5;cursor:default;}',
-      '.zcd-feedback{min-height:18px;font-size:11px;line-height:1.6;color:' + T.text2 + ';}',
+      '.zcd-feedback{min-height:18px;font-size:11px;line-height:16px;color:' + T.text2 + ';}',
       '.zcd-feedback.zcd-err{color:' + T.danger + ';}',
       '.zcd-jobs{display:flex;flex-direction:column;gap:8px;}',
       /* ZB-03：进程分组（进行中/需处理/异常/已完成）。分层用字号+缩进，不引入字面色值。 */
       '.zcd-group{display:flex;flex-direction:column;gap:8px;}',
-      '.zcd-group-head{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:10.5px;font-weight:600;color:' + T.text3 + ';}',
+      '.zcd-group-head{display:flex;align-items:center;gap:6px;margin-top:4px;font-size:11px;line-height:16px;font-weight:600;color:' + T.text3 + ';}',
       '.zcd-group-body{display:flex;flex-direction:column;gap:8px;padding-left:2px;}',
       /* ZB-09：进程状态分类改为 Tab 分页（不再把所有分组堆在同一页） */
       '.zcd-tabs{display:flex;gap:6px;flex-wrap:wrap;}',
-      '.zcd-tab{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:1px solid var(--zcd-border);border-radius:999px;background:transparent;color:var(--zcd-text3);font:inherit;font-size:11px;line-height:1.7;cursor:pointer;transition:background-color .15s ease,color .15s ease,border-color .15s ease;}',
+      '.zcd-tab{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border:1px solid var(--zcd-border);border-radius:999px;background:transparent;color:var(--zcd-text3);font:inherit;font-size:11px;line-height:16px;cursor:pointer;transition:background-color .15s ease,color .15s ease,border-color .15s ease;}',
       '.zcd-tab:hover{background:var(--zcd-hover);color:var(--zcd-text);}',
       '.zcd-tab.zcd-tab-on{background:var(--zcd-hover);color:var(--zcd-text);border-color:var(--zcd-text3);}',
       '.zcd-tab-n{font-size:10px;opacity:.75;}',
@@ -188,9 +188,9 @@ window.__ModuleLoader__.load({
       '.zcd-job{display:flex;flex-direction:column;gap:8px;border:1px solid ' + T.border + ';border-radius:6px;padding:7px 9px;}',
       '.zcd-job-head{display:flex;align-items:center;gap:8px;min-height:24px;flex-wrap:wrap;}',
       '.zcd-job-tag{font-weight:600;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
-      '.zcd-dim{color:' + T.text3 + ';white-space:nowrap;}',
+      '.zcd-dim{color:' + T.text3 + ';white-space:nowrap;font-size:10px;line-height:15px;}',
       '.zcd-spring{flex:1;}',
-      '.zcd-badge{flex:none;font-size:10px;line-height:1.6;padding:1px 5px;border:1px solid ' + T.border + ';border-radius:4px;color:' + T.text2 + ';white-space:nowrap;}',
+      '.zcd-badge{flex:none;font-size:10px;line-height:15px;padding:1px 5px;border:1px solid ' + T.border + ';border-radius:4px;color:' + T.text2 + ';white-space:nowrap;}',
       /* ZB-18：锁类型视觉区分（不引入字面色值，复用主题令牌）：
        *   整仓库锁 = 更"重"（实线边框 + 主文本色），文件锁 = 更"轻"（次要色），旧版记录 = 危险色提示。 */
       '.zcd-badge.zcd-lock-repo{color:' + T.text + ';border-color:' + T.text3 + ';}',
@@ -209,14 +209,14 @@ window.__ModuleLoader__.load({
       '.zcd-btn2:hover{background:' + T.hover + ';color:' + T.text + ';border-color:' + T.text3 + ';}',
       '.zcd-btn2:disabled{opacity:.45;cursor:default;}',
       '.zcd-btn2:active{transform:translateY(1px);}',
-      '.zcd-note{font-size:10.5px;line-height:1.6;color:' + T.text3 + ';white-space:normal;overflow-wrap:anywhere;}',
+      '.zcd-note{font-size:11px;line-height:16px;color:' + T.text3 + ';white-space:normal;overflow-wrap:anywhere;}',
       '.zcd-chain{display:flex;align-items:center;gap:5px;flex-wrap:wrap;}',
       '.zcd-tailwrap{margin-top:0;}',
-      '.zcd-mono{max-height:160px;overflow:auto;padding:6px;background:' + T.sunken + ';border-radius:4px;font-family:' + T.mono + ';font-size:10.5px;line-height:1.55;white-space:pre-wrap;word-break:break-all;}',
+      '.zcd-mono{max-height:160px;overflow:auto;font-size:11px;line-height:16px;padding:6px;background:' + T.sunken + ';border-radius:4px;font-family:' + T.mono + ';white-space:pre-wrap;word-break:break-all;}',
       '.zcd-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:8px;}',
       '.zcd-card{flex:1;min-width:0;display:flex;flex-direction:column;gap:4px;padding:8px;border:1px solid ' + T.border + ';border-radius:6px;}',
-      '.zcd-card-title{font-size:10px;font-weight:600;color:' + T.text2 + ';}',
-      '.zcd-kv{display:flex;justify-content:space-between;gap:8px;font-size:10.5px;line-height:1.55;min-width:0;}',
+      '.zcd-card-title{font-size:10px;line-height:15px;font-weight:600;color:' + T.text2 + ';}',
+      '.zcd-kv{display:flex;justify-content:space-between;gap:8px;font-size:11px;line-height:16px;min-width:0;}',
       '.zcd-kv-k{color:' + T.text3 + ';}',
       // Z11 行展开详情：子块容器 + 值列长值换行 + 行 hover 反馈（行头可点击展开）
       '.zcd-detail{display:flex;flex-direction:column;gap:5px;margin-top:6px;}',
@@ -224,7 +224,7 @@ window.__ModuleLoader__.load({
       '.zcd-job{transition:border-color .15s ease;}',
       '.zcd-job:hover{border-color:' + T.text3 + ';}',
       '.zcd-job-head{cursor:pointer;}',
-      '.zcd-planline{margin-top:4px;font-size:10.5px;color:' + T.text3 + ';white-space:normal;overflow-wrap:anywhere;line-height:1.55;}',
+      '.zcd-planline{margin-top:4px;font-size:11px;line-height:16px;color:' + T.text3 + ';white-space:normal;overflow-wrap:anywhere;}',
       /* ── ZB-27：会话标题行入口 + 悬浮弹窗（照抄 DSH 自带入口的 visual language）──
        * 触发样式逐项对齐 **dsh-client-ui-subagent 的 CatalogDropdown 触发按钮**（用户点名参考它），
        * 与 dsh-client-ui-jobs 的 job-list 同值：
@@ -299,7 +299,9 @@ window.__ModuleLoader__.load({
        * 子智能体那份弹窗也是贴着入口左缘向右铺开）。入口已不在标题行最右端（order -25），
        * 因此不会溢出；万一靠近右缘，则由 JS 计算的 menuShift（marginLeft 负值）兜回视口内
        * —— 与官方 `style={{left: menuShift}}` 同一意图。 */
-      '.zcd-menu{position:absolute;top:calc(100% + 5px);left:0;z-index:100;box-sizing:border-box;display:flex;flex-direction:column;gap:1px;width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));max-height:min(480px,calc(100vh - 140px));margin:0;padding:3px;overflow:auto;border:0;border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-specific-menu,' + T.bg + ');backdrop-filter:var(--dsw-menu-backdrop-filter,none);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-elevation-prominent,' + T.shadow + ');text-align:left;}',
+      /* ZB-27z：**基础字号**（原浮窗时代的 .zcd-root{font-size:12px} 在重构中被丢掉，导致进程行等
+       * 未显式设字号的元素继承应用根部 ~14px、整体偏大）。取官方弹层主行的 12px/17px 作为基准。 */
+      '.zcd-menu{position:absolute;top:calc(100% + 5px);left:0;z-index:100;font-size:12px;line-height:17px;box-sizing:border-box;display:flex;flex-direction:column;gap:1px;width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));max-height:min(480px,calc(100vh - 140px));margin:0;padding:3px;overflow:auto;border:0;border-radius:var(--dsw-radius-lg,12px);background:var(--dsw-specific-menu,' + T.bg + ');backdrop-filter:var(--dsw-menu-backdrop-filter,none);--dsh-scrollbar-thumb:var(--dsw-alias-scrollbar-bg-l2);--dsh-scrollbar-thumb-hover:var(--dsw-alias-scrollbar-hover-l2);--dsw-elevation-stroke-color:var(--dsw-alias-border-l1);box-shadow:var(--dsw-elevation-prominent,' + T.shadow + ');text-align:left;}',
       '.zcd-panelHead{display:flex;align-items:center;gap:8px;padding:6px 8px 5px;border-bottom:.5px solid var(--dsw-alias-border-l1,' + T.border + ');}',
       '.zcd-panelTitle{flex:1;font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:' + T.text + ';}',
       /* 行内小图标按钮（**仍在使用**：JobRow 的终止 / 重跑 / 续接 / 关闭）。ZB-27 清理浮窗样式时
@@ -319,7 +321,7 @@ window.__ModuleLoader__.load({
       /* ZB-08：文件锁列表（哪个文件被哪个进程锁着、锁了多久） */
       '.zcd-locks{display:flex;flex-direction:column;gap:6px;}',
       '.zcd-filelocks{display:flex;flex-direction:column;gap:3px;}',
-      '.zcd-filelock{display:flex;align-items:center;gap:6px;font-size:10.5px;min-width:0;}',
+      '.zcd-filelock{display:flex;align-items:center;gap:6px;font-size:11px;line-height:16px;min-width:0;}',
       '.zcd-filelock-f{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:' + T.text2 + ';}',
       '.zcd-filelock-who{flex:none;font-weight:600;color:' + T.text + ';}',
     ].join('\n');
@@ -2435,6 +2437,13 @@ window.__ModuleLoader__.load({
             ? e.currentTarget
             : rootRef.current;
           if (el && e && e.relatedTarget && el.contains(e.relatedTarget)) return;
+          /* ★ ZB-27aa（用户报「悬浮展开后点进程要展开内容，面板却被关闭」）：
+           * relatedTarget 为 **null** 表示焦点落到了页面根（点击**不可聚焦**元素时的标准行为，
+           * 例如点进程行头这种 div[role=button]、或弹窗内的空白处）—— 这不是"用户离开了入口"，
+           * 若在这里关闭，弹窗内**任何点击**都会把面板关掉。
+           * 因此：只有焦点**明确移到子树外的某个元素**（relatedTarget 非空且不在子树内）才关闭；
+           * 真正的"离开"由鼠标移出（onMouseLeave）、点组件外部、窗口失焦三条路径负责。 */
+          if (!(e && e.relatedTarget)) return;
           setHover(false);
           scheduleClose();
         },
