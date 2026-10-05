@@ -17,6 +17,8 @@ DSH 自带的后台任务完成时会自动把会话拉起来，派发台也应�
 
 5. **新增一个 host 半边文件，必须同步 `package.json` 的 `files`**：`install_bundle` 按 `files` 打包，漏一个文件 = 装出来的插件 `index.js` 静态 import 直接 ERR_MODULE_NOT_FOUND（本轮加 `notify.mjs` 时差点漏；本机因为是 `link:` 装配所以照样能跑，**只有真装机才炸**——最难发现的一类）。已给 `tools/verify-plugin.mjs` 加常驻哨兵：「index.js 的每个 `./xxx` 相对 import 要么列在 `files`、要么落在列出的目录项下」，并做了反向验证（摘掉 `notify.mjs` → 立刻 `FAIL 缺: notify.mjs`）。
 
+6. **真机验收（重启后闭环）**：`j-muuw3axj-0-f43f`（tag `wake-smoke`，GLM-5.3-Flash，`lock=none`）06:49:27Z 派发 → 06:49:41Z 落地（`done`、exit 0、14.1s、`responseChars:13`、台账命中）。**派发它的会话当时已经结束本轮、没有做任何等待**，落地瞬间被自动拉起并收到通知卡片（正文即 `[zcode-dispatch] 派发任务 … 已落地。…[status: done]`），且只收到一次（幂等）。同刻信标 `wakeActive:true / agentsVisible:true / systemPromptHintActive:true`；活体 Config schema 里可查到三个新字段（`cordis_inspect_query` host/Config）。至此「工具取 `exec.agent.id` → 登记归属 → 落地判据 → `followup` 开新一轮 → 新轮次带 notice」整条链路全部经真机验证，不再是「应该能行」。
+
 ## 2026-09-30 Z13（官方 API 注册 agent 工具 zcode_dispatch）
 
 1. **「宿主随包出货」≠ 本地能静态 import**：本地 node_modules 只有宿主出货包的子集（cosmokit/schemastery）。给 index.js 加静态 `import '@deepseek-ai/dsh-tools'` 会让模块加载即炸——verify-plugin ③「Config 是 Standard Schema」项会**真实 import index.js**（tools/verify-plugin.mjs:38），门禁直接红；宿主真缺包则激活死（Z10-1 同源）。正解沿用本文件 loadConfig 同款：动态 import + try/catch 降级 null，宿主内解析到同一个官方包，语义等价、失败可降。

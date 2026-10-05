@@ -266,8 +266,17 @@ wait(id, timeoutSec)     → { ok:true, job:{…终态…}, waitedSec, timedOut:
 `wakeActive:false` = 唤醒器没建起来（看 `wakeNote`）；`agentsVisible:false` = apply 那一刻
 解析不到 agents 服务（投递时仍会再试，只是要留意 DSH 日志里的「会话已不在」warn）。
 
-**证据**：`test/notify.test.mjs`（16 条：形态/幂等/抑制/预算/卸载）；
+**证据**：`test/notify.test.mjs`（17 条：形态/幂等/抑制/预算/卸载/工具层译码）；
 `test/wake-integration.test.mjs`（3 条：`apply()` 全链路 —— 派发→落地→唤醒 + systemPrompt 段落 + 信标）。
+**真机验收（2026-10-05）**：job `j-muuw3axj-0-f43f`（tag `wake-smoke`）06:49:27Z 派发 → 06:49:41Z 落地
+（`done`/exit 0/14.1s）——**派发它的会话当时已结束本轮且未做任何等待**，落地瞬间被自动拉起并收到通知，只收到一次。
+同刻信标 `wakeActive:true / agentsVisible:true / systemPromptHintActive:true`。
+
+> ⚠️ **改 host 代码（`index.js` / `notify.mjs` / `wire.host.mjs`）后必须重启 DSH 才生效**：
+> HMR 的模块监听根是 profile 目录且默认忽略 `**/node_modules`，本插件在仓库路径 + 经
+> `profiles/<p>/node_modules/@local/...` 软链装配 —— 两头都不在监听面内；只改 profile patch
+> 会「重新 apply 已缓存的模块」。判据：信标里没出现你这次新增的字段 = 跑的还是旧模块。
+> （也别把插件目录塞进 `hmr.root`：卸载清理会 kill 所有 running job。）
 
 ## 其他会话如何发现并调用（Z13）
 
