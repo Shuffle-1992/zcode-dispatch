@@ -7,7 +7,7 @@
 #      - id: zcode-dispatch
 #        name: '@local/zcode-dispatch'
 #        config:
-#          runnerPath: '<宿主仓库>\scripts\collab\zcode-run.mjs'
+#          runnerPath: '<本仓库>/collab-kit/zcode-run.mjs'（通用工具仓库，非宿主项目）
 #          ledgerPath: '<宿主仓库>\collab\logs\zcode-runs.jsonl'
 #          workRoot:   '<本插件目录>\.data'
 #          switchPath: '<宿主仓库>\collab\zcode-dispatch.switch.json'

@@ -4,7 +4,7 @@
  * 职责：进程调度 / 单写者互斥（文件锁 + 进程内 FIFO 队列）/ 状态与用量采集 / 状态持久化。
  * 与 DSH 完全解耦：既可被 DSH Host 半边 `apply(ctx, config)` import，也可被 bin/zcd.mjs 独立驱动。
  *
- * 驱动的 runner 是只读依赖：`<宿主仓库>/scripts/collab/zcode-run.mjs`，其控制台汇总行
+ * 驱动的 runner 是只读依赖：`<通用工具仓库>/collab-kit/zcode-run.mjs`，其控制台汇总行
  * 形如 `[zcode-run] done exit=0 elapsed=9.7s session=sess_x provider=plan:x model=M responseChars=N`，
  * 结束后按 tag 回读台账 `zcode-runs.jsonl` 补全字段（stdout 解析与台账取并集，解析失败不崩）。
  *
@@ -283,7 +283,13 @@ function atomicWrite(file, data) {
 }
 
 /* ---------------- 工具 ---------------- */
-const TERMINAL_STATES = new Set(['done', 'failed', 'killed', 'interrupted']);
+/* ZB-25：状态集合**只在这里定义一份**，并导出给 wire/notify 复用。
+ * 此前 wire.host.mjs（DONE/DISMISSABLE）与 notify.mjs（SETTLE_STATES）各自字面量复制，
+ * 4 处定义、已实际漂移过（kill(paused)/paused 是否算「落地」各写一遍）。
+ * 本次只加 `export` 关键字，值/语义零改动。 */
+export const TERMINAL_STATES = new Set(['done', 'failed', 'killed', 'interrupted']);
+/** 「落地」判据 = 终态 + paused（paused 同样需要人决定 retry 续跑还是换通道）。 */
+export const SETTLED_STATES = new Set([...TERMINAL_STATES, 'paused']);
 const KINDS = new Set(['task', 'prompt', 'target']);
 const LOCK_MODES = new Set(['repo', 'none']); // ZB-16：删除 memory；none = 明确不取锁
 

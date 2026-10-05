@@ -45,7 +45,7 @@ function assertSwitchOn() {
   console.error(`[bridge] 开关文件: ${SWITCH_FILE}`);
   if (sw.updatedBy || sw.updatedAt) console.error(`[bridge] 最后修改: ${sw.updatedBy ?? '?'} @ ${sw.updatedAt ?? '?'}`);
   if (sw.note) console.error(`[bridge] 备注: ${sw.note}`);
-  console.error('[bridge] 恢复: 用宿主仓库的 zcode-switch.mjs 打开开关（node "<宿主仓库>/scripts/collab/zcode-switch.mjs" on）');
+  console.error('[bridge] 恢复: 用 collab-kit 的 zcode-switch.mjs 打开开关（node "<本仓库>/collab-kit/zcode-switch.mjs" on）');
   process.exit(3);
 }
 

@@ -17,8 +17,8 @@ zcode-dispatch/
 ├─ cordis.patch.yml      插入一行 id=zcode-dispatch 的 config（demo/maxConcurrent/runnerPath/ledgerPath/workRoot）
 ├─ index.js              Host 半边：apply(ctx, config)；创建 dispatcher 单例、卸载清理、注册 agent 工具
 ├─ notify.mjs            ZB-22 落地自动唤醒（job 落地 → 唤醒发起会话；零 @deepseek-ai 依赖）
-├─ wire.host.mjs         Host 接线适配器（含 creator 三步 TODO 注释块）＋ 动作唯一实现 createActionHandler
-├─ wire.client.mjs       Client 接线适配器（含 creator 三步 TODO 注释块）＋ 轮询/demo 降级
+├─ wire.host.mjs         Host 接线适配器＋动作唯一实现 createActionHandler（creator TODO 已于 Z8-01 清偿）
+├─ wire.client.mjs       Client 接线适配器＋轮询/demo 降级
 ├─ client.js             UI 半边：悬浮窗（React.createElement，无构建）；内嵌降级 wire
 ├─ core/                 Z1 交付的派发核心（dispatch-core.mjs / quota.mjs，Z3 增 appserver-rpc.mjs）——只 import，不改
 ├─ bin/zcd.mjs           Z1 的独立 CLI（与插件同 core，可做对照排查）
@@ -38,7 +38,7 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 
 ## 安装（创造模式会话执行）
 
-1. `plugin_manager` → `install_bundle`，`target` = `F:\My Code\dsh-plugins\zcode-dispatch`（绝对路径）。
+1. `plugin_manager` → `install_bundle`，`target` = `<本仓库>\zcode-dispatch`（绝对路径）。
 2. **读返回的 `application` 与 `warnings`**（不是看日志）：`applied` 才算生效；`restart-required` /
    `failed` / `overridden` 分别处置。若报 pending build scripts，**先问用户**再传 `approvedBuilds`。
 3. 本包无构建步骤、无 npm 依赖；替换已安装包需要重启才加载新 JS（新装 bundle 可走 HMR）。
@@ -49,7 +49,8 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 |---|---|---|
 | `demo` | boolean / `false` | UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher |
 | `maxConcurrent` | integer / `1` | 同时运行的 run 上限。**注意：它与单写者锁是两道独立的闸，实际并发 = min(两者)**，见下节 |
-| `runnerPath` | string / `''` | runner 绝对路径（宿主项目 `scripts/collab/zcode-run.mjs`，只读使用）。**与 `workRoot` 任一为空则不创建 dispatcher**（UI 走 demo 降级，工具动作返回可读错误） |
+| `runnerPath` | string / `''` | runner 绝对路径（通用工具仓库 `<本仓库>/collab-kit/zcode-run.mjs`，只读使用）。**与 `workRoot` 任一为空则不创建 dispatcher**（UI 走 demo 降级，工具动作返回可读错误） |
+| `runnerCwd` | string / `''` | runner 子进程的工作目录（通常设为宿主项目根）。runner 已迁出通用工具仓库、无法从自身位置推项目根，故它与「从绝对 `--task` 反推」构成**双保险**；留空 = 用 DSH 进程 cwd |
 | `ledgerPath` | string / `''` | 台账 `zcode-runs.jsonl` 绝对路径；留空则跳过台账回读与用量聚合 |
 | `workRoot` | string / `''` | 派发器工作根目录（`locks/`、`state/jobs.json`、`logs/` 落在这里）。留空即落到本包 `.data/` |
 | `switchPath` | string / `''` | Z12：派发总开关真值文件（宿主项目 `collab/zcode-dispatch.switch.json`）。文件缺失/损坏=开启；留空则开关不可写；测试可指向临时文件密封 |
@@ -140,7 +141,7 @@ return Array.isArray(body?.data) && body.data.length > 0;
 
 - `dispatch`：`kind=prompt|task|target` + 对应内容字段；可选 `model(GLM-5.3|GLM-5.3-Flash)`、
   `provider(plan|personal)`、`mode(build|edit|plan|yolo，默认 edit)`、`timeoutMin(>0)`、
-  `memoryBench(仅 kind=prompt)`、`tag`、`lock(repo|memory|both，**默认 repo**；写 ZCode 记忆库时才用 both)`、`write(预计写入的文件列表)`、`cwd`、`resume`。
+  `memoryBench(仅 kind=prompt)`、`tag`、`lock(repo|none，**默认 repo**；none=明确不取锁)`、`write(预计写入的文件列表)`、`cwd`、`resume`。
 - `list` / `kill(id)` / `dismiss(id)` / `tail(id, n=30)` / `quota`（本地台账 5h 滚动 / 本周 / 今日聚合 +
   引擎本周已用；`bin/zcd.mjs quota --json` 同时含 `local` 与 `planQuota` 两段，
   任一失败不互相影响）。`dismiss`（Z11）：把 paused/终态 job 从列表移除并落盘
@@ -361,10 +362,10 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 
 - **真值文件**：`<宿主项目>/collab/zcode-dispatch.switch.json`（`{enabled, updatedAt, updatedBy, note, contract}`；契约全文见宿主项目 `collab/PROTOCOL.md` §7）。路径由 `config.switchPath` 给出（机器专有，见上文「config 说明」）。
   语义：`enabled:false` = **拒绝对 ZCode 的任何派发**；文件缺失/损坏 = 视为开启（不误锁）。
-- **查询/切换 CLI**：`node "<宿主项目>/scripts/collab/zcode-switch.mjs" status|on|off [--by …] [--note "…"]`（status 退出码 0=开、2=关）。
-- **遵守的三个入口**（缺一不可）：① runner `zcode-run.mjs`（关闭时 exit 3，不启动进程）② 本插件 Host 动作层（`dispatch`/`retry` 关闭时返回 `{ok:false, error, switch}`，不创建 job、不 spawn）③ `dsh-plugins/tools/bridge.mjs`（关闭时 exit 3，拒绝投放）。
+- **查询/切换 CLI**：`node "<本仓库>/collab-kit/zcode-switch.mjs" --project "<宿主项目>" status|on|off [--by …] [--note "…"]`（status 退出码 0=开、2=关）。
+- **遵守的三个入口**（缺一不可）：① runner `zcode-run.mjs`（关闭时 exit 3，不启动进程）② 本插件 Host 动作层（`dispatch`/`retry` 关闭时返回 `{ok:false, error, switch}`，不创建 job、不 spawn）③ `<本仓库>/tools/bridge.mjs`（关闭时 exit 3，拒绝投放）。
 - **插件侧读写只此一处**：`wire.host.mjs` 的 `readSwitch()`（mtime 缓存、永不抛）/ `writeSwitch()`（tmp+rename 原子写，格式与 CLI 逐字段一致）。UI 与工具都经 `createActionHandler` 的 `switch` 动作写，杜绝第二个写文件方。
-- **config**：`switchPath`（string，默认空 = 未接入宿主项目；由 profile patch 指定；测试可指向临时文件密封）。既有 5 个字段不变。
+- **config**：`switchPath`（string，默认空 = 未接入宿主项目；由 profile patch 指定；测试可指向临时文件密封）。字段清单见上文「config 说明」表（代码里 DEFAULTS / fallbackConfig / schema 三处同源）。
 - **面板（UI）**：标题栏徽标「派发：开 / 关」——`conn='live'` 时可点击切换（成功后 1s 轮询带回新快照；真实点击效果需刷新页面后确认）；远端不可用（ext/demo/offline/连接中）时显示为**只读**，tooltip 提示「未连接宿主：请在终端执行 zcode-switch.mjs 切换」，状态未知时如实显示「派发：未知」（浏览器读不到宿主文件，不谎报）。关闭态下派发按钮禁用并显示原因（`switchOffBlocked`）。
 - **agent 工具**：`zcode_dispatch` 描述首行动态携带当前状态（注册时生成）；`action=status` 查实时状态、`action=switch`（`enabled` 必填，`by`/`note` 可选）切换、`action=dispatch` 派发（关闭时被拒）。其他会话开工先 `status` 一次即知。
 - **重载提示**：本节属宿主半边（`wire.host.mjs`/`index.js`）改动——完全退出 DSH 再启动才生效（pitfalls：cordis `_reload` 不重新 import）；客户端半边（`client.js`）刷新页面即可。
@@ -380,7 +381,9 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
    UI 出现 queued→running→done，5h 窗口 run 数 +1。
 5. 控制台不得有 `slot entry crashed in '<slot>'`；跑完恢复动过的任何设置/状态。
 6. 安装前可先跑本地静态验收（无需安装）：
-   `node test/z2-verify.mjs`（语法/清单/YAML/纪律 grep/桩加载渲染冒烟/Host e2e/越界检查）。
+   `node tools/verify-plugin.mjs`（21 项：manifest / 静态纪律 / Config 是 Standard Schema / 客户端模块加载与槽位注册 / Host e2e）。
+   > `test/z2-verify.mjs` 是**历史遗留脚本、当前在 HEAD 上就有红灯**（断言过时 + React 桩缺 Component），
+   > 已不在门禁内，仅在排查历史问题时参考。
 
 ### 可复跑自测清单
 
@@ -391,7 +394,7 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/quota-rpc.test.mjs` | 16 | 额度 RPC 与聚合 |
 | `node test/tail-scroll.test.mjs` | 13 | 输出框滚动决策（ZB-05：不闪烁、不弹回、底部跟随） |
 | `node test/pill.test.mjs` | 16 | 最小化胶囊（ZB-06：保留标题字样、locale 对称） |
-| `node test/pill-position.test.mjs` | 15 | 胶囊定位与面板位置视口钳制（ZB-07：胶囊固定右下角、脏 pos 不出屏） |
+| `node test/pill-position.test.mjs` | 16 | 胶囊定位与面板位置视口钳制（ZB-07：胶囊固定右下角、脏 pos 不出屏） |
 | `node test/file-lock.test.mjs` | 9 | 细粒度文件锁（ZB-08：声明 write 才生效、未声明回退粗粒度、路径归一化、防死锁、无泄漏） |
 | `node test/wait-action.test.mjs` | 6 | `wait` 动作（ZB-08：等终态 / paused 也返回 / 超时不谎报 / 参数校验） |
 | `node test/section-order.test.mjs` | 9 | 面板分区渲染顺序（ZB-09：单写者/文件锁紧跟进程、用量置末） |
@@ -425,7 +428,6 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
    但若宿主侧 `ctx.provide` 缺席或 typert-loader 未注册本包 TYPERT，客户端会安静降级到
    demo（徽标「演示数据」）；安装后以徽标为准判断（见「真数据 vs demo 判据」一节）。
    宿主→客户端的 `$on` 推送依赖装配级事件源，未接通时以 1s 轮询兜底（功能不受影响，仅刷新及时性）。
-4. **工具注册 API 未确认**：见上文 `zcode_dispatch` 一节；激活后看 Host 日志即可判断是否注册成功。
 5. **Config 形态**：`index.js` 的 `Config` 是 Standard Schema v1——cordis 的 `resolveConfig`
    只认 `Config['~standard'].validate`，裸 JSON Schema 会在激活时报
    `Cannot read properties of undefined (reading 'validate')`（Z10-01 已修）。首选宿主随包
@@ -443,7 +445,7 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 >
 > - 槽位（SLOT 实际取值）：`shell.overlay`（list 型，id=`zcode-dispatch.console`，order=20；
 >   证据见 `refs/dsh-slots.md`，与 chat / plugin-manager / workspace 官方先例同槽）
-> - Host 入口（Service/Event）：远端面 face `zcodeDispatch`（`ctx.provide` 注册，13 方法；
+> - Host 入口（Service/Event）：远端面 face `zcodeDispatch`（`ctx.provide` 注册，15 方法；
 >   typert-loader 经 `exports["./typert"]` 自动注册 TYPERT 清单 + typertGateway SRC 接收器兜底：
 >   实例 `typertRemote` 绑定 + 原型协议标记键）；Host→客户端推送事件名 `zcode-dispatch/changed`
 > - TOKENS 实际令牌名：已按 `refs/dsh-theme-tokens.md` 核对（文本族 `--dsw-alias-label-*`、

@@ -23,7 +23,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDispatcher } from './core/dispatch-core.mjs';
 import { createSettleNotifier } from './notify.mjs';
-import { DEFAULT_SWITCH_PATH, attachHostWire, createActionHandler, readSwitch, switchFileOf } from './wire.host.mjs';
+import { ACTIONS as HOST_ACTIONS, DEFAULT_SWITCH_PATH, attachHostWire, createActionHandler, readSwitch, switchFileOf } from './wire.host.mjs';
 
 /** 本文件所在目录（激活信标的兜底落点；config.workRoot 缺席时用）。 */
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
@@ -35,7 +35,7 @@ const DEFAULTS = {
   runnerPath: '',
   ledgerPath: '',
   workRoot: '',
-  // runner 子进程的工作目录。runner 已迁至通用工具仓库（dsh-plugins/collab-kit），
+  // runner 子进程的工作目录。runner 已迁至通用工具仓库（zcode-dispatch/collab-kit），
   // 不再能从自身位置推出宿主项目根；显式给 cwd 最稳（runner 也支持从绝对 --task 反推，双保险）。
   // 留空 = 用 DSH 进程的 cwd（旧行为）。
   runnerCwd: '',
@@ -82,7 +82,7 @@ async function loadConfig() {
     return z.object({
       demo: z.boolean().default(false).description('UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher'),
       maxConcurrent: z.number().min(1).max(8).default(1).description('同时运行的 run 上限（单写者互斥语义下的并发度）'),
-      runnerPath: z.string().default('').description('runner 脚本绝对路径（通用工具仓库 dsh-plugins/collab-kit/zcode-run.mjs，只读使用）；留空则不创建 dispatcher'),
+      runnerPath: z.string().default('').description('runner 脚本绝对路径（通用工具仓库 zcode-dispatch/collab-kit/zcode-run.mjs，只读使用）；留空则不创建 dispatcher'),
       ledgerPath: z.string().default('').description('台账 zcode-runs.jsonl 绝对路径；留空则跳过台账回读与用量聚合'),
       workRoot: z.string().default('').description('派发器工作根目录（locks/、state/jobs.json、logs/ 落在这里）；留空则不创建 dispatcher'),
       runnerCwd: z.string().default('').description('runner 子进程工作目录（通常设为宿主项目根，如 F:\\My Code\\keysion dac vue）；留空 = 用 DSH 进程 cwd'),
@@ -101,7 +101,7 @@ export const Config = await loadConfig();
 
 /* ─────────────── 官方 defineTool 的解析（ZB-01：裸 import 在本包必然失败）───────────────
  * 事实（2026-09-30 实测 + asar 头解析，见 tasks/ZB-01-delivery.md）：
- *   - 本包位于 F:\My Code\dsh-plugins，**不在 DSH 安装目录内**；profile 的 node_modules 只有
+ *   - 本包位于 F:\My Code\zcode-dispatch，**不在 DSH 安装目录内**；profile 的 node_modules 只有
  *     @local / dsh-plugin-whale-pet，**没有 @deepseek-ai 作用域**；
  *   - 故裸 import('@deepseek-ai/dsh-tools') 从本文件向上逐级找 node_modules 必然
  *     ERR_MODULE_NOT_FOUND → loadDefineTool() 返回 null → 工具静默不注册（Z13 现场症状）；
@@ -213,9 +213,9 @@ export const name = 'zcode-dispatch';
 /** 依赖的宿主服务：tools 由 dsh 基础 bundle 提供（同款：tool-fs-example/index.js:1176 inject 含 'tools'）。 */
 export const inject = ['tools'];
 
-/* Z12：ACTIONS 补 dismiss（Z11 漏列的既有动作）并新增 status / switch（派发总开关）。 */
-/* ZB-08：新增 wait（等待 job 落地，让调用方不必轮询）。追加在尾部保持既有顺序稳定。 */
-const ACTIONS = ['dispatch', 'list', 'kill', 'dismiss', 'tail', 'quota', 'status', 'switch', 'channels', 'channel', 'retry', 'fallback', 'wait'];
+/* ZB-25：动作清单**从 wire.host.mjs 取唯一源**（动作实现在那里，清单不该有第二个副本）。
+ * 原先是本地字面量复制，与 switch 分支、报错串三处手抄 —— ZB-08 加 wait 时已漂移过一次。 */
+const ACTIONS = HOST_ACTIONS;
 
 /**
  * 工具参数 spec（@deepseek-ai/dsh-tools 官方 DSL，非 JSON Schema）：逐字段 {type, required?, description?}，
@@ -270,7 +270,7 @@ const TOOL_DESCRIPTION_BODY = [
   '- action=kill：按 id 终止。queued 直接移除；running 发终止信号后落 killed。**自己 kill 的 job 不发落地通知**。',
   '- action=dismiss：把 paused/终态 job 从列表移除（queued/running 必须先 kill）。',
   '- action=tail：按 id 取最近输出，参数 n 默认 30（上限 200）。',
-  '- action=quota：台账用量聚合（5 小时滚动 / 本周 / 今日）+ 套餐剩余额度适配器（当前恒 available:false，待接 app-server RPC）。',
+  '- action=quota：台账用量聚合（5 小时滚动 / 本周 / 今日）+ 引擎本周已用（app-server usage/stats；limit/remaining/resetAt 不在该 RPC 面）。',
   '- action=status：读 ZCode 派发总开关状态（返回 switch={enabled, updatedAt, updatedBy, note, source}；文件缺失/损坏=开启）。',
   '- action=switch：切换派发总开关（enabled 必填布尔；by=操作者、note=原因可选）。原子写真值文件（与 CLI zcode-switch.mjs 同一格式）；关闭后所有派发入口（zcode-run.mjs / 本工具 dispatch|retry / 面板 / bridge.mjs）一律拒绝。任何会话都可通过 status 查到最新状态。',
   '- action=channels：通道清单（含 enabled/原因/端点/模型；解析失败返回空数组+warnings，不猜）。',
@@ -340,7 +340,18 @@ function registerZcodeDispatchTool(ctx, log, handleAction, switchFile, hooks = {
       },
       async execute(args, exec) {
         const params = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+        /* ZB-25（审计 A#1，实测复现）：kill 的抑制必须**先登记、后调用** ——
+         * core 的 kill() 对 queued job 会就地置 killed 并**同步** emit 'job-updated'，
+         * 订阅者在那一刻就投递通知；等 handleAction 返回再登记已经晚了（排队中的 job
+         * 仍会被"自己叫醒自己"一次，且失败无声）。kill 失败（job 不存在等）时回滚预登记。 */
+        const preKillId = params.action === 'kill'
+          ? (typeof params.id === 'string' && params.id ? params.id : (typeof params.jobId === 'string' && params.jobId ? params.jobId : ''))
+          : '';
+        if (preKillId) { try { hooks?.notifier?.current?.markKilled?.(preKillId); } catch { /* 簿记失败不影响工具 */ } }
         const result = await handleAction(params.action, params);
+        if (preKillId && result?.ok !== true) {
+          try { hooks?.notifier?.current?.unmarkSuppressed?.(preKillId); } catch { /* 同上 */ }
+        }
         /* ZB-22：把这次动作翻译成唤醒簿记。execute 的第二个参数 exec 带发起会话
          * （exec.agent.id）——这是「谁派发的、落地后叫醒谁」的唯一来源。簿记失败绝不影响工具结果。 */
         noteOwnerAction(hooks, params, result, exec);

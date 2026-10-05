@@ -22,7 +22,7 @@
  *   --lock repo|memory|both --max-concurrent <n> --no-wait
  *
  * 路径默认值（可用环境变量或参数覆盖）：
- *   ZCD_RUNNER / --runner        runner 脚本（宿主仓库 scripts/collab/zcode-run.mjs，只读使用）
+ *   ZCD_RUNNER / --runner        runner 脚本（通用工具仓库 <本仓库>/collab-kit/zcode-run.mjs，只读使用）
  *   ZCD_LEDGER / --ledger        台账 zcode-runs.jsonl
  *   ZCD_WORK_ROOT / --work-root  派发器工作根目录（默认 <zcode-dispatch>/work）
  *   ZCD_RUNNER_CWD / --runner-cwd  子进程工作目录（默认当前目录）

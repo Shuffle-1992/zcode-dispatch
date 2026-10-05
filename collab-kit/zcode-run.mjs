@@ -616,7 +616,7 @@ function readDispatchSwitch() {
     console.error(`[zcode-run] 开关文件: ${SWITCH_FILE}`);
     if (sw.updatedBy || sw.updatedAt) console.error(`[zcode-run] 最后修改: ${sw.updatedBy ?? '?'} @ ${sw.updatedAt ?? '?'}`);
     if (sw.note) console.error(`[zcode-run] 备注: ${sw.note}`);
-    console.error('[zcode-run] 需要恢复派发时: node scripts/collab/zcode-switch.mjs on');
+    console.error('[zcode-run] 需要恢复派发时: node <本仓库>/collab-kit/zcode-switch.mjs --project <宿主项目> on');
     process.exit(3); // 3 = 因总开关关闭而拒绝（与参数错误 1、超时 124 区分）
   }
 }

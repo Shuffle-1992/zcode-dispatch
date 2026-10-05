@@ -6,15 +6,15 @@
  * 只有落在磁盘上的状态才可能被所有会话读到。文件即契约，见 collab/PROTOCOL.md。
  *
  * 用法：
- *   node scripts/collab/zcode-switch.mjs status [--json]    # 查状态（默认人类可读）
- *   node scripts/collab/zcode-switch.mjs on  [--by <who>] [--note "<原因>"]
- *   node scripts/collab/zcode-switch.mjs off [--by <who>] [--note "<原因>"]
+ *   node <本仓库>/collab-kit/zcode-switch.mjs status [--json]    # 查状态（默认人类可读）
+ *   node <本仓库>/collab-kit/zcode-switch.mjs on  [--by <who>] [--note "<原因>"]
+ *   node <本仓库>/collab-kit/zcode-switch.mjs off [--by <who>] [--note "<原因>"]
  *
  * 状态语义：enabled=true 允许把任务派发给 ZCode 子代理；false = 一律拒绝派发。
  * 缺文件 = 开启（保持历史行为）；读取失败 = 开启（不因开关文件损坏而误锁）。
  *
  * 谁遵守（缺一不可，新入口必须一并接入）：
- *   1) scripts/collab/zcode-run.mjs      —— 无头派发（本仓库所有 run 的必经之路）
+ *   1) collab-kit/zcode-run.mjs      —— 无头派发（本仓库所有 run 的必经之路）
  *   2) zcode-dispatch 插件的 Host 动作层     —— 面板/agent 工具的 dispatch 动作
  *   3) zcode-dispatch/tools/bridge.mjs      —— 客户端自动化桥的投放
  */

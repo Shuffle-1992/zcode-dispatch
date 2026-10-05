@@ -1,7 +1,7 @@
 /**
  * 门禁批量复跑器（协议见 collab/PROTOCOL.md；实现方自查与复审方复跑共用）。
  *
- * 用法：node scripts/collab/run-gates.mjs [--suite server,web] [--tag R03-01]
+ * 用法：node <本仓库>/collab-kit/run-gates.mjs [--suite server,web] [--tag R03-01]
  * 行为：读取 collab/gates.json，逐套件逐命令执行；原始输出落 collab/logs/{tag}-{suite}-{n}-{cmd}.log；
  *      stdout 输出 PASS/FAIL 汇总；全绿 exit 0，任一条失败 exit 1。
  * 纪律：运行期间不要并跑 scripts/verify/mutation-check.mjs（会互相干扰导致误红）。

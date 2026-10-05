@@ -65,7 +65,7 @@ try {
 
   const reason =
     `【协作待办·自动续跑】collab/inbox-trae 有待审交付：${msgs.join('、')}。` +
-    '请按 collab/PROTOCOL.md 执行复审：① 若无证据包先跑 node scripts/collab/relay-once.mjs；' +
+    '请按 collab/PROTOCOL.md 执行复审：① 若无证据包先跑 node <本仓库>/collab-kit/relay-once.mjs；' +
     '② 独立复跑门禁抽检并留存原始输出；' +
     '③ 结论写入 collab/inbox-zcode/<轮次>-<序号>-review.md 并同步 collab/state.json；' +
     '④ 闭环后把消息归档到 collab/outbox/。';

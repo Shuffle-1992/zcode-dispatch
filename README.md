@@ -26,7 +26,7 @@ DSH 自带的 `subagent` 跑的是 DSH 自己的 agent；**本插件跑的是 ZC
 ## 目录结构
 
 ```
-dsh-plugins/
+zcode-dispatch/
 ├─ zcode-dispatch/          ★ 插件本体（cordis bundle：Host 半边 + Client 半边）
 │  ├─ index.js              Host 入口：apply(ctx, config)、dispatcher 单例、注册 agent 工具、激活信标
 │  ├─ wire.host.mjs         Host 接线 + 动作唯一实现 createActionHandler + 派发总开关读写
@@ -77,7 +77,7 @@ dsh-plugins/
 |---|---|---|
 | `demo` | `false` | UI 演示模式：用内置假数据渲染面板，不触达 dispatcher |
 | `maxConcurrent` | `1` | 同时运行的 run 上限 |
-| `runnerPath` | `''` | runner 脚本绝对路径（**宿主项目**的 `scripts/collab/zcode-run.mjs`，只读使用） |
+| `runnerPath` | `''` | runner 脚本绝对路径（通用工具仓库 `<本仓库>/collab-kit/zcode-run.mjs`，只读使用） |
 | `ledgerPath` | `''` | 台账 `zcode-runs.jsonl` 绝对路径；留空则跳过用量聚合 |
 | `workRoot` | `''` | 派发器工作根目录（`locks/`、`state/jobs.json`、`logs/`）；留空落到插件目录 `.data/` |
 | `switchPath` | `''` | 派发总开关真值文件；留空则开关不可写 |

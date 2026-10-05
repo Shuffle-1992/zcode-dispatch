@@ -121,7 +121,11 @@ test('paused 不占锁、不堵队列、不自动重试', async () => {
   });
   assert.equal(d.get(a.id).state, 'paused');
   assert.equal(existsSync(d.lockPaths.repo), false, 'paused 后 repo 锁文件必须释放');
-  assert.equal(existsSync(d.lockPaths.memory), false, 'paused 后 memory 锁文件必须释放');
+  /* ZB-25（审计 D#2）：原断言 `existsSync(d.lockPaths.memory) === false` 是**恒真**的 ——
+   * ZB-16 已删除 memory 锁，lockPaths 里根本没有 memory 字段，而 `existsSync(undefined)` 在
+   * Node 24 返回 false（只有 DEP0187 弃用告警）⇒ 永远通过、测不出任何东西（假绿）。
+   * 改为断言"memory 锁概念确实不存在"：该断言在 ZB-16 之前的老实现上会真的失败。 */
+  assert.equal('memory' in d.lockPaths, false, 'ZB-16 起 lockPaths 不再有 memory 字段（该锁已删除）');
 
   const b = d.dispatch({ kind: 'prompt', prompt: 'after-pause-job', provider: 'plan' }); // 无暂停签名，正常跑完
   await waitForState(d, b.id, ['done'], 'B done（队列未被 paused 堵住）');

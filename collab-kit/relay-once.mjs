@@ -3,9 +3,9 @@
  *
  * 作用：ZCode 交付落 inbox-trae 后（无论人工/计划任务/watcher 触发），本脚本：
  *   1) 找 inbox-trae 中最新的、尚无证据包的交付消息；
- *   2) 跑 scripts/collab/run-gates.mjs 全套门禁复跑并留原始日志；
+ *   2) 跑 collab-kit/run-gates.mjs 全套门禁复跑并留原始日志；
  *   3) 产出证据包 collab/logs/{消息名}-evidence.md（供 Trae 终审直接消费，省去人工搬运）。
- * 用法：node scripts/collab/relay-once.mjs [--suite server,etl] [--no-gates]
+ * 用法：node <本仓库>/collab-kit/relay-once.mjs [--suite server,etl] [--no-gates]
  * 说明：本脚本**不调用外部 AI**；如需 AI 初判（claude/codex），见 PROTOCOL §5.2 的显式启用方式（需使用者同意）。
  */
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync } from 'node:fs';

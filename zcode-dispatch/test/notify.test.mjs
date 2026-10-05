@@ -147,6 +147,48 @@ test('模型自己 kill 的 job 不唤醒（否则等于自己叫醒自己）', 
   notifier.dispose();
 });
 
+/* ★ ZB-25（审计 A#1 实测复现）：抑制登记**必须早于** dispatcher.kill()。
+ * core 的 kill() 对 queued job 会就地置 killed 并**同步** emit 'job-updated'，
+ * 订阅者在那一刻就投递；若像最初那样"等 handleAction 返回再 markKilled"，排队中的 job
+ * 仍会被唤醒一次，而且没有任何报错。本组测试把这个顺序差异钉死。 */
+test('★ kill 抑制的顺序：先登记后 kill（真实顺序）不唤醒', () => {
+  const { dispatcher, owner, notifier } = harness();
+  const killSync = (id) => { notifier.track(id, 'sess-1'); }; // 复刻工具层：先 track（dispatch 返回时）
+  killSync('j-k1');
+  notifier.markKilled('j-k1');           // ← 工具层 pre-hook：在 handleAction('kill') 之前
+  dispatcher.settle(job('j-k1', 'killed')); // ← core.kill() 内部的同步 emit
+  assert.equal(owner.calls.length, 0, '真实顺序下不该唤醒');
+  notifier.dispose();
+});
+
+test('★ kill 抑制的顺序：登记晚于落地（错误顺序）会唤醒 —— 这就是 ZB-25 要防的回归', () => {
+  const { dispatcher, owner, notifier } = harness();
+  notifier.track('j-k2', 'sess-1');
+  dispatcher.settle(job('j-k2', 'killed')); // 先落地（等于 core.kill() 同步 emit）
+  notifier.markKilled('j-k2');              // 后登记 —— 已经晚了
+  assert.equal(owner.calls.length, 1, '顺序错了就会"自己叫醒自己"（本断言记录该缺陷的存在性）');
+  notifier.dispose();
+});
+
+test('kill 未成功时撤销预登记（unmarkSuppressed），真实落地仍能唤醒', () => {
+  const { dispatcher, owner, notifier } = harness();
+  notifier.track('j-k3', 'sess-1');
+  notifier.markKilled('j-k3');     // pre-hook 先登记
+  notifier.unmarkSuppressed('j-k3'); // kill 返回 ok:false ⇒ 回滚
+  dispatcher.settle(job('j-k3', 'done'));
+  assert.equal(owner.calls.length, 1, '回滚后该唤醒的仍要唤醒');
+  notifier.dispose();
+});
+
+test('投递后释放归属，集合不随历史 job 无界增长（审计 A#4）', () => {
+  const { dispatcher, notifier } = harness();
+  notifier.track('j-cap', 'sess-1');
+  assert.equal(notifier.stats().tracked, 1);
+  dispatcher.settle(job('j-cap', 'done'));
+  assert.equal(notifier.stats().tracked, 0, '投递完 owners 应释放该条');
+  notifier.dispose();
+});
+
 test('模型自己 wait 到落地的 job 不唤醒（结果已由工具调用返回）', () => {
   const { dispatcher, owner, notifier } = harness();
   notifier.track('j-5', 'sess-1');

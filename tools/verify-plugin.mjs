@@ -1,11 +1,25 @@
 // DSH 独立验收探针（Z2）：静态纪律 + 客户端模块加载 + 槽位注册（不复用实现方脚本）
 import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const PKG = 'F:\\My Code\\zcode-dispatch\\zcode-dispatch';
 const results = [];
 const check = (name, ok, detail = '') => { results.push({ name, ok }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}  ${detail}`); };
+
+/* ZB-25（审计 D#1）：越界检查改为**本探针运行前后的 $DSH_HOME 快照对比**。
+ * 原实现是「profile 目录近 1h 无 mtime 变更」——那是**环境依赖判定**：用户装过一次插件就恒红，
+ * 而加 Z2_ALLOW_PROFILE_WRITE=1 又恒绿（唯一的越界不变量形同虚设）。现在只在"探针自己跑的
+ * 过程中把 $DSH_HOME 写了"才红 —— 与本机历史状态无关，才是本包真正要守的东西。 */
+const DSH_HOME = process.env.DSH_HOME || join(homedir(), '.dsh');
+const PROFILE_DIR = join(DSH_HOME, 'profiles', 'desktop');
+const snapshotProfile = () => {
+  try {
+    return new Map(readdirSync(PROFILE_DIR, { withFileTypes: true }).map((d) => [d.name, statSync(join(PROFILE_DIR, d.name)).mtimeMs]));
+  } catch { return null; } // 目录不存在 = SKIP（不计 PASS，也不假红）
+};
+const PROFILE_BEFORE = snapshotProfile();
 
 /* ---------- ① manifest / patch ---------- */
 const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
@@ -121,16 +135,32 @@ if (registrations.length) {
   }
 }
 
-/* ---------- ⑥ 越界：$DSH_HOME 未被写入 ---------- */
-const profile = 'C:\\Users\\Administrator\\.dsh\\profiles\\desktop';
-const recent = readdirSync(profile).filter((f) => Date.now() - statSync(join(profile, f)).mtimeMs < 3600 * 1000);
-const allowProfileWrite = process.env.Z2_ALLOW_PROFILE_WRITE === '1';
-check(
-  '越界: $DSH_HOME profile 近 1h 无写入',
-  recent.length === 0 || allowProfileWrite,
-  recent.join(',') || 'clean',
-);
-if (recent.length && allowProfileWrite) console.log('   （已按 Z2_ALLOW_PROFILE_WRITE=1 放行：用户已安装插件，profile 写入属预期）');
+/* ---------- ⑥ 越界：本探针运行期间 $DSH_HOME 未被写入 ---------- */
+{
+  const after = snapshotProfile();
+  const before = PROFILE_BEFORE;
+  if (before === null || after === null) {
+    console.log('SKIP  越界: $DSH_HOME profile 存在性检查（未找到 ' + PROFILE_DIR + '，跳过而非假绿）');
+  } else {
+    const touched = [];
+    for (const [name, mtime] of after) {
+      if (!before.has(name)) touched.push(`${name}(新增)`);
+      else if (before.get(name) !== mtime) touched.push(`${name}(修改)`);
+    }
+    for (const name of before.keys()) if (!after.has(name)) touched.push(`${name}(删除)`);
+    check(
+      '越界: 探针运行期间 $DSH_HOME 无写入',
+      touched.length === 0,
+      touched.join(',') || 'clean',
+    );
+    /* 该判定与本机历史无关（不再依赖"近 1h"），因此 Z2_ALLOW_PROFILE_WRITE=1 已无必要；
+     * 保留兼容：显式设了仍放行，但打印提醒。 */
+    if (touched.length && process.env.Z2_ALLOW_PROFILE_WRITE === '1') {
+      console.log('   （已按 Z2_ALLOW_PROFILE_WRITE=1 放行 —— 该开关已非必需：新判定只看探针自身运行窗口）');
+      results[results.length - 1].ok = true;
+    }
+  }
+}
 
 const failed = results.filter((r) => !r.ok).length;
 console.log(`\n[DSH Z2 探针] ${results.length} 项，失败 ${failed} 项`);

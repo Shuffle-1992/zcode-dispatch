@@ -36,12 +36,15 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+/* ZB-25：终态/落地集合**只从 core 取**（core 是状态机的所有者）。原先本文件与 notify.mjs
+ * 各自字面量复制一份同样的集合，已构成重复定义。 */
+import { SETTLED_STATES, TERMINAL_STATES } from './core/dispatch-core.mjs';
 import { aggregate, fetchPlanQuota } from './core/quota.mjs';
 
 /* ─────────────── Z12：ZCode 派发总开关（跨进程唯一真值，契约：宿主仓库 collab/PROTOCOL.md §7）───────────────
  * 语义：enabled:false = 拒绝对 ZCode 的任何派发；文件缺失/损坏 = 开启（不误锁，与 CLI 同）。
  * 读写全包只允许这一处实现：readSwitch（mtime 缓存，永不抛）/ writeSwitch（tmp+rename 原子写，
- * 键序/缩进/换行与宿主仓库 scripts/collab/zcode-switch.mjs 的 writeDispatchSwitch 逐字段一致——
+ * 键序/缩进/换行与 collab-kit/zcode-switch.mjs 的 writeDispatchSwitch 逐字段一致——
  * 文件即契约，出现第二个写文件方 = 格式漂移）。UI 与 agent 工具经 createActionHandler 的
  * switch 动作共用它；config.switchPath 指向真值文件，缺省为空 = 本机未接入宿主仓库。 */
 
@@ -53,6 +56,15 @@ export const DEFAULT_SWITCH_PATH = '';
 export const SWITCH_CONTRACT = 'collab/PROTOCOL.md §ZCode 派发总开关；false = 任何会话都不得把任务派发给 ZCode';
 /** dispatch/retry 被拒时的统一错误文案（任务包规定）。 */
 export const SWITCH_OFF_ERROR = 'ZCode 派发总开关已关闭（collab/zcode-dispatch.switch.json）';
+
+/* ─────────────── 动作清单：单一源（ZB-25）───────────────
+ * 动作的**唯一实现**是下面的 createActionHandler switch，所以清单也归本文件维护：
+ *   · index.js 的工具 schema `action.enum` 直接 import 它；
+ *   · 「未知 action」报错串由它 join 生成（原先手抄一份，ZB-08 加 wait 时漏改 ⇒ 模型
+ *     收到的"可用动作"里没有 wait，正好掐掉"派发后等结果"这条正路 —— 已实际漂移过）；
+ *   · 新增动作只改这里一处 + 写一个 case。 */
+export const ACTIONS = ['dispatch', 'list', 'kill', 'dismiss', 'tail', 'quota', 'status', 'switch', 'channels', 'channel', 'retry', 'fallback', 'wait'];
+
 const switchCache = new Map(); // 真值文件路径 → { mtimeMs, value }（同 mtime 不重复读盘）
 
 /** config.switchPath → 实际真值文件（空/非串回退契约默认值）。 */
@@ -129,8 +141,10 @@ const trunc = (s, n = 200) => {
  * killRequested.add + emit，返回 true 但状态永停 paused（且 killRequested 条目残留）。
  * dispatcher 也没有删除 API，故 dismiss 在 wire 层实现：维护 dismissed 集合并持久化到
  * state 目录（与 jobs.json 同目录的 dismissed.json），snapshot/list 输出时过滤；
- * queued/running 不允许 dismiss（占锁与并发，必须先 kill）。 */
-const DISMISSABLE = new Set(['paused', 'done', 'failed', 'killed', 'interrupted']);
+ * queued/running 不允许 dismiss（占锁与并发，必须先 kill）。
+ * ZB-25：可 dismiss 的集合 === 「落地」判据（终态 + paused），**引用 core 的唯一源**，
+ * 不再就地字面量复制（原先 notify.mjs 里那份与它逐元素相同，属重复定义）。 */
+export const DISMISSABLE = SETTLED_STATES;
 const dismissedByFile = new Map(); // dismissed.json 绝对路径 → Set<jobId>（多个 createActionHandler 实例按路径共享同一集合）
 const dismissedFileOf = (dispatcher) => join(dirname(dispatcher.jobsFile), 'dismissed.json');
 function dismissedSet(dispatcher) {
@@ -282,9 +296,10 @@ export function createActionHandler(dispatcher, config = {}) {
           if (!id) return { ok: false, error: 'wait 需要参数 id' };
           const job = dispatcher.get(id);
           if (!job) return { ok: false, error: `wait 失败：job 不存在（id=${id}）` };
-          const DONE = ['done', 'failed', 'killed', 'interrupted'];
+          /* ZB-25：「落地」判据 = SETTLED_STATES（core 的唯一源：终态 + paused）。
+           * 原先就地写 DONE 数组 + `state === 'paused' ||` 的写法，是同一事实的第二、三份定义。 */
           const started = Date.now();
-          if (job.state === 'paused' || DONE.includes(job.state)) {
+          if (SETTLED_STATES.has(job.state)) {
             return { ok: true, job: slimJob(job), waitedSec: 0, timedOut: false };
           }
           // 超时：优先用调用方给的 timeoutSec，否则取该任务 timeoutMin（分钟→秒），都没有则 10 分钟
@@ -299,7 +314,7 @@ export function createActionHandler(dispatcher, config = {}) {
             };
             let un = null;
             const check = (j) => {
-              if (j && (j.state === 'paused' || DONE.includes(j.state))) finish(j, false);
+              if (j && SETTLED_STATES.has(j.state)) finish(j, false);
             };
             check(dispatcher.get(id)); // 可能已在我订阅前就落地
             un = dispatcher.subscribe((ev) => {
@@ -307,7 +322,7 @@ export function createActionHandler(dispatcher, config = {}) {
             });
             setTimeout(() => {
               const cur = dispatcher.get(id);
-              if (cur && (cur.state === 'paused' || DONE.includes(cur.state))) finish(cur, false);
+              if (cur && SETTLED_STATES.has(cur.state)) finish(cur, false);
               else finish(cur ?? null, true);
             }, sec * 1000).unref?.();
           });
@@ -397,7 +412,7 @@ export function createActionHandler(dispatcher, config = {}) {
           return { ok: true, ...dispatcher.getFallbackChain() };
         }
         default:
-          return { ok: false, error: `未知 action：${action}（可用 dispatch|list|kill|dismiss|tail|quota|status|switch|channels|channel|retry|fallback）` };
+          return { ok: false, error: `未知 action：${action}（可用 ${ACTIONS.join('|')}）` };
       }
     } catch (e) {
       return { ok: false, error: e?.message ?? String(e) };

@@ -66,6 +66,11 @@ export const TYPERT_REMOTE = {
     ['snapshot', [], 'snapshot(): Promise<snapshot>', [], '快照数据对象 {generatedAt, counts, locks, queue, jobs[], channels[], workRoot, maxConcurrent}'],
     ['dispatch', ['spec'], 'dispatch(spec): Promise<{ok, job}|{ok:false, error}>', [], '{ok:true, job}|{ok:false, error}'],
     ['kill', ['id'], 'kill(id): Promise<{ok, job}|{ok:false, error}>', [], '{ok:true, job}|{ok:false, error}'],
+    /* ZB-25（审计 C P1-2 / D #8 / E #7 三路同报）：此行原先漏了。本表头注释自称"与
+     * wire.host.mjs 的 TYPERT.invocations 一一对应"，而 host 面（REMOTE_METHODS/FACE_METHOD_TABLE）
+     * 与 client.js 内联表都是 15 个方法，只有这里 14 个 —— 三份表且无任何校验，已实际漂移。
+     * 补齐的同时，test/single-source.test.mjs 断言三表方法集合相等（防再漂）。 */
+    ['dismiss', ['id'], 'dismiss(id): Promise<{ok, id, state}|{ok:false, error}>', [], '{ok:true, id, state}|{ok:false, error}（paused/终态 job 从列表移除并落盘 dismissed.json）'],
     ['retry', ['id', 'opts'], 'retry(id, opts?): Promise<{ok, job}|{ok:false, error}>', ['opts'], '{ok:true, job}|{ok:false, error}'],
     ['tail', ['id', 'n'], 'tail(id, n?): Promise<string[]>', ['n'], 'string[]（{ok:false, error} 表示 job 不存在）'],
     ['setChannel', ['next'], 'setChannel(next): Promise<{ok, channel}|{ok:false, error}>', ['next'], '{ok:true, channel}|{ok:false, error}'],

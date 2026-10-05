@@ -52,28 +52,28 @@
 
 ```bash
 # 无头派发（主通道）
-node "<dsh-plugins>/collab-kit/zcode-run.mjs" \
+node "<本仓库>/collab-kit/zcode-run.mjs" \
      --project "F:/path/to/project" \
      --task collab/tasks/T1-task.md --tag T1 --mode edit
 
 # 直接给指令
-node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project "<root>" --prompt "只回答 OK" --tag smoke
+node "<本仓库>/collab-kit/zcode-run.mjs" --project "<root>" --prompt "只回答 OK" --tag smoke
 
 # 目标模式（ZCode 自续跑到目标达成；与 --prompt/--task 互斥）
-node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project "<root>" --target "<可校验目标>" --tag T2
+node "<本仓库>/collab-kit/zcode-run.mjs" --project "<root>" --target "<可校验目标>" --tag T2
 
 # 续接既有会话
-node "<dsh-plugins>/collab-kit/zcode-run.mjs" --project "<root>" --resume sess_xxx --prompt "继续"
+node "<本仓库>/collab-kit/zcode-run.mjs" --project "<root>" --resume sess_xxx --prompt "继续"
 
 # 查套餐/供应商可用性
-node "<dsh-plugins>/collab-kit/zcode-run.mjs" --list-providers
+node "<本仓库>/collab-kit/zcode-run.mjs" --list-providers
 
 # 派发总开关
-node "<dsh-plugins>/collab-kit/zcode-switch.mjs" --project "<root>" status
-node "<dsh-plugins>/collab-kit/zcode-switch.mjs" --project "<root>" off --by dsh --note "维护中"
+node "<本仓库>/collab-kit/zcode-switch.mjs" --project "<root>" status
+node "<本仓库>/collab-kit/zcode-switch.mjs" --project "<root>" off --by dsh --note "维护中"
 
 # 门禁批量复跑
-node "<dsh-plugins>/collab-kit/run-gates.mjs" --project "<root>" --tag R1
+node "<本仓库>/collab-kit/run-gates.mjs" --project "<root>" --tag R1
 ```
 
 > ⚠️ 项目根**不要**写成 `<script>/../..` 那种相对推导 —— 工具已在另一个仓库，推导会指错。
@@ -152,11 +152,11 @@ profile 配置示例（`~/.dsh/profiles/<p>/cordis.patch.yml`）：
 ```yaml
 - id: zcode-dispatch
   config:
-    runnerPath: 'F:\My Code\dsh-plugins\collab-kit\zcode-run.mjs'
+    runnerPath: '<本仓库>\collab-kit\zcode-run.mjs'
     runnerCwd: 'F:\My Code\keysion dac vue'      # runner 子进程 cwd = 宿主项目根
     ledgerPath: 'F:\My Code\keysion dac vue\collab\logs\zcode-runs.jsonl'
     switchPath: 'F:\My Code\keysion dac vue\collab\zcode-dispatch.switch.json'
-    workRoot: 'F:\My Code\dsh-plugins\zcode-dispatch\.data'
+    workRoot: '<插件目录>\.data'
 ```
 
 `runnerCwd` 与"从 `--task` 反推"构成**双保险**：任一机制生效即可正确定位项目根。

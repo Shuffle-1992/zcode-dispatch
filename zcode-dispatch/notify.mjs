@@ -27,13 +27,19 @@
  * 激活安全：任何一步失败都只 warn，绝不抛——唤醒是增强，不能影响派发本身。
  */
 import { randomUUID } from 'node:crypto';
+/* ZB-25：落地判据取自 core（状态机所有者），不在本文件重新写一份集合。 */
+import { SETTLED_STATES } from './core/dispatch-core.mjs';
 
 /** 通知消息的 producer 标识。会话格式 v4 只要求「非空字符串且不等于 'plugin'」，未知 kind 是合法且被保留的归属（dsh-session-format-v3-to-v4/lib/index.js:124-137）。 */
 export const SOURCE_KIND = 'zcode-dispatch';
 /** 客户端已认识的上下文形态之一。**不要**换成别的字符串：unknown form 会让客户端 contextBody 抛 `unreachable context form`（dsh-client-ui-chat）。 */
 export const SOURCE_FORM = 'notice';
-/** 落地判据，与 wire.host.mjs 的 action=wait 同源（paused 也返回，故算落地）。 */
-export const SETTLE_STATES = new Set(['done', 'failed', 'killed', 'interrupted', 'paused']);
+/**
+ * 落地判据。**引用 core 的唯一源**（ZB-25）—— 原先这里与 wire.host.mjs 的 `DISMISSABLE`
+ * 各自写一份**逐元素相同**的集合，是同一事实的第 3、4 份定义。
+ * 保留本名导出以免破坏既有 import；引用级同一性由 test/single-source.test.mjs 守着。
+ */
+export const SETTLE_STATES = SETTLED_STATES;
 /** 客户端折叠行摘要的字数上限（dsh-llm 的 CONTEXT_SUMMARY_MAX_CHARS=120 同值）。 */
 export const CONTEXT_SUMMARY_MAX_CHARS = 120;
 
@@ -130,6 +136,17 @@ export function createSettleNotifier({ dispatcher, agents, log, config = {}, ctx
   const counter = { registered: 0, notified: 0, delivered: 0, followup: 0, inject: 0, suppressed: 0, missingAgent: 0, capped: 0 };
   const wakeBudget = Number.isSafeInteger(config.maxConsecutiveWakes) && config.maxConsecutiveWakes > 0 ? config.maxConsecutiveWakes : 0;
   let disposed = false;
+  /* ZB-25（审计 A#4）：集合原先只增不减 ⇒ 长跑进程（几天不重启）无界增长。
+   * 上限 + 按插入序淘汰最旧一条：唤醒是"最近落地"语义，旧记录没有价值。 */
+  const TRACK_CAP = 1000;
+  function remember(set, id) {
+    set.add(id);
+    while (set.size > TRACK_CAP) {
+      const oldest = set.values().next().value;
+      if (oldest === undefined) break;
+      set.delete(oldest);
+    }
+  }
 
   /* ───────── 订阅调度器事件：唯一触发点 ───────── */
   const unsubscribe = dispatcher.subscribe((ev) => {
@@ -184,13 +201,15 @@ export function createSettleNotifier({ dispatcher, agents, log, config = {}, ctx
       job = dispatcher.get(jobId);
     } catch { return false; }
     if (!job || !SETTLE_STATES.has(job.state)) return false;
-    notified.add(jobId);
+    remember(notified, jobId);
     counter.notified += 1;
     try {
       deliver(job, agentId);
     } catch (e) {
       warn(`落地通知投递失败（job ${jobId}，会话 ${agentId}）：${e?.message ?? e}`);
     }
+    /* 投递完即释放归属（notified 仍留着做幂等）——owners 不随历史 job 无界增长。 */
+    owners.delete(jobId);
     return true;
   }
 
@@ -210,17 +229,29 @@ export function createSettleNotifier({ dispatcher, agents, log, config = {}, ctx
       check(jobId);
       return true;
     },
-    /** 模型自己 kill 的 job：不发通知（否则等于自己叫醒自己）。 */
+    /**
+     * 模型自己 kill 的 job：不发通知（否则等于自己叫醒自己）。
+     *
+     * ⚠️ **必须在调用 dispatcher.kill 之前登记**（ZB-25，审计 A#1 实测）：
+     * core 的 `kill()` 对 queued job 会**就地置 killed 并同步 emit** 'job-updated'，
+     * 订阅者在那一刻就投递通知 —— 若等工具拿到返回值再登记，排队中的 job 会先被唤醒一次。
+     * 顺序错了不会有任何报错，只会多一条"自己叫醒自己"的通知，所以工具层用 pre-hook 保证。
+     */
     markKilled(jobId) {
-      if (typeof jobId !== 'string' || !jobId) return;
-      suppressed.add(jobId);
+      if (disposed || typeof jobId !== 'string' || !jobId) return;
+      remember(suppressed, jobId);
       counter.suppressed += 1;
     },
     /** 模型自己 wait 到落地的 job：结果已拿到，不发通知。 */
     markAwaited(jobId) {
-      if (typeof jobId !== 'string' || !jobId) return;
-      suppressed.add(jobId);
+      if (disposed || typeof jobId !== 'string' || !jobId) return;
+      remember(suppressed, jobId);
       counter.suppressed += 1;
+    },
+    /** kill 未成功（如 job 不存在）时撤销预登记，避免误抑制真正该唤醒的 job。 */
+    unmarkSuppressed(jobId) {
+      if (typeof jobId !== 'string' || !jobId) return;
+      suppressed.delete(jobId);
     },
     /** 诊断快照（测试与激活信标用）。 */
     stats() {

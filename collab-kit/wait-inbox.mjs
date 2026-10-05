@@ -1,7 +1,7 @@
 /**
  * 等待 inbox 出现新消息（跨 Agent 互唤醒的等待命令，协议见 collab/PROTOCOL.md 通道 T1）。
  *
- * 用法：node scripts/collab/wait-inbox.mjs <inbox目录> [超时秒=1800] [轮询秒=5]
+ * 用法：node <本仓库>/collab-kit/wait-inbox.mjs <inbox目录> [超时秒=1800] [轮询秒=5]
  * 行为：记录启动时的文件基线，出现新 .md 消息即打印并退出 0；超时退出 2；参数错退出 1。
  * 注意：本命令运行期间不要并跑其他重负载门禁；由协议使用方负责重新挂起下一轮等待。
  */
@@ -10,7 +10,7 @@ import { resolve } from 'node:path';
 
 const [, , dirArg, timeoutArg = '1800', intervalArg = '5'] = process.argv;
 if (!dirArg) {
-  console.error('usage: node scripts/collab/wait-inbox.mjs <dir> [timeoutSec] [intervalSec]');
+  console.error('usage: node <本仓库>/collab-kit/wait-inbox.mjs <dir> [timeoutSec] [intervalSec]');
   process.exit(1);
 }
 const dir = resolve(dirArg);
