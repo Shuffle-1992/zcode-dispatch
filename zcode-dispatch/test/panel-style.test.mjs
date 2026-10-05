@@ -120,11 +120,15 @@ console.log('\nE. DOM 桩实测：注入一次且重渲染不再触碰 head');
     return { ...node, children: kids };
   };
   const mod = captured.factory((n) => (n === 'react' ? React : {}));
+  /* ZB-24：注册数从 1 变 2（新增会话头入口）。原先「最后注册的组件胜出」的写法
+   * 会静默选错组件（渲染到会话头入口 → 样式不注入 → E1 假红）。改为**按槽位名显式取**。 */
+  const regs = [];
   mod.apply({
-    slots: { inject: (k, cb) => { cb(); return () => {}; }, register: (o, comp) => { captured.comp = comp; return () => {}; } },
+    slots: { inject: (k, cb) => { cb(); return () => {}; }, register: (o, comp) => { regs.push({ o, comp }); if (o.name === 'shell.overlay') captured.comp = comp; return () => {}; } },
     effect: (fn) => { const d = fn(); return typeof d === 'function' ? d : () => {}; },
     on: () => () => {}, locale: { formatMessage: (m) => String(m?.id ?? m) },
   });
+  ok(regs.some((r) => r.o.name === 'shell.overlay'), 'D5 注册了 shell.overlay（本测试的被测组件来源）');
   const render = () => {
     let t = expand(captured.comp({}), 'root');
     t = expand(captured.comp({}), 'root');

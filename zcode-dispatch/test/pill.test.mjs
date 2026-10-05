@@ -10,8 +10,12 @@ const src = readFileSync(SRC, 'utf8');
 let pass = 0;
 const ok = (c, m) => { assert.ok(c, m); pass += 1; console.log(`  ✓ ${m}`); };
 
-/* 取出最小化分支的源码片段（从 `if (minimized)` 到该分支结束） */
-const i = src.indexOf('if (minimized) {');
+/* 取出最小化分支的源码片段（从最小化判定到该分支结束）。
+ * ZB-24：最小化状态由局部 useState 迁到模块级共享 store（会话头入口要读同一事实），
+ * 判定串随之变为 `if (ui.minimized)`。这里两种写法都认 —— 本测试要守的是
+ * 「胶囊渲染了什么」，不是「状态存在哪」，否则状态来源一改就假红。 */
+const mi = src.indexOf('if (ui.minimized) {');
+const i = mi >= 0 ? mi : src.indexOf('if (minimized) {');
 assert.ok(i > 0, '未找到最小化分支');
 const seg = src.slice(i, src.indexOf('\n      }', i) + 8);
 

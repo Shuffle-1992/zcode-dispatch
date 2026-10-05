@@ -40,7 +40,10 @@ ok(clampPos({ left: '100', top: '200' }, view).left === 100, 'A7 字符串数字
 ok(clampPos({ left: 10, top: 10 }, { vw: 0, vh: 0, w: 440, h: 620 }).left === 10, 'A8 拿不到视口尺寸时不猜，原样返回');
 
 console.log('\n胶囊定位（源码断言）');
-const i = src.indexOf('if (minimized) {');
+/* ZB-24：最小化状态迁到共享 store ⇒ 判定串为 `if (ui.minimized)`；两种写法都认
+ * （本测试守的是胶囊**定位**，不是状态存放位置）。 */
+const mi = src.indexOf('if (ui.minimized) {');
+const i = mi >= 0 ? mi : src.indexOf('if (minimized) {');
 assert.ok(i > 0, '未找到最小化分支');
 const seg = src.slice(i, src.indexOf('\n      }', i) + 8);
 ok(!/style:\s*rootStyle/.test(seg), 'S1 胶囊**不再**复用面板的 rootStyle（错位根因）');

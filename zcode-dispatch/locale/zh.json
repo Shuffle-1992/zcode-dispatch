@@ -5,6 +5,7 @@
   },
   "ui": {
     "title": "ZCode 派发台",
+    "headerTip": "打开 / 收起 ZCode 派发台面板",
     "connConnecting": "连接中",
     "connDemo": "演示数据",
     "connExt": "外部数据",
@@ -13,7 +14,7 @@
     "collapse": "折叠 / 展开",
     "minimize": "最小化为胶囊",
     "restore": "展开派发台",
-    "grip": "拖拽调整宽度",
+    "grip": "拖拽调整宽高（自动保存）",
     "pillRunning": "运行中",
     "pillQueued": "排队中",
     "pillIdle": "空闲",

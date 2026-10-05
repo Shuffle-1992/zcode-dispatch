@@ -41,6 +41,46 @@ window.__ModuleLoader__.load({
      * 由 AppFrame 渲染进专用 overlayLayer 图层；chat / plugin-manager / workspace
      * 三个官方包共 6 处先例都注册在此（list 型 → 注册必须带 id，order 参与排序）。 */
     const SLOT = 'shell.overlay';
+    /* ─────────────── ZB-24：会话标题行入口 ───────────────
+     * 用户要求（2026-10-05）：「把派发台改成与子智能体一样的位置，在那一行显示 ZCode 派发台，
+     * 点击弹出面板」—— 即**别只靠右下角悬浮窗**，要在会话标题行（「对话|轨迹」那一行的右侧）
+     * 有一枚入口胶囊。
+     *
+     * 槽位由活体 Inspect 实证（`cordis_inspect_query` client/Slots，requestedRoot 查占用者）：
+     * `conversation.session.header.actions`（list / session 作用域），现有占用者
+     * `subagent-catalog`(-30) / `agent-team`(-20) / `agent-preset`(-10) / `job-list`(20)
+     * —— 正是用户截图里的「N 个子智能体 / 智能体团队 / 创造模式 / 后台任务」。
+     * 我们取 order 10：排在 agent-preset 之后、DSH 自带「后台任务」之前。 */
+    const HEADER_SLOT = 'conversation.session.header.actions';
+    /* 面板开关与概要的**模块级共享状态**（ZB-24）：两个渲染器 —— 悬浮面板（唯一持 wire 者）
+     * 与会话头入口（纯读者）—— 共用这一份。
+     * 为什么这么做：若让头入口也调 useWire()，**每开一个会话就多一条 1s 轮询**（useWire 每个
+     * 组件实例各建一条 wire），白白翻倍请求。共享 store 下，头入口零网络成本即可显示计数。 */
+    const panelUi = {
+      state: { minimized: false, running: 0, queued: 0, conn: 'connecting' },
+      listeners: new Set(),
+      get: () => panelUi.state,
+      /** 浅合并 + 值变化才通知（面板每秒重渲染，不做去重会白刷读者）。 */
+      set(patch) {
+        const prev = panelUi.state;
+        const next = { ...prev, ...patch };
+        let changed = false;
+        for (const k of Object.keys(next)) if (next[k] !== prev[k]) { changed = true; break; }
+        if (!changed) return next;
+        panelUi.state = next;
+        for (const l of [...panelUi.listeners]) {
+          try { l(next); } catch { /* 单个读者异常不影响其他读者 */ }
+        }
+        return next;
+      },
+      subscribe(l) { panelUi.listeners.add(l); return () => panelUi.listeners.delete(l); },
+    };
+    /** 订阅共享状态（读者用）。 */
+    function usePanelUi() {
+      const [v, setV] = useState(panelUi.get);
+      useEffect(() => panelUi.subscribe(setV), []);
+      return v;
+    }
 
     const LS = {
       pos: 'zcode-dispatch:panel:pos:v1', // 悬浮位置 {left, top}
@@ -230,6 +270,16 @@ window.__ModuleLoader__.load({
       '.zcd-pill-title{font-weight:600;white-space:nowrap;}',
       '.zcd-pill-n{flex:none;min-width:16px;text-align:center;font-size:10px;font-weight:600;padding:0 4px;border-radius:999px;background:' + T.hover + ';color:' + T.text + ';}',
       '.zcd-pill-state{color:' + T.text3 + ';white-space:nowrap;}',
+      /* ZB-24：会话标题行入口（与 DSH 自带 chip 同形态：小胶囊 + 计数徽标）。
+       * ⚠️ 这枚胶囊**不在** .zcd-root 子树里（它渲染在会话头槽位），
+       * 所以只能用 T.* 里那套带 --dsw-alias-* 回退的主题令牌，**不能**用 --zcd-* 自定义属性。 */
+      '.zcd-head{display:inline-flex;align-items:center;gap:6px;max-width:220px;padding:3px 10px;border:1px solid ' + T.border + ';border-radius:999px;background:transparent;color:' + T.text2 + ';font:inherit;cursor:pointer;transition:background-color .15s ease,color .15s ease;}',
+      '.zcd-head:hover{background:' + T.hover + ';color:' + T.text + ';}',
+      /* 面板当前是展开态 ⇒ 入口保持高亮（与 aria-expanded 同一事实，视觉上可核对） */
+      '.zcd-head.zcd-head-open{background:' + T.hover + ';color:' + T.text + ';}',
+      '.zcd-head-dot{flex:none;width:6px;height:6px;border-radius:999px;background:' + T.stIdle + ';}',
+      '.zcd-head-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.zcd-head-n{flex:none;min-width:16px;text-align:center;font-size:10px;font-weight:600;padding:0 4px;border-radius:999px;background:' + T.accent + ';color:' + T.onAccent + ';}',
       /* ZB-08：文件锁列表（哪个文件被哪个进程锁着、锁了多久） */
       '.zcd-locks{display:flex;flex-direction:column;gap:6px;}',
       '.zcd-filelocks{display:flex;flex-direction:column;gap:3px;}',
@@ -294,6 +344,7 @@ window.__ModuleLoader__.load({
     const STRINGS = {
       zh: {
         title: 'ZCode 派发台',
+        headerTip: '打开 / 收起 ZCode 派发台面板',
         connConnecting: '连接中', connDemo: '演示数据', connExt: '外部数据', connLive: '已连接', connOffline: '未连接',
         collapse: '折叠 / 展开', minimize: '最小化为胶囊', restore: '展开派发台', grip: '拖拽调整宽高（自动保存）',
         pillRunning: '运行中', pillQueued: '排队中', pillIdle: '空闲',
@@ -341,6 +392,7 @@ window.__ModuleLoader__.load({
       },
       en: {
         title: 'ZCode Dispatch Console',
+        headerTip: 'Open or hide the ZCode dispatch panel',
         connConnecting: 'connecting', connDemo: 'demo data', connExt: 'external', connLive: 'live', connOffline: 'offline',
         collapse: 'Collapse / Expand', minimize: 'Minimize to pill', restore: 'Restore console', grip: 'Drag to resize (saved automatically)',
         pillRunning: 'running', pillQueued: 'queued', pillIdle: 'idle',
@@ -2167,6 +2219,34 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /* ─────────────── ZB-24：会话标题行入口 ───────────────
+     * 与 DSH 自带的「N 个子智能体 / 智能体团队 / 创造模式 / 后台任务」同槽位、同形态：
+     * 一枚小胶囊，点一下就开/收右下角的派发台面板（面板本体不变，仍由 shell.overlay 承载）。
+     *
+     * 三条设计约束（都是有意的）：
+     *   ① **不建 wire**：状态全部来自共享 store（写入方是 FloatingPanel）。若这里调 useWire()，
+     *      每个会话都会多一条 1s 轮询 —— 只为显示一个数字，不值。
+     *   ② **不复制面板**：点击只切 store 的 minimized；面板是单实例（浮层是 frame-wide 的）。
+     *   ③ 主题令牌只能用 T.*（带 --dsw-alias-* 回退）—— 这枚胶囊不在 .zcd-root 子树内，
+     *      拿不到 --zcd-* 自定义属性（见 CSS 注释）。 */
+    function HeaderEntry() {
+      const ui = usePanelUi();
+      const n = (ui.running || 0) + (ui.queued || 0);
+      const active = !ui.minimized;
+      const dot = ui.running > 0 ? T.stRunning : ui.queued > 0 ? T.stQueued : T.stIdle;
+      return h('button', {
+        type: 'button',
+        className: 'zcd-head' + (active ? ' zcd-head-open' : ''),
+        title: t('headerTip'),
+        'aria-label': t('headerTip'),
+        'aria-expanded': active,
+        onClick: () => panelUi.set({ minimized: active }),
+      },
+        h('span', { className: 'zcd-head-dot', 'aria-hidden': true, style: { background: dot } }),
+        h('span', { className: 'zcd-head-label' }, t('title')),
+        n > 0 ? h('span', { className: 'zcd-head-n' }, String(n)) : null);
+    }
+
     function FloatingPanel() {
       /* ZB-07/10/11：位置持久化。ZB-11 起存的是**锚定信息**（贴哪条边 + 四条边距），
        * 而不是单纯的绝对 {left, top} —— 这样窗口尺寸变化时位置可被正确推导（见 anchorOf/resolvePos）。
@@ -2203,7 +2283,9 @@ window.__ModuleLoader__.load({
       const [collapsed, setCollapsed] = useState(() => !!loadJson(LS.collapsed, false));
       /* ZB-08：固定（锁定位置）。持久化 —— 固定是"我把面板安置好了"的意图，跨会话应当保持。 */
       const [pinned, setPinned] = useState(() => !!loadJson(LS.pinned, false));
-      const [minimized, setMinimized] = useState(false);
+      /* ZB-24：最小化（胶囊）状态改用**模块级共享 store** —— 会话头入口要读同一个事实，
+       * 否则「头入口显示已打开、面板却已收成胶囊」这类不一致就必然出现。 */
+      const ui = usePanelUi();
       const [lastJobId, setLastJobId] = useState(null);
       const [feedback, setFeedback] = useState(null);
       const [busy, setBusy] = useState(false);
@@ -2212,6 +2294,14 @@ window.__ModuleLoader__.load({
         channels, channelGet, channelSet, retry, fallbackGet, fallbackSet,
         switchSet,
       } = useWire();
+      /* ZB-24：把「运行中/排队中/连接态」发布到共享 store ——
+       * 会话头入口据此显示计数徽标，而它**不必**自己再建一条 wire（ZB-24 的解耦点：
+       * 面板是唯一持 wire 者，头入口是纯读者）。panelUi.set 内部做值变化去重，
+       * 面板每秒重渲染不会白刷读者。 */
+      useEffect(() => {
+        const counts = (snapshot && snapshot.counts) || {};
+        panelUi.set({ running: Number(counts.running) || 0, queued: Number(counts.queued) || 0, conn });
+      }, [snapshot, conn]);
       const rootRef = useRef(null);
       /* ZB-11：这里保存的是**锚定记录**（贴哪条边 + 四条边距），而不是解析后的坐标。
        * 渲染时才用 resolvePos 推导实际 left/top（见 rootStyle），故窗口尺寸一变，
@@ -2241,7 +2331,7 @@ window.__ModuleLoader__.load({
       }, []);
       /* 挂载后也要重算一次：初始渲染时面板还没有真实尺寸（offsetWidth=0），
        * 用估计值推导过一次；挂载后尺寸已知，需要纠正。 */
-      useEffect(() => { forcePos((n) => n + 1); }, [collapsed, minimized, width, height]);
+      useEffect(() => { forcePos((n) => n + 1); }, [collapsed, ui.minimized, width, height]);
       /* ZB-21：样式只注入一次到 document.head（脱离 React 重渲染路径）。
        * 卸载时移除，保持"插件卸载即清理"的原有语义。
        * 依赖数组为空 ⇒ 只在挂载/卸载时执行，轮询重渲染不会碰它（这正是修复点）。 */
@@ -2441,7 +2531,7 @@ window.__ModuleLoader__.load({
         ? { ...cssVars, left: `${Math.round(resolved.left)}px`, top: `${Math.round(resolved.top)}px` }
         : { ...cssVars, right: '24px', bottom: '24px' };
 
-      if (minimized) {
+      if (ui.minimized) {
         const running = (snapshot && snapshot.counts && snapshot.counts.running) || 0;
         const waiting = running + ((snapshot && snapshot.counts && snapshot.counts.queued) || 0);
         /* ZB-06（用户报告「最小化后只能看到一点点内容」）：胶囊原先只画
@@ -2461,7 +2551,7 @@ window.__ModuleLoader__.load({
             className: 'zcd-pill',
             title: `${t('title')} · ${status}${waiting > 0 ? `（${waiting}）` : ''} — ${t('restore')}`,
             'aria-label': `${t('restore')}：${t('title')}`,
-            onClick: () => setMinimized(false),
+            onClick: () => panelUi.set({ minimized: false }),
           },
             h(StatusDot, { state: running > 0 ? 'running' : waiting > 0 ? 'queued' : 'idle' }),
             h('span', { className: 'zcd-pill-title' }, t('title')),
@@ -2510,7 +2600,7 @@ window.__ModuleLoader__.load({
                 saveJson(LS.collapsed, nv);
               },
             }, h(IconChevron, { up: collapsed })),
-            h('button', { className: 'zcd-iconbtn', title: t('minimize'), 'aria-label': t('minimize'), onPointerDown: (e) => e.stopPropagation(), onClick: () => setMinimized(true) }, h(IconMinus)),
+            h('button', { className: 'zcd-iconbtn', title: t('minimize'), 'aria-label': t('minimize'), onPointerDown: (e) => e.stopPropagation(), onClick: () => panelUi.set({ minimized: true }) }, h(IconMinus)),
           ),
           collapsed ? null : h('div', { className: 'zcd-body' },
             /* ZB-01 ③：离线原因放在 body 首行（始终在默认折叠的各分区之外）——
@@ -2613,6 +2703,12 @@ window.__ModuleLoader__.load({
           // （对照 chat.quota-notice / plugin-manager.refresh-toast / workspace.row-toast）
           ctx.slots.inject(SLOT, () => ctx.slots.register({ name: SLOT, id: 'zcode-dispatch.console', order: 20 },
             () => h(PanelBoundary, null, h(FloatingPanel))));
+          /* ZB-24：会话标题行入口（用户要求）。槽位/占用者见文件头 HEADER_SLOT 注释：
+           * 与 DSH 自带的 subagent-catalog(-30) / agent-team(-20) / agent-preset(-10) 同一行，
+           * 取 order 10 ⇒ 排在「创造模式」之后、自带「后台任务」(20) 之前。
+           * id 用 `zcode-dispatch`（不带 .console 后缀）—— 与浮层那条是两个不同槽位的 cell。 */
+          ctx.slots.inject(HEADER_SLOT, () => ctx.slots.register({ name: HEADER_SLOT, id: 'zcode-dispatch', order: 10 },
+            () => h(HeaderEntry)));
         } catch (e) {
           try { console.warn('[zcode-dispatch] apply 降级（不阻塞启动）:', e && e.message); } catch { /* 连 console 都不可用就彻底静默 */ }
         }

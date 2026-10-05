@@ -5,6 +5,7 @@
   },
   "ui": {
     "title": "ZCode Dispatch Console",
+    "headerTip": "Open or hide the ZCode dispatch panel",
     "connConnecting": "connecting",
     "connDemo": "demo data",
     "connExt": "external",
@@ -13,7 +14,7 @@
     "collapse": "Collapse / Expand",
     "minimize": "Minimize to pill",
     "restore": "Restore console",
-    "grip": "Drag to resize width",
+    "grip": "Drag to resize (saved automatically)",
     "pillRunning": "running",
     "pillQueued": "queued",
     "pillIdle": "idle",
