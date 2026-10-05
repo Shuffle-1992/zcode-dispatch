@@ -2321,17 +2321,18 @@ window.__ModuleLoader__.load({
         };
       }, [open]);
 
-      /* ⚠️ 临时诊断（ZB-27j，对齐验证完成后删除）：把本入口与同排邻居入口的**真实测量值**
-       * （高度/宽度/纵向位置 + 计算样式的 fontSize/fontFamily/fontWeight/lineHeight/color/padding/gap）
-       * 写进 localStorage —— 它会随 Chromium 落盘到
+      /* ⚠️ 临时诊断（ZB-27n，对齐验证完成后删除）：**时序快照** —— 每次 open/hover 变化都追加一条，
+       * 记录：我的 React 状态（open/hover）+ 浏览器自己认定的 matches(':hover'/':focus'/':focus-visible')
+       * + 计算样式（color/fontSize/fontFamily/fontWeight/lineHeight）+ 真实几何 + **同一时刻邻居的值**。
+       * 写入 localStorage['zcd:diag']，随 Chromium 落盘到
        *   %APPDATA%\@deepseek-ai\dsh-desktop\Local Storage\leveldb\*.log
-       * 于是排查方可以**直接从磁盘读回数字**，无需用户开 DevTools 或截图。
-       * 失败一律静默（无 window / 无 getComputedStyle 的测试桩不会受影响）。 */
+       * ⇒ 排查方直接从磁盘读回，无需 DevTools/截图；能分辨"我的状态卡住"与"别的东西在改颜色"。 */
       useEffect(() => {
         try {
           const root = rootRef.current;
           const el = root && typeof root.querySelector === 'function' ? root.querySelector('.zcd-chip') : null;
           if (!el || typeof window === 'undefined' || !window.localStorage || typeof window.getComputedStyle !== 'function') return;
+          const m = (sel) => { try { return typeof el.matches === 'function' ? el.matches(sel) : null; } catch { return null; } };
           const snap = (n) => {
             const c = window.getComputedStyle(n);
             const b = n.getBoundingClientRect();
@@ -2342,7 +2343,7 @@ window.__ModuleLoader__.load({
               w: Math.round(b.width * 100) / 100,
               top: Math.round(b.top * 100) / 100,
               fontSize: c.fontSize,
-              fontFamily: String(c.fontFamily).slice(0, 40),
+              fontFamily: String(c.fontFamily).slice(0, 36),
               fontWeight: c.fontWeight,
               lineHeight: c.lineHeight,
               color: c.color,
@@ -2354,13 +2355,26 @@ window.__ModuleLoader__.load({
           const row = (typeof el.closest === 'function' ? el.closest('[class*="headerActions"]') : null)
             || (el.parentElement && el.parentElement.parentElement);
           const mates = row && typeof row.querySelectorAll === 'function'
-            ? Array.from(row.querySelectorAll('button, [role="button"]')).filter((b) => b !== el).slice(0, 4)
+            ? Array.from(row.querySelectorAll('button, [role="button"]')).filter((b) => b !== el).slice(0, 2)
             : [];
-          window.localStorage.setItem('zcd:diag', JSON.stringify({
-            at: new Date().toISOString(), mine: snap(el), mates: mates.map(snap),
-          }));
+          const entry = {
+            at: new Date().toISOString(),
+            state: { open, hover },
+            matches: { hover: m(':hover'), focus: m(':focus'), focusVisible: m(':focus-visible') },
+            ariaExpanded: el.getAttribute('aria-expanded'),
+            focusIsChip: (typeof document !== 'undefined' && document.activeElement) ? document.activeElement === el : null,
+            inlineStyle: String(el.getAttribute('style') || '').slice(0, 120),
+            mine: snap(el),
+            mates: mates.map(snap),
+          };
+          let series = [];
+          try { series = JSON.parse(window.localStorage.getItem('zcd:diag') || '[]') || []; } catch { series = []; }
+          if (!Array.isArray(series)) series = [];
+          series.push(entry);
+          while (series.length > 25) series.shift();
+          window.localStorage.setItem('zcd:diag', JSON.stringify(series));
         } catch { /* 诊断失败不影响功能 */ }
-      }, []);
+      }, [open, hover]);
 
       /* ZB-27l：**悬浮展开 / 离开即关**的挂点放在外层容器上 ——
        * 弹窗是容器的子节点，所以"从入口移进弹窗"不会触发 mouseleave（指针仍在子树内）；
@@ -2368,9 +2382,12 @@ window.__ModuleLoader__.load({
       return h('div', {
         className: 'zcd-entry',
         ref: rootRef,
-        onMouseEnter: () => { setHover(true); scheduleOpen(); },
+        /* ZB-27n：容器**只管开合、不设 hover** —— 面板是容器的子节点，指针从外面移到**面板**上时
+         * 容器的 onMouseEnter 同样会触发；若在这里 setHover(true)，指针明明在面板上、入口的字却亮了
+         * （用户截图 1 的现象）。hover 只由按钮自身的 enter/leave 驱动，才等价于官方 .trigger:hover。 */
+        onMouseEnter: scheduleOpen,
         onMouseLeave: () => { setHover(false); scheduleClose(); },
-        onFocus: () => { setHover(true); scheduleOpen(); },
+        onFocus: scheduleOpen,
         onBlur: (e) => {
           /* 优先用事件的 currentTarget（真实 DOM 里就是外层容器），没有则退回 ref ——
            * 两种来源都能做"焦点是否仍在子树内"的包含判断，键盘 Tab / 移入弹窗都能正确区分。 */

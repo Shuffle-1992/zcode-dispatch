@@ -79,12 +79,18 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(/right:0/.test(mcss), 'B29 贴右展开（**有意偏离**：官方用 left:0 + JS menuShift；本入口在标题行最右端）');
   ok(/overflow:auto/.test(mcss), 'B30 内容滚动');
   /* ZB-27j：临时诊断通道（把测量值写进 localStorage，随 Chromium 落盘到 leveldb 供排查方读回）。 */
-  ok(/localStorage\.setItem\('zcd:diag'/.test(src), '★ B36 诊断：测量值写入 localStorage（zcd:diag）');
+  ok(/localStorage\.setItem\('zcd:diag'/.test(src) && /\[open, hover\]/.test(src), '★ B36 诊断：**时序快照**写入 localStorage（zcd:diag，依赖 open/hover 变化）');
   ok(/getComputedStyle\(n\)/.test(src) && /getBoundingClientRect\(\)/.test(src), 'B37 诊断：采集计算样式 + 真实几何');
   ok(/mates: mates\.map\(snap\)/.test(src) && /querySelectorAll\(/.test(src), 'B38 诊断：同时采集同排邻居入口以便逐项对比');
+  ok(/matches: \{ hover: m\(':hover'\), focus: m\(':focus'\), focusVisible: m\(':focus-visible'\) \}/.test(src),
+    '★ B39 诊断：记录浏览器认定的 :hover/:focus/:focus-visible（用于分辨"我的状态卡住"与"别处改色"）');
+  ok(/inlineStyle: String\(el\.getAttribute\('style'\)/.test(src) && /focusIsChip:/.test(src), 'B40 诊断：记录内联样式与 document.activeElement 是否为我');
   /* ZB-27i：颜色内联兜底（现场实测：resting 令牌与邻居相同，但为排除未知宿主规则，颜色也走内联）。 */
   ok(/color: hover \? T\.text2 : T\.text3/.test(src), '★ B31 颜色内联且**仅 hover** 高亮（resting=label-tertiary / hover=label-secondary）—— 官方 .trigger:hover 语义，展开态不再保持高亮');
   ok(/onMouseEnter: \(\) => setHover\(true\)/.test(src) && /onMouseLeave: \(\) => setHover\(false\)/.test(src), '★ B32 悬停态用 React 状态表达（不依赖宿主伪类命中）');
+  /* ZB-27n：hover 只由**按钮自身**驱动；容器不设 hover（否则指针移到面板上时入口也会变亮）。 */
+  ok(/onMouseEnter: scheduleOpen,/.test(src), '★ B32b 容器 onMouseEnter 只调度展开、**不设 hover**（面板是子节点，指针移到面板上不应让入口变亮）');
+  ok(!/onMouseEnter: \(\) => \{ setHover\(true\); scheduleOpen\(\); \}/.test(src), '★ B32c 已移除"容器进入即 setHover(true)"的写法');
   ok(/onFocus: \(\) => setHover\(true\)/.test(src) && /onBlur: \(\) => setHover\(false\)/.test(src), '★ B33 聚焦态同上（键盘可达时的视觉反馈）');
   ok(/const \[hover, setHover\] = useState\(false\)/.test(src), 'B34 hover 状态声明');
   ok(/color: hover \? T\.text2 : T\.text3/.test(src) && !/#[0-9a-fA-F]{3,8}\b/.test(src.match(/color: hover[^\n]*/)[0]), 'B35 内联色只用主题令牌（无字面色值 ⇒ 明暗自适应）');
