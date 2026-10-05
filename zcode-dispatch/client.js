@@ -269,12 +269,12 @@ window.__ModuleLoader__.load({
        *   border:0; border-radius:var(--dsw-radius-sm); background:transparent;
        *   color:label-tertiary; font-size:12px; line-height:18px; cursor:pointer
        * （白色/透明底/无焦点环仍由下面的成组 !important 规则与元素内联 style 兜住宿主覆盖。） */
-      /* ZB-27k：几何取**子智能体**（.oXE0lW_trigger —— 就在本入口左边，用户点名「参考子智能体的
-       * 三角形图标」）：gap:4px; min-height:28px; padding:3px 2px; border-radius:var(--dsw-radius-sm);
-       * font-size:12px; line-height:18px; color:label-tertiary。
-       * （官方自身不统一：jobs gap 3px；agent-team gap 5px + padding 3px 7px；子智能体 gap 4px。
-       *   可见邻居里子智能体与创造模式都是 4px ⇒ 取 4px。箭头尺寸同理取子智能体的默认 14。） */
-      '.zcd-entry .zcd-chip{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:3px 2px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:' + T.text3 + ';font-size:12px;line-height:18px;cursor:pointer;}',
+      /* ZB-27k/o：几何取可见邻居的**官方值**（用户点名「参考子智能体的三角形图标」，又说与左侧入口
+       * 之间的间距偏紧）：gap:4px（子智能体）；min-height:28px；**padding:3px 7px**（agent-team，
+       * 官方各入口本身不统一：jobs 3px 2px / 子智能体 3px 2px / agent-team 3px 7px —— 取横向 7px
+       * 是为了让入口两侧的呼吸感与 agent-team 一致）；border-radius:var(--dsw-radius-sm)；
+       * font-size:12px; line-height:18px; color:label-tertiary；箭头 14（子智能体默认）。 */
+      '.zcd-entry .zcd-chip{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:3px 7px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:' + T.text3 + ';font-size:12px;line-height:18px;cursor:pointer;}',
       /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
        * 焦点可见性改由**颜色**承担（与邻居把 :hover/:focus-visible 变成 label-primary 同思路）。 */
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',
@@ -2662,8 +2662,11 @@ window.__ModuleLoader__.load({
           try { ensureStyle(); } catch { /* 样式注入失败不影响注册（PanelBody 里还会再试） */ }
           /* ZB-27（用户要求）：**只在会话标题行注册一个入口**，弹窗挂在它下面。
            * 原先那条注册到 shell.overlay 的右下角浮窗（id `zcode-dispatch.console`，order 20）
-           * 与它的最小化胶囊一并取消 —— 两份 UI 会让"哪个才是派发台"变得含糊。 */
-          ctx.slots.inject(HEADER_SLOT, () => ctx.slots.register({ name: HEADER_SLOT, id: 'zcode-dispatch', order: 10 },
+           * 与它的最小化胶囊一并取消 —— 两份 UI 会让"哪个才是派发台"变得含糊。
+           * ZB-27o（用户要求「把派发台移到子智能体后面」）：order 10 → **-25**，插到
+           * 子智能体目录(-30) 与智能体团队(-20) 之间 ⇒ 排布变为
+           *   5 个子智能体 | ZCode 派发台 | 智能体团队 | 创造模式 |（自带）后台任务(20) */
+          ctx.slots.inject(HEADER_SLOT, () => ctx.slots.register({ name: HEADER_SLOT, id: 'zcode-dispatch', order: -25 },
             () => h(HeaderEntry)));
         } catch (e) {
           try { console.warn('[zcode-dispatch] apply 降级（不阻塞启动）:', e && e.message); } catch { /* 连 console 都不可用就彻底静默 */ }

@@ -22,7 +22,7 @@ const ok = (c, m) => { assert.ok(c, m); pass += 1; console.log(`  ✓ ${m}`); };
 
 console.log('A. 槽位与注册契约');
 ok(/const HEADER_SLOT = 'conversation\.session\.header\.actions';/.test(code), 'A1 HEADER_SLOT 指向会话标题行槽位');
-ok(/id: 'zcode-dispatch', order: 10/.test(code), 'A2 注册 id=zcode-dispatch、order=10（在 agent-preset(-10) 与 job-list(20) 之间）');
+ok(/id: 'zcode-dispatch', order: -25/.test(code), '★ A2 order=**-25**（插在子智能体目录 -30 与智能体团队 -20 之间 = 用户要求「移到子智能体后面」）');
 ok(!/ctx\.slots\.inject\(SLOT,/.test(code), '★ A3 不再注册 shell.overlay（右下角浮窗已取消，避免两份 UI）');
 ok(!/zcode-dispatch\.console/.test(code), '★ A4 旧浮层 cell id（zcode-dispatch.console）已移除');
 
@@ -38,7 +38,7 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(/display:inline-flex/.test(css), 'B2 display:inline-flex');
   ok(/gap:4px/.test(css), '★ B3 gap 4px（子智能体 .oXE0lW_trigger 同值 —— 用户点名参考它；官方 jobs 是 3px、agent-team 是 5px，官方自身不统一）');
   ok(/min-height:28px/.test(css), '★ B4 min-height 28px（官方同值；不是 height:22px —— 那是被动装饰 agent-preset）');
-  ok(/padding:3px 2px/.test(css), '★ B5 padding 3px 2px（官方同值）');
+  ok(/padding:3px 7px/.test(css), '★ B5 padding 3px 7px（agent-team 官方同值 —— 用户反馈与左侧入口间距偏紧，取横向 7px 增加呼吸感）');
   ok(/border:0/.test(css), 'B6 border 0');
   ok(/border-radius:var\(--dsw-radius-sm/.test(css), '★ B7 圆角 --dsw-radius-sm（官方同值）');
   ok(/background:transparent/.test(css), 'B8 background transparent（官方同值；也是用户"不要背景色"的要求）');
