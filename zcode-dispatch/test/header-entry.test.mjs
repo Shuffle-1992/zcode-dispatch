@@ -53,7 +53,12 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(/width: 12, height: 12, viewBox: '0 0 16 16'/.test(code), '★ B16 箭头 size 12 / viewBox 16（官方 JobListAction.tsx: size={12}）');
   ok(/strokeWidth: 1\b/.test(code) && /M4 6L7\.29289 9\.29289C7\.68342 9\.68342 8\.31658 9\.68342 8\.70711 9\.29289L12 6/.test(code),
     '★ B17 箭头路径与 strokeWidth 1 逐字取自官方 IconChevronDownOutlineRegular');
-  ok(/appearance:none/.test(css) && /background:transparent/.test(css), 'B18 appearance:none + 透明底（第三方入口必须自行消除宿主 button 外观）');
+  ok(/background:transparent/.test(css), 'B18 透明底');
+  /* ZB-27j：**不得**给入口加 appearance:none —— 官方 .trigger 没有它，而 Chromium 下给 <button> 加
+   * appearance:none 会让它不再套用 UA 按钮字体（退化为继承应用字体）⇒ 现场"略大 + 偏下"。 */
+  ok(!/appearance:\s*none/.test(css) && !/-webkit-appearance/.test(css),
+    '★ B18b 入口**不设** appearance:none（否则 <button> 丢掉 UA 按钮字体：略大且基线偏下 —— 现场症状）');
+  ok(/border:0/.test(css) && /border-radius:var\(--dsw-radius-sm/.test(css), 'B18c 用官方同款方式消除原生外观（border:0 + radius，不靠 appearance）');
   ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(css), '★ B19 无字面色值 ⇒ 明暗两套主题自适应（颜色只走 T.* 令牌）');
   const reset = code.split('\n').find((l) => l.includes('.zcd-chip[aria-expanded="true"]') && l.includes('background:transparent'));
   ok(!!reset, '★ B20 有"所有交互态统一无底色"的成组重置（含 [aria-expanded="true"]）');
@@ -73,6 +78,10 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(/max-height:min\(480px,calc\(100vh - 140px\)\)/.test(mcss), '★ B28 max-height min(480px,100vh-140px)（官方同值）');
   ok(/right:0/.test(mcss), 'B29 贴右展开（**有意偏离**：官方用 left:0 + JS menuShift；本入口在标题行最右端）');
   ok(/overflow:auto/.test(mcss), 'B30 内容滚动');
+  /* ZB-27j：临时诊断通道（把测量值写进 localStorage，随 Chromium 落盘到 leveldb 供排查方读回）。 */
+  ok(/localStorage\.setItem\('zcd:diag'/.test(src), '★ B36 诊断：测量值写入 localStorage（zcd:diag）');
+  ok(/getComputedStyle\(n\)/.test(src) && /getBoundingClientRect\(\)/.test(src), 'B37 诊断：采集计算样式 + 真实几何');
+  ok(/mates: mates\.map\(snap\)/.test(src) && /querySelectorAll\(/.test(src), 'B38 诊断：同时采集同排邻居入口以便逐项对比');
   /* ZB-27i：颜色内联兜底（现场实测：resting 令牌与邻居相同，但为排除未知宿主规则，颜色也走内联）。 */
   ok(/color: \(open \|\| hover\) \? T\.text2 : T\.text3/.test(src), '★ B31 颜色内联：resting=T.text3(label-tertiary) / 悬停或展开=T.text2(label-secondary)（与官方 .trigger 同色阶）');
   ok(/onMouseEnter: \(\) => setHover\(true\)/.test(src) && /onMouseLeave: \(\) => setHover\(false\)/.test(src), '★ B32 悬停态用 React 状态表达（不依赖宿主伪类命中）');

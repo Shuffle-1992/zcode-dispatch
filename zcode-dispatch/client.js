@@ -258,7 +258,18 @@ window.__ModuleLoader__.load({
        *    "static chrome, never a control"（被动装饰、窄屏优先隐藏），不是交互入口的比对基准。
        * 唯一有意偏离官方的是"清除宿主状态高亮"（官方用自己的类名，不存在此问题；我们用第三方类名，
        * 现场已复现宿主把底/焦点环加到 headerActions 里的 button 上）。 */
-      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;display:inline-flex;align-items:center;gap:3px;min-height:28px;padding:3px 2px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:' + T.text3 + ';font-size:12px;line-height:18px;cursor:pointer;white-space:nowrap;}',
+      /* ZB-27j（用户：「字体颜色对了，大小好像有点区别、放大了些，并且对不齐、偏下」）：
+       * 这两个症状**同时**指向"字体不是邻居那套"，而我一直多写了一条官方没有的声明：
+       *   `appearance:none`（含 -webkit- 前缀）。
+       * Chromium 下给 <button> 加 appearance:none 会让它不再套用 **UA 按钮字体**（退化为继承应用字体），
+       * 应用字体 x-height 更大、基线也更低 ⇒ 视觉上"大一点 + 偏下"，与现场描述完全一致。
+       * 官方 .trigger 只用 `border:0; background:transparent` 消除原生外观，**从不用 appearance**。
+       * 因此这里改为**一比一照抄官方声明列表**，不再有任何自加项：
+       *   display:inline-flex; align-items:center; gap:3px; min-height:28px; padding:3px 2px;
+       *   border:0; border-radius:var(--dsw-radius-sm); background:transparent;
+       *   color:label-tertiary; font-size:12px; line-height:18px; cursor:pointer
+       * （白色/透明底/无焦点环仍由下面的成组 !important 规则与元素内联 style 兜住宿主覆盖。） */
+      '.zcd-entry .zcd-chip{display:inline-flex;align-items:center;gap:3px;min-height:28px;padding:3px 2px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:' + T.text3 + ';font-size:12px;line-height:18px;cursor:pointer;}',
       /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
        * 焦点可见性改由**颜色**承担（与邻居把 :hover/:focus-visible 变成 label-primary 同思路）。 */
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',
@@ -2275,6 +2286,47 @@ window.__ModuleLoader__.load({
           try { document.removeEventListener('keydown', onKey, true); } catch { /* 同上 */ }
         };
       }, [open]);
+
+      /* ⚠️ 临时诊断（ZB-27j，对齐验证完成后删除）：把本入口与同排邻居入口的**真实测量值**
+       * （高度/宽度/纵向位置 + 计算样式的 fontSize/fontFamily/fontWeight/lineHeight/color/padding/gap）
+       * 写进 localStorage —— 它会随 Chromium 落盘到
+       *   %APPDATA%\@deepseek-ai\dsh-desktop\Local Storage\leveldb\*.log
+       * 于是排查方可以**直接从磁盘读回数字**，无需用户开 DevTools 或截图。
+       * 失败一律静默（无 window / 无 getComputedStyle 的测试桩不会受影响）。 */
+      useEffect(() => {
+        try {
+          const root = rootRef.current;
+          const el = root && typeof root.querySelector === 'function' ? root.querySelector('.zcd-chip') : null;
+          if (!el || typeof window === 'undefined' || !window.localStorage || typeof window.getComputedStyle !== 'function') return;
+          const snap = (n) => {
+            const c = window.getComputedStyle(n);
+            const b = n.getBoundingClientRect();
+            return {
+              text: String(n.textContent || '').trim().slice(0, 12),
+              tag: n.tagName,
+              h: Math.round(b.height * 100) / 100,
+              w: Math.round(b.width * 100) / 100,
+              top: Math.round(b.top * 100) / 100,
+              fontSize: c.fontSize,
+              fontFamily: String(c.fontFamily).slice(0, 40),
+              fontWeight: c.fontWeight,
+              lineHeight: c.lineHeight,
+              color: c.color,
+              padding: c.padding,
+              gap: c.gap,
+              appearance: c.appearance || c.webkitAppearance || '',
+            };
+          };
+          const row = (typeof el.closest === 'function' ? el.closest('[class*="headerActions"]') : null)
+            || (el.parentElement && el.parentElement.parentElement);
+          const mates = row && typeof row.querySelectorAll === 'function'
+            ? Array.from(row.querySelectorAll('button, [role="button"]')).filter((b) => b !== el).slice(0, 4)
+            : [];
+          window.localStorage.setItem('zcd:diag', JSON.stringify({
+            at: new Date().toISOString(), mine: snap(el), mates: mates.map(snap),
+          }));
+        } catch { /* 诊断失败不影响功能 */ }
+      }, []);
 
       return h('div', { className: 'zcd-entry', ref: rootRef },
         /* ZB-27f：**必须是 <button>** —— 邻居都是 button，元素相同才能拿到同一套 UA/平台按钮字体
