@@ -48,9 +48,9 @@
 import { spawn as nodeSpawn } from 'node:child_process';
 import {
   closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync,
-  renameSync, statSync, unlinkSync, writeFileSync, writeSync,
+  realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync,
 } from 'node:fs';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash, randomBytes } from 'node:crypto'; // ZB-08：createHash 供文件锁路径哈希用
 
@@ -316,14 +316,41 @@ function hashPath(p) {
   return createHash('sha256').update(normalizeForLock(p)).digest('hex').slice(0, 16);
 }
 
-/** 归一化：统一分隔符 + 大小写（Windows 文件系统大小写不敏感）+ 去末尾斜杠。
+/** 归一化：统一分隔符 + 大小写（Windows 文件系统大小写不敏感）+ 去末尾斜杠 + **realpath**。
  *
  * ⚠️ ZB-08 实测修正：初版**只小写了盘符**，没小写路径其余部分 —— 结果
  * `F:\proj\src\a.ts` / `F:\PROJ\SRC\A.TS` / `F:\Proj\Src\a.Ts` 三种写法产出
  * **3 把不同的锁**，三个任务同时写同一个文件（正是细粒度锁要防的事故，探针实测确认）。
- * Windows 上路径整体大小写不敏感，故按平台决定：Windows 整体小写，POSIX 保持原样。 */
+ * Windows 上路径整体大小写不敏感，故按平台决定：Windows 整体小写，POSIX 保持原样。
+ *
+ * ⚠️ ZB-26（审计 B1）再修一层：大小写/分隔符一致**还不够** —— 8.3 短名（`DISPAT~1.MJS`）、
+ * junction / symlink、`\\?\` 前缀指向的是**同一个文件**，却产出不同的哈希 ⇒ 同一个文件两把锁，
+ * 单写者语义被绕过（审计实测同一文件 distinct lock keys = 2）。
+ * 修法：对**最长已存在祖先**做 `realpathSync.native`（不存在的尾段原样拼回，因为锁必须能表达
+ * 「将来才创建的文件」—— `test/file-lock.test.mjs` 用的就是不存在的路径）；解析失败退回 resolve。
+ * realpath 只在真实文件系统上生效，故对纯字符串路径零副作用。 */
+function realpathBestEffort(absPath) {
+  try {
+    let head = absPath;
+    const tail = [];
+    // 逐级向上找到第一个真实存在的祖先（最多回溯 8 级，避免病态路径反复 stat）
+    for (let i = 0; i < 8; i += 1) {
+      if (existsSync(head)) {
+        const real = realpathSync.native(head);
+        return tail.length ? join(real, ...tail.reverse()) : real;
+      }
+      const parent = dirname(head);
+      if (parent === head) break;
+      tail.push(basename(head));
+      head = parent;
+    }
+  } catch { /* 权限/竞态：退回原路径 */ }
+  return absPath;
+}
+
 function normalizeForLock(p) {
-  let s = resolve(String(p)).replace(/\\/g, '/');
+  let s = resolve(String(p));
+  s = realpathBestEffort(s).replace(/\\/g, '/');
   // 去末尾斜杠（目录写法统一）
   s = s.replace(/\/+$/, '');
   if (process.platform === 'win32') {
@@ -431,6 +458,9 @@ export function createDispatcher(options = {}) {
   }
 
   function emit(type, payload) {
+    /* ZB-26（审计 B3）：每次 job 状态广播即视为一次更新 —— 在这里统一盖时间戳，
+     * 不必去改十几处 emit 调用点；多进程 persist 按 updatedAt 合并时需要它准确反映"谁更新"。 */
+    if (type === 'job-updated' && payload && typeof payload === 'object') payload.updatedAt = nowMs();
     const qs = type === 'queue-changed' ? queueSnapshot() : null;
     for (const fn of subscribers) {
       try {
@@ -470,12 +500,33 @@ export function createDispatcher(options = {}) {
    * 必须校验目标确实落在 `dirLogs` 内 —— 绝不让淘汰逻辑变成任意路径删除。
    * 任何失败都只是"没删掉"，绝不影响淘汰与写盘本身。
    */
+  /**
+   * 目标路径是否确实落在 root 目录**内部**（越界 / 目录本身 / 非法输入一律 false）。
+   *
+   * ZB-26（审计 B4）：抽成公共判定。原先只有**删除**路径做了这道检查，
+   * 而 `tail()` 的**读取**路径没有 —— `jobs.json` 是可被手工编辑的外部输入，
+   * 把某条 job 的 `captureOut` 指到 `C:\Users\x\.ssh\id_rsa` 就能让面板/agent 工具读到任意文件。
+   */
+  function isUnder(root, p) {
+    if (typeof p !== 'string' || p === '') return false;
+    try {
+      const rel = relative(root, resolve(p));
+      return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+    } catch { return false; }
+  }
+
+  /** 允许作为「runner 输出日志」读取的根（全部来自 config，不是 jobs.json 这种不可信输入）。 */
+  const allowedLogRoots = (
+    Array.isArray(options.allowedLogRoots) && options.allowedLogRoots.length
+      ? options.allowedLogRoots
+      : [dirLogs, workRoot, runnerCwd]
+  ).map((p) => resolve(p));
+
   function dropCaptureFiles(job) {
     for (const f of [job.captureOut, job.captureErr]) {
       if (typeof f !== 'string' || f === '') continue;
       try {
-        const rel = relative(dirLogs, resolve(f));
-        if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) continue; // 越界或目录本身：拒绝
+        if (!isUnder(dirLogs, f)) continue; // 越界或目录本身：拒绝（与 tail 的读取校验同一判定）
         unlinkSync(f);
       } catch { /* 不存在/被占用：忽略 */ }
     }
@@ -486,7 +537,16 @@ export function createDispatcher(options = {}) {
       try {
         const onDisk = JSON.parse(readFileSync(jobsFile, 'utf8'));
         for (const j of onDisk.jobs ?? []) {
-          if (!jobs.has(j.id) && !evicted.has(j.id)) jobs.set(j.id, normalizeJob(j));
+          if (evicted.has(j.id)) continue;
+          const mine = jobs.get(j.id);
+          if (mine === undefined) { jobs.set(j.id, normalizeJob(j)); continue; }
+          /* ZB-26（审计 B3，丢失更新）：原先只采纳「本进程不认识的 id」——
+           * 一旦采纳过某条记录，之后盘上更新的版本（别的进程写的终态）就被本进程的旧副本覆盖掉，
+           * 即注释自称的"缓解多进程互相覆盖"只覆盖插入、不覆盖更新，缓解不成立。
+           * 改为**按 updatedAt 合并**：盘上更新则采纳盘上；两边都没有 updatedAt（旧快照）时保持旧行为（不覆盖）。 */
+          const diskAt = Number(j.updatedAt) || 0;
+          const mineAt = Number(mine.updatedAt) || 0;
+          if (diskAt > mineAt) jobs.set(j.id, normalizeJob(j));
         }
       } catch { /* 损坏的 jobs.json 不阻断本进程写入 */ }
     }
@@ -494,6 +554,9 @@ export function createDispatcher(options = {}) {
     if (all.length > JOBS_FILE_CAP) {
       for (const j of all.slice(0, all.length - JOBS_FILE_CAP)) {
         if (!isTerminal(j)) continue; // 只淘汰终态
+        /* ZB-26（审计 B3）：只淘汰**本进程拥有**的记录 —— 别进程正在用的记录被本进程删掉，
+         * 会连带删掉它的捕获日志（dropCaptureFiles），而对方下一次 persist 又写回来，反复抖动。 */
+        if (j.ownerPid != null && j.ownerPid !== process.pid) continue;
         dropCaptureFiles(j); // ZB-05：连它的捕获日志一起回收（否则该目录无界增长）
         jobs.delete(j.id);
         tails.delete(j.id);
@@ -504,7 +567,17 @@ export function createDispatcher(options = {}) {
     atomicWrite(jobsFile, `${JSON.stringify({ version: 1, savedAt: new Date(nowMs()).toISOString(), jobs: all }, null, 2)}\n`);
   }
 
-  /** 启动恢复：上次残留 running → interrupted（记录原因）；残留 queued 一并终结（重启后原队列上下文已不存在）。 */
+  /**
+   * 启动恢复：上次残留 running → interrupted（记录原因）；残留 queued 一并终结
+   * （重启后原队列上下文已不存在）。
+   *
+   * ZB-26（审计 B2，真机语义反转）：**不能无条件改写**。`bin/zcd.mjs` 的每个子命令都会构造
+   * dispatcher（因而调用本函数），于是 `zcd kill <运行中的 job>` 会先在**本进程内存里**把
+   * 那个活 job 改成 interrupted ⇒ `kill()` 立刻 `isTerminal → return false`（运行中的任务无法终止、
+   * 进程泄漏），`zcd retry` 的 running 守卫也被绕过 ⇒ 同一任务被重复派发。
+   * 判据：落盘时记 `ownerPid`；只有当 ownerPid 已不存在时才认定是残留。
+   * 字段缺失（ZB-26 之前的旧快照）= 旧语义，一律按残留终结（保持既有测试与行为）。
+   */
   function restore() {
     if (!existsSync(jobsFile)) return [];
     const changed = [];
@@ -513,12 +586,17 @@ export function createDispatcher(options = {}) {
       for (const j of data.jobs ?? []) {
         if (jobs.has(j.id)) continue;
         normalizeJob(j);
-        if (j.state === 'running') {
+        const legacy = j.ownerPid == null;
+        const ownerAlive = !legacy && j.ownerPid === process.pid ? true : !legacy && pidAlive(j.ownerPid);
+        const stale = legacy || !ownerAlive;
+        if (j.state === 'running' && stale) {
           j.state = 'interrupted';
-          j.interruptReason = 'dispatcher restarted while run was in flight';
+          j.interruptReason = legacy
+            ? 'dispatcher restarted while run was in flight'
+            : `dispatcher restarted while the owning process (pid ${j.ownerPid}) is gone`;
           j.finishedAt = new Date(nowMs()).toISOString();
           changed.push(j.id);
-        } else if (j.state === 'queued') {
+        } else if (j.state === 'queued' && stale) {
           j.state = 'interrupted';
           j.interruptReason = 'dispatcher restarted before the queued job started';
           j.finishedAt = new Date(nowMs()).toISOString();
@@ -982,6 +1060,9 @@ export function createDispatcher(options = {}) {
     killRequested.delete(job.id);
     tails.set(job.id, job.tailLines);
 
+    /* ZB-26（审计 B3）：**落盘前**必须先盖版本戳 —— 否则终态记录带着"上一次更新"的旧
+     * updatedAt 落盘，别的进程按新旧合并时会认为自己的旧副本更新，把终态覆盖回 running。 */
+    job.updatedAt = nowMs();
     persist();
     emit('job-updated', job);
     releaseLocks(job);
@@ -1319,6 +1400,11 @@ export function createDispatcher(options = {}) {
       hopCount: 0,
       handedOffTo: null,
       resumedBy: null,
+      /* ZB-26（审计 B2/B3）：进程归属 + 版本戳。
+       * ownerPid 让 restore() 能区分「自己的残留」与「别进程正在跑的 job」（否则 zcd kill/retry
+       * 会先把活 job 在本地内存里改成 interrupted）；updatedAt 让多进程 persist 能按新旧合并。 */
+      ownerPid: process.pid,
+      updatedAt: nowMs(),
     };
     jobs.set(id, job);
     tails.set(id, []);
@@ -1483,13 +1569,32 @@ export function createDispatcher(options = {}) {
     return job ? serialize(job) : null;
   }
 
-  /** 优先读 runner 的 outLog，其次本进程捕获文件，最后内存 tailLines。 */
+  /**
+   * 优先读 runner 的 outLog，其次本进程捕获文件，最后内存 tailLines。
+   *
+   * ZB-26（审计 B4，安全）：**读取路径也必须做越界校验**（原先只有删除路径做了）。
+   *   · `captureOut` 只允许落在 `dirLogs` —— 它是本进程在 `workRoot/logs` 下建的；
+   *   · `outLog` 允许落在 `dirLogs` / `workRoot` / `runnerCwd` —— 真实 runner 把 out 日志写在
+   *     项目根下（`<项目>/collab/logs/…`），而 runnerCwd 来自 config（可信），不是 jobs.json。
+   * 越界的候选**跳过并留痕**（不静默），最终回落到内存 tailLines —— 与既有降级链一致。
+   */
   function tail(id, n = 50) {
     const job = jobs.get(id);
     if (!job) return null;
     const count = Math.max(1, Number(n) || 50);
-    for (const f of [job.outLog, job.captureOut]) {
-      if (f && existsSync(f)) {
+    const candidates = [
+      { f: job.outLog, roots: allowedLogRoots, why: 'outLog' },
+      { f: job.captureOut, roots: [dirLogs], why: 'captureOut' },
+    ];
+    for (const { f, roots, why } of candidates) {
+      if (typeof f !== 'string' || f === '') continue;
+      if (!roots.some((r) => isUnder(r, f))) {
+        const note = `tail: 忽略越界的 ${why} 路径（不在允许的日志根内）：${String(f).slice(0, 160)}`;
+        if (!Array.isArray(job.parseWarnings)) job.parseWarnings = [];
+        if (!job.parseWarnings.includes(note) && job.parseWarnings.length < 20) job.parseWarnings.push(note);
+        continue;
+      }
+      if (existsSync(f)) {
         try {
           const lines = readFileSync(f, 'utf8').split('\n');
           if (lines.length && lines[lines.length - 1] === '') lines.pop();

@@ -408,8 +408,11 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/lock-badge.test.mjs` | 34 | 进程行锁徽标（ZB-18：区分整仓库锁 / 文件锁 N / 不取锁 / 旧版记录）+ **全仓防复发扫描**（ZB-19） |
 | `node test/memory-ban.test.mjs` | 4 | 记忆禁令注入（ZB-20：prompt/target 注入；**task 注入不进去 ⇒ memoryBanApplied=false**） |
 | `node test/panel-style.test.mjs` | 24 | 面板样式注入（ZB-21：样式只注入 head 一次，重渲染不再触碰 ⇒ 不透明/不塌左上角） |
-| `node test/notify.test.mjs` | 17 | 落地自动唤醒（ZB-22：空闲 followup / 忙碌 inject、幂等、自己 kill/wait 的抑制、唤醒预算、卸载退订、工具层译码） |
+| `node test/notify.test.mjs` | 21 | 落地自动唤醒（ZB-22：空闲 followup / 忙碌 inject、幂等、自己 kill/wait 的抑制、唤醒预算、卸载退订、工具层译码） |
 | `node test/wake-integration.test.mjs` | 3 | 落地唤醒**全链路接线**（ZB-22：`apply()` → inject agents/systemPrompt → 派发 → 落地 → 唤醒 + 信标 `wakeActive`；关配置 / 无服务时降级） |
+| `node test/header-entry.test.mjs` | 29 | 会话标题行入口（ZB-24：槽位/id/order、入口不建 wire、真点击切共享 store、文案双侧） |
+| `node test/single-source.test.mjs` | 31 | **单源哨兵**（ZB-25：动作清单 ≡ switch、状态集合引用同一性、三表方法集相等、协议常量逐字相等、STRINGS ↔ locale 逐值） |
+| `node test/hardening.test.mjs` | 5 | **核对硬化**（ZB-26：B1 锁 realpath / B2 ownerPid 不改写活 job / B3 多进程不丢更新 / B4 tail 不读越界 / A2 非法 config 只 warn 不阻断激活） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 > `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），

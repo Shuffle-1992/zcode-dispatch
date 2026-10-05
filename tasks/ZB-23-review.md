@@ -14,13 +14,15 @@
   每条都有 `文件:行号` + 原文 + 触发条件 + 最小改法。
 - **门禁基线（审计前）**：`node --test test/*.test.mjs` **99/99**；`tools/verify-plugin.mjs` 21 项但
   **本机不加 `Z2_ALLOW_PROFILE_WRITE=1` 就是红的**（环境依赖判定）；`tools/verify-switch.mjs` **8/8**。
-- **本轮已修 8 组**（§3）：kill 抑制顺序（审计 A 抓到的真 bug）、状态集合单源、remote 方法表补齐
+- **本轮已修 13 组**（§3）：kill 抑制顺序（审计 A 抓到的真 bug）、状态集合单源、remote 方法表补齐
   `dismiss`、两个门禁 P0（假红 + 恒真断言）、文档 P0 族（lock 取值 / 40+ 处旧路径 / 配置表 / quota 文案）、
-  文案双份同源、动作清单单源（修掉漏列 `wait`）、`files` 补 `bin`+`cordis.patch.yml`。
-- **门禁（修后，全部无条件绿、无 env 依赖）**：测试 **105/105**、verify-plugin **21/21**、
+  文案双份同源、动作清单单源（修掉漏列 `wait`）、`files` 补 `bin`+`cordis.patch.yml`，
+  以及**核心 4 条 P0 + 配置语义**（B1 锁 realpath / B2 ownerPid / B3 持久化合并 / B4 越界读取 / A2 warn+安全默认）。
+- **门禁（修后，全部无条件绿、无 env 依赖）**：测试 **110/110**、verify-plugin **21/21**、
   verify-switch **8/8**、新增单源哨兵 **31/31**、会话头入口 **29/29**。
-- **未修的部分**已分级写入 §4，其中**安全类 B4（`tail()` 越界读取）**与**多进程一致性 B1–B3**
-  是下一轮的第一优先级（改法与验收方式都已给出）；另有 2 处需要用户拍板（配置语义、中文硬编码）。
+- **未修的部分**已分级写入 §4：core 的 B5–B7（锁心跳/缺省看门狗、stdout 缓冲无上限、写放大与膨胀）
+  与 UI/测试族的 P1/P2（C1 legacy lock 回灌、C3 中文硬编码、D3 可移植性、D4–D8 覆盖盲区）。
+  其中「配置语义」已按用户选择（warn + 安全默认）落地；「中文硬编码」仍需与共享 harness 一起排期。
 - **UI 需求（用户当轮要求）**：新增「会话标题行入口」（与「N 个子智能体 / 智能体团队 / 创造模式」同一行、
   点击开合面板），见 §1.9。
 
@@ -161,7 +163,7 @@
 | # | 严重度 | 问题 | 状态 |
 |---|---|---|---|
 | A1 | P1 | `kill` 抑制登记在 `await handleAction` **之后**，而 queued job 的落地事件在 `dispatcher.kill()` 内**同步** emit ⇒ 自己 kill 的排队任务仍被唤醒一次（实测复现：queued-kill wakes=1 / running-kill wakes=0） | ✅ **已修**（见 §3.1） |
-| A2 | P1 | 两条 Config 路径失败语义相反却自称「语义对齐」：走 schemastery 时 `maxConcurrent:0` 让**整插件不激活**，`maxConsecutiveWakes:2.5` 被静默当「不限」 | ⏳ 未修（需用户拍板 reject vs clamp；见 §4.1） |
+| A2 | P1 | 两条 Config 路径失败语义相反却自称「语义对齐」：走 schemastery 时 `maxConcurrent:0` 让**整插件不激活**，`maxConsecutiveWakes:2.5` 被静默当「不限」 | ✅ **已修**（用户选定 warn+安全默认；见 §3.9） |
 | A3 | P1 | 落地判据三处各自定义、core 的 `TERMINAL_STATES` 私有 | ✅ **已修**（见 §3.2） |
 | A4 | P2 | `owners/notified/suppressed/spentWakes` 只增不减；`markKilled/markAwaited` 不查 `disposed` | ✅ **已修**（容量上限 + 投递后释放 + disposed 守卫） |
 | A5 | P2 | 工具 description 承诺的 `timeoutSec` 不在 `TOOL_PARAMETERS` 里 | ⏳ 未修（低风险，见 §4.2） |
@@ -172,10 +174,10 @@
 ### 2.2 派发核心（审计 B：3×P0 / 3×P1 / 3×P2 + 1 领域）
 | # | 严重度 | 问题 | 状态 |
 |---|---|---|---|
-| B1 | P0 | 锁路径只 `resolve`+小写、不做 realpath ⇒ 8.3 短名/符号链接/`\\?\` 指向同一文件却生成两把锁（**实测** `DISPAT~1.MJS` 与长路径 distinct keys=2）⇒ 单写者语义可绕过 | ⏳ 未修（改法已给，见 §4.1） |
-| B2 | P0 | 任何进程构造 dispatcher 就把**别进程**在跑的 running/queued 改写成 interrupted ⇒ `zcd kill <running>` 永远失败、`zcd retry` 绕过守卫重复派发 | ⏳ 未修（`ownerPid` 改法已给，见 §4.1） |
-| B3 | P0 | `persist()` 只采纳「未知 id」、从不合并盘上更新版本 ⇒ 本进程旧副本会覆盖别进程写的终态（丢失更新），并跨进程删对方捕获日志 | ⏳ 未修（`updatedAt` 合并，见 §4.1） |
-| B4 | P1 | `tail()` 直接读 `job.outLog/captureOut`，而 `captureOut` 来自可手改的 `jobs.json` ⇒ **任意文件读取**（删除路径有越界校验、读取路径没有） | ⏳ 未修（**安全类，建议优先**，见 §4.1） |
+| B1 | P0 | 锁路径只 `resolve`+小写、不做 realpath ⇒ 8.3 短名/符号链接/`\\?\` 指向同一文件却生成两把锁（**实测** `DISPAT~1.MJS` 与长路径 distinct keys=2）⇒ 单写者语义可绕过 | ✅ **已修**（realpath 最长已存在祖先；见 §3.9） |
+| B2 | P0 | 任何进程构造 dispatcher 就把**别进程**在跑的 running/queued 改写成 interrupted ⇒ `zcd kill <running>` 永远失败、`zcd retry` 绕过守卫重复派发 | ✅ **已修**（`ownerPid` 判活；见 §3.9） |
+| B3 | P0 | `persist()` 只采纳「未知 id」、从不合并盘上更新版本 ⇒ 本进程旧副本会覆盖别进程写的终态（丢失更新），并跨进程删对方捕获日志 | ✅ **已修**（`updatedAt` 合并 + 淘汰只动自己的记录；见 §3.9） |
+| B4 | P1 | `tail()` 直接读 `job.outLog/captureOut`，而 `captureOut` 来自可手改的 `jobs.json` ⇒ **任意文件读取**（删除路径有越界校验、读取路径没有） | ✅ **已修**（读取路径同套越界判定；见 §3.9） |
 | B5 | P1 | 锁体 `at` 无心跳 + `>2h` 即判过期 ⇒ 长任务锁被夺；未给 `timeoutMin` 则完全没看门狗 | ⏳ 未修（见 §4.1） |
 | B6 | P1 | stdout 行缓冲无上限（同仓 appserver-rpc 有 4MB 上限）⇒ 单条超长行 OOM | ⏳ 未修（见 §4.1） |
 | B7 | P1 | 每解析一行就全量重写 `jobs.json` + tailLines/parseWarnings 无界 ⇒ 写放大、文件膨胀 | ⏳ 未修（见 §4.1） |
@@ -245,18 +247,33 @@
 `node tools/verify-switch.mjs` → **8/8**；`node test/single-source.test.mjs` → **31/31**；
 `node test/header-entry.test.mjs` → **29/29**。
 
+### 3.9 核心安全/一致性 P0 批（ZB-26，用户选定「先修核心」）
+
+| 项 | 修法 | 验证 |
+|---|---|---|
+| **B4 任意文件读取** | 抽公共 `isUnder(root, p)`（删除路径原先那份也改用它）；`tail()` 的读取路径补同一道校验 —— `captureOut/captureErr` 只允许在 `dirLogs` 内，`outLog` 允许 `dirLogs/workRoot/runnerCwd`（全部来自 config，不是 jobs.json 这种不可信输入）；越界候选**跳过并在 parseWarnings 留痕**，最终回落到内存 tailLines | `hardening.test.mjs` B4：越界内容不得出现在结果、越界被留痕、允许根内仍可读 |
+| **B2 改写别进程的活 job** | job 落盘带 `ownerPid`；`restore()` 仅当 ownerPid **已不存在**（或无该字段的旧快照）才判残留并终结；ownerPid 活着 ⇒ 原样保留 | B2：ownerPid=本进程 ⇒ 保持 running；无字段 ⇒ 旧语义照旧；pid 已死 ⇒ interrupted |
+| **B3 多进程丢失更新** | job 带 `updatedAt`（创建时、每次 emit、finalize **落盘前**都盖）；`persist()` 按 updatedAt 合并盘上更新版本（旧快照无该字段时保持旧行为）；淘汰只处理本进程拥有的记录（避免跨进程删对方捕获日志） | B3：A 采纳 X 的旧副本 → B 把 X 写为 done → A 再 persist ⇒ 盘上仍是 done |
+| **B1 锁可被绕过** | `normalizeForLock` 对**最长已存在祖先**做 `realpathSync.native`（尾段拼回，保证「将来才创建的文件」照样能锁），失败退回 resolve | B1：含 `..` 写法与大小写不同 ⇒ 同一把锁；**junction 指向同目录时第二个任务必须 queued** |
+| **A2 配置非法即整插件不激活** | 配置事实收敛为唯一 `FIELDS` 表（默认值 / 归一则 / 描述一处声明）；主路保留 schemastery **实例本身**（品牌 / type / meta 不动 ⇒ `isNativeConfigSchema` 仍判原生），只把 `~standard` 影子成「永不返回 issues」；两条路径共用 `normalizeConfig`；问题进日志 + 激活信标 `configIssues` | A2（`hardening.test.mjs`）：`maxConcurrent=0`→1、`maxConsecutiveWakes=2.5`→2、`runnerPath=123`→空串、字符串 `demo='yes'`→false，且 **issues 为 undefined**；品牌 / type / meta 三项结构标记仍在 |
+
+> 为什么「保留 schemastery 实例、只影子 `~standard`」：DSH 的 `isNativeConfigSchema` 是**结构判定**
+> （`Reflect.get(v, Symbol.for('schemastery')) === true` + `typeof v.type === 'string'` + `meta` 为对象，
+> 见 `@deepseek-ai/dsh-app-boot`），换成包装对象有被判 `unsupported` 的风险；而 cordis 只在
+> `resolveConfig` 里读 `Config['~standard'].validate`（`cordis/lib/index.js:958-960`，有 issues 就 throw）。
+> 影子一个属性同时满足两边：投影与判原生不受影响，校验不再阻断激活。
+
 ## 4. 未修清单（按建议顺序，附最小改法与暂缓理由）
 
-### 4.1 建议优先（正确性/安全，最小改动）
-1. **B4 `tail()` 越界读取（安全）**：抽 `isUnder(root, p)`（删除路径已有同款逻辑）→ `captureOut/captureErr` 必须落在 `dirLogs` 内；`outLog` 走可配置 `allowedLogRoots`（默认 `[dirLogs, workRoot]`，因为真实 runner 的 out 日志根未必在 workRoot/logs）。**暂缓理由**：需要确认真实 runner 的日志根，否则可能误伤正常 tail —— 建议连同 D7 的损坏降级用例一起做。
-2. **B2 多进程改写他人 job（`ownerPid`）**：job 落盘时记 `ownerPid`；`restore()` 仅在 ownerPid 已死（字段缺失 = 旧语义一律 interrupted）时改写。**暂缓理由**：需与 B3 一起做才有意义（否则 persist 仍会回退），且要有双进程测试。
-3. **B3 持久化合并（`updatedAt`）**：每 job 落 `updatedAt`，persist 按更新版本合并；淘汰只处理本进程记录。**暂缓理由**：多进程一致性属「设计级」改动，需专门一轮。
-4. **B1 锁路径 realpath**：对「最长已存在祖先」做 `realpathSync.native` 再拼剩余段，失败退回 `resolve`。**暂缓理由**：Windows 短名/链接语义需在真机做双向用例（`file-lock.test.mjs` 用的是不存在路径，必须 try/catch 兜底）。
-5. **B5/B6/B7**：锁心跳（persist 时 touch `at`）+ 缺省看门狗；stdout 缓冲 1MB 上限；persist 节流（≥500ms）+ tailLines 落盘截断 + parseWarnings 限长。三条各自独立、都可配一条回归用例。
+### 4.1 仍建议优先（core 性能/资源类，各自独立、都可配一条回归用例）
+1. **B5 锁无心跳 + 无缺省看门狗**：锁体 `at` 只在获取时写一次，而 `isStaleLock` 先判年龄（>2h 即过期）⇒ 超 2h 的任务锁会被别的进程当过期夺走；未给 `timeoutMin` 则完全没有看门狗。改法：persist 时 touch 锁体 `at`；加缺省兜底看门狗（默认值须大于现有最长任务）。
+2. **B6 stdout 行缓冲无上限**：`buf += chunk` 不设上限（同仓 `appserver-rpc.mjs` 有 4MB 上限），单条无换行超长行直接吃内存。改法：1MB 上限 + 截断计数 + 单行 tailLines 截断。
+3. **B7 写放大与膨胀**：每解析一行就全量重写 `jobs.json`（终态 job 的 200 行 tailLines 全量落盘、parseWarnings 无上限），finalize 时同步全量读解析整个台账。改法：persist 节流（≥500ms/关键字段变化）、tailLines 落盘截断、parseWarnings 限长。
+4. **B9 损坏文件锁永不 sweep**（且 `lockBlockersFor` 把它当「无阻塞」⇒ 排队但报「没人挡你」）；**B10 `mondayYmdInTz` 在 UTC+13/+14 偏移一天**（一行改法）。
 
-### 4.2 需要你拍板的两处
-1. **A2 配置语义**：两条路径（schemastery 主路 / 手写降级）目前一个 reject、一个 clamp。建议：**抽唯一 `normalizeConfig()`**，两路共用；对「非法值」统一为「warn + 取安全默认」而不是让整插件不激活（当前 `maxConcurrent:0` 会让插件整体静默失效）。但这改变了「配置写错要立刻炸」的既有取向，**需要你选**：A) 统一 warn+默认（推荐，可用性优先）B) 统一 reject（严格优先）。
-2. **C3 中文硬编码**：把锁文案/耗时格式改走 `t()` 会动 4 份文件 + 20+ 条按中文字面量钉死的测试断言。建议连同 D10 的共享 harness 一起做（一次改造，长期收益）。
+### 4.2 仍需你拍板的一处
+1. **C3 中文硬编码**：把锁文案/耗时格式改走 `t()` 会动 4 份文件 + 20+ 条按中文字面量钉死的测试断言。建议连同 D10 的共享 harness 一起做（一次改造，长期收益）。
+2. （已决）**A2 配置语义**：按你的选择统一为 **warn + 安全默认**，已落地见 §3.9。
 
 ### 4.3 其余（可排后）
 C1（legacy `spec.lock` 白名单归一化，`slimJob` 一处）、C4/C6/C8/C9（UI 健壮性）、D3（14 处绝对路径改 `import.meta.url`）、D4（令牌全集入库 fixture）、D5–D8（四类覆盖盲区，各 S 成本）、B8 余项（`kill(paused)→false`、zcd 僵尸字段）、B9、B10、E10（清单项数）、A5/A6/A7/A8。

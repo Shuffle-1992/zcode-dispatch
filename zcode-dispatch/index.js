@@ -28,49 +28,90 @@ import { ACTIONS as HOST_ACTIONS, DEFAULT_SWITCH_PATH, attachHostWire, createAct
 /** 本文件所在目录（激活信标的兜底落点；config.workRoot 缺席时用）。 */
 const PLUGIN_DIR = dirname(fileURLToPath(import.meta.url));
 
-/** 插件 config 默认值（与 cordis.patch.yml 的 config 字段一一对应，均带默认值）。 */
-const DEFAULTS = {
-  demo: false,
-  maxConcurrent: 1,
-  runnerPath: '',
-  ledgerPath: '',
-  workRoot: '',
-  // runner 子进程的工作目录。runner 已迁至通用工具仓库（zcode-dispatch/collab-kit），
-  // 不再能从自身位置推出宿主项目根；显式给 cwd 最稳（runner 也支持从绝对 --task 反推，双保险）。
-  // 留空 = 用 DSH 进程的 cwd（旧行为）。
-  runnerCwd: '',
-  // Z12：派发总开关真值文件（契约：宿主仓库 collab/PROTOCOL.md §7）；缺省为空 = 未接入宿主仓库
-  switchPath: DEFAULT_SWITCH_PATH,
-  // ZB-22：任务落地自动唤醒（会话不必自己回来轮询）。默认开；关掉只影响「叫醒会话」，
-  // 派发/面板/工具动作一字不变。
-  notifyOnSettle: true,
-  // ZB-22：连续唤醒上限。0 = 不限（与 DSH 后台任务默认同语义）；>0 时"用户没说话期间"
-  // 最多连续唤醒这么多次，超出改为注入下一步（等用户说话后预算清零）。
-  maxConsecutiveWakes: 0,
-  // ZB-22：往 system prompt 注入一段「派发台优先」提示（新会话的 agent 因此不易退回 DSH 自带 subagent）。
-  systemPromptHint: true,
-};
+/**
+ * 配置字段的**唯一事实源**（ZB-26，审计 A2）：默认值 / 归一则 / 描述都在这里一处声明，
+ * `DEFAULTS`、降级 Standard Schema、schemastery schema 三处全部由它派生。
+ * 原先三套各写一遍（默认值散落三处、归一则只存在于降级路径），已经漂移过。
+ */
+const FIELDS = [
+  { name: 'demo', type: 'boolean', def: false, desc: 'UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher' },
+  { name: 'maxConcurrent', type: 'number', def: 1, min: 1, max: 8, desc: '同时运行的 run 上限（单写者互斥语义下的并发度）' },
+  { name: 'runnerPath', type: 'string', def: '', desc: 'runner 脚本绝对路径（通用工具仓库 zcode-dispatch/collab-kit/zcode-run.mjs，只读使用）；留空则不创建 dispatcher' },
+  { name: 'ledgerPath', type: 'string', def: '', desc: '台账 zcode-runs.jsonl 绝对路径；留空则跳过台账回读与用量聚合' },
+  { name: 'workRoot', type: 'string', def: '', desc: '派发器工作根目录（locks/、state/jobs.json、logs/ 落在这里）；留空则不创建 dispatcher' },
+  { name: 'runnerCwd', type: 'string', def: '', desc: 'runner 子进程工作目录（通常设为宿主项目根，如 F:\\My Code\\keysion dac vue）；留空 = 用 DSH 进程 cwd' },
+  { name: 'switchPath', type: 'string', def: DEFAULT_SWITCH_PATH, desc: 'ZCode 派发总开关真值文件绝对路径（宿主仓库 collab/zcode-dispatch.switch.json，契约见其 PROTOCOL.md §7）；文件缺失/损坏视为开启；留空则开关不可写' },
+  { name: 'notifyOnSettle', type: 'boolean', def: true, desc: 'ZB-22：任务落地（done/failed/killed/interrupted/paused）时自动唤醒发起会话（空闲=开新一轮，忙碌=注入下一步），与 DSH 后台任务同款；false=只派发不唤醒' },
+  { name: 'maxConsecutiveWakes', type: 'number', def: 0, min: 0, desc: 'ZB-22：用户没说话期间允许的连续唤醒次数上限；0=不限；超出后改为注入（等用户说话后预算清零）' },
+  { name: 'systemPromptHint', type: 'boolean', def: true, desc: 'ZB-22：向 system prompt 注入「派发台优先于 DSH 自带 subagent」提示段；false=不注入' },
+];
+
+/** 插件 config 默认值（从 FIELDS 派生，勿单独维护）。 */
+const DEFAULTS = Object.fromEntries(FIELDS.map((f) => [f.name, f.def]));
+
+/** 归一化过程中收集到的问题（供日志与激活信标；ZB-26 起不再让插件因此不激活）。 */
+const CONFIG_ISSUES = [];
+
+/**
+ * 唯一归一则（ZB-26，审计 A2）：**任何非法值都取安全默认 + 记录问题**，绝不抛、绝不返回 issues。
+ *
+ * 为什么要改：原先主路走 cordis 的严格校验 —— `validate` 一旦有 issues，cordis `resolveConfig`
+ * 直接 `throw ValidationError`（cordis/lib/index.js:958-960），fiber 变 INACTIVE ⇒ **整个插件不激活**
+ * （面板、工具、dispatcher 全没了，只留日志里一行 error）。实测 `maxConcurrent: 0` 就能触发；
+ * 而 `maxConsecutiveWakes: 2.5` 反而被静默当成"不限"（真机上上游对非整数上限是显式抛错的）。
+ * 现在两条路径共用这里 ⇒ 语义一致，且失效可观测（warn + 激活信标 configIssues）。
+ */
+function normalizeConfig(raw) {
+  const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  if (raw != null && (typeof raw !== 'object' || Array.isArray(raw))) {
+    CONFIG_ISSUES.push(`config 不是对象（${typeof raw}）：已按默认值处理`);
+  }
+  const out = {};
+  for (const f of FIELDS) {
+    const v = src[f.name];
+    if (v === undefined) { out[f.name] = f.def; continue; }
+    if (f.type === 'boolean') {
+      if (typeof v === 'boolean') out[f.name] = v;
+      else { out[f.name] = f.def; CONFIG_ISSUES.push(`${f.name} 期望布尔，收到 ${JSON.stringify(v)} → 用默认 ${f.def}`); }
+      continue;
+    }
+    if (f.type === 'number') {
+      const n = typeof v === 'number' ? v : Number(v);
+      if (typeof v !== 'number' || !Number.isFinite(n)) {
+        out[f.name] = f.def;
+        CONFIG_ISSUES.push(`${f.name} 期望数字，收到 ${JSON.stringify(v)} → 用默认 ${f.def}`);
+        continue;
+      }
+      let x = n;
+      if (f.min != null && x < f.min) { x = f.min; CONFIG_ISSUES.push(`${f.name}=${n} 小于下限 ${f.min} → 取 ${f.min}`); }
+      if (f.max != null && x > f.max) { x = f.max; CONFIG_ISSUES.push(`${f.name}=${n} 超过上限 ${f.max} → 取 ${f.max}`); }
+      if (f.name === 'maxConsecutiveWakes' && !Number.isInteger(x)) {
+        x = Math.floor(x);
+        CONFIG_ISSUES.push(`${f.name}=${n} 非整数 → 取 ${x}`);
+      }
+      out[f.name] = x;
+      continue;
+    }
+    if (typeof v === 'string') out[f.name] = v;
+    else { out[f.name] = f.def; CONFIG_ISSUES.push(`${f.name} 期望字符串，收到 ${JSON.stringify(v)} → 用默认 ''`); }
+  }
+  const unknown = Object.keys(src).filter((k) => !FIELDS.some((f) => f.name === k));
+  if (unknown.length) CONFIG_ISSUES.push(`忽略未知字段：${unknown.join(', ')}`);
+  return out;
+}
 
 /**
  * 无依赖降级：手写 Standard Schema v1（cordis 只认 Config['~standard'].validate）。
- * 语义与 schemastery 主路径对齐：补默认值、demo 收敛为布尔、maxConcurrent 夹在 1..8、
- * 三个路径字段非字符串一律回空串——只归一不抛 issues，激活不被配置打崩。
+ * 与主路**共用** normalizeConfig ⇒ 两条路径语义一致（这正是 A2 的修法核心）。
+ * ⚠️ DSH 判「原生 schema」是结构判定（`isNativeConfigSchema`：schemastery 品牌 + type + meta），
+ * 本降级形态在 DSH 里会被判 `unsupported`，故它只是**非 DSH 宿主**的兜底，不是等价替代。
  */
 function fallbackConfig() {
   return {
     '~standard': {
       version: 1,
       vendor: 'zcode-dispatch',
-      validate(raw) {
-        const cfg = { ...DEFAULTS, ...(raw && typeof raw === 'object' ? raw : {}) };
-        cfg.demo = !!cfg.demo;
-        cfg.maxConcurrent = Math.min(8, Math.max(1, Number(cfg.maxConcurrent) || 1));
-        cfg.notifyOnSettle = cfg.notifyOnSettle !== false;
-        cfg.systemPromptHint = cfg.systemPromptHint !== false;
-        cfg.maxConsecutiveWakes = Math.max(0, Math.floor(Number(cfg.maxConsecutiveWakes) || 0));
-        for (const k of ['runnerPath', 'ledgerPath', 'workRoot', 'runnerCwd', 'switchPath']) cfg[k] = typeof cfg[k] === 'string' ? cfg[k] : '';
-        return { value: cfg };
-      },
+      validate(raw) { return { value: normalizeConfig(raw) }; },
     },
   };
 }
@@ -79,24 +120,51 @@ function fallbackConfig() {
 async function loadConfig() {
   try {
     const { default: z } = await import('@deepseek-ai/schemastery');
-    return z.object({
-      demo: z.boolean().default(false).description('UI 演示模式：客户端用内置假数据渲染悬浮窗，不触达 dispatcher'),
-      maxConcurrent: z.number().min(1).max(8).default(1).description('同时运行的 run 上限（单写者互斥语义下的并发度）'),
-      runnerPath: z.string().default('').description('runner 脚本绝对路径（通用工具仓库 zcode-dispatch/collab-kit/zcode-run.mjs，只读使用）；留空则不创建 dispatcher'),
-      ledgerPath: z.string().default('').description('台账 zcode-runs.jsonl 绝对路径；留空则跳过台账回读与用量聚合'),
-      workRoot: z.string().default('').description('派发器工作根目录（locks/、state/jobs.json、logs/ 落在这里）；留空则不创建 dispatcher'),
-      runnerCwd: z.string().default('').description('runner 子进程工作目录（通常设为宿主项目根，如 F:\\My Code\\keysion dac vue）；留空 = 用 DSH 进程 cwd'),
-      switchPath: z.string().default(DEFAULT_SWITCH_PATH).description('ZCode 派发总开关真值文件绝对路径（宿主仓库 collab/zcode-dispatch.switch.json，契约见其 PROTOCOL.md §7）；文件缺失/损坏视为开启；留空则开关不可写'),
-      notifyOnSettle: z.boolean().default(true).description('ZB-22：任务落地（done/failed/killed/interrupted/paused）时自动唤醒发起会话（空闲=开新一轮，忙碌=注入下一步），与 DSH 后台任务同款；false=只派发不唤醒'),
-      maxConsecutiveWakes: z.number().min(0).default(0).description('ZB-22：用户没说话期间允许的连续唤醒次数上限；0=不限；超出后改为注入（等用户说话后预算清零）'),
-      systemPromptHint: z.boolean().default(true).description('ZB-22：向 system prompt 注入「派发台优先于 DSH 自带 subagent」提示段；false=不注入'),
+    const build = {
+      boolean: (f) => z.boolean().default(f.def),
+      number: (f) => {
+        let s = z.number();
+        if (f.min != null) s = s.min(f.min);
+        if (f.max != null) s = s.max(f.max);
+        return s.default(f.def);
+      },
+      string: (f) => z.string().default(f.def),
+    };
+    const shape = {};
+    for (const f of FIELDS) shape[f.name] = build[f.type](f).description(f.desc);
+    const schema = z.object(shape);
+    /* ZB-26：**保留 schemastery 实例本身**（品牌/type/meta/图/设置页投影全不受影响），
+     * 只把 `~standard` 影子成「永不返回 issues」的版本 —— 校验失败改为 warn + 安全默认，插件照常激活。
+     * 注意不要新建包装对象：`isNativeConfigSchema` 是结构判定，换对象有被判 unsupported 的风险。 */
+    const original = schema['~standard'];
+    Object.defineProperty(schema, '~standard', {
+      configurable: true,
+      enumerable: false,
+      writable: true,
+      value: {
+        version: 1,
+        vendor: 'schemastery+lenient',
+        validate(raw) {
+          try {
+            const r = original && typeof original.validate === 'function' ? original.validate(raw) : null;
+            if (r && !r.issues) return r;
+            for (const issue of (r && r.issues) || []) CONFIG_ISSUES.push(String(issue && issue.message ? issue.message : issue));
+          } catch (e) {
+            CONFIG_ISSUES.push(`schema 校验抛错：${e && e.message ? e.message : e}`);
+          }
+          return { value: normalizeConfig(raw) };
+        },
+      },
     });
+    return schema;
   } catch {
     return fallbackConfig();
   }
 }
 
-/** 插件 config schema（Standard Schema v1；cordis resolveConfig 经 Config['~standard'].validate 取值）。 */
+/** 插件 config schema（Standard Schema v1；cordis resolveConfig 经 Config['~standard'].validate 取值）。
+ * ZB-26：主路是 schemastery 实例（保留品牌/type/meta，DSH 判原生），但其 `~standard` 已被影子成
+ * 「非法值不返回 issues、改 warn + 安全默认」的版本 —— 见上方 loadConfig 里的说明。 */
 export const Config = await loadConfig();
 
 /* ─────────────── 官方 defineTool 的解析（ZB-01：裸 import 在本包必然失败）───────────────
@@ -452,6 +520,13 @@ const SYSTEM_PROMPT_SECTION = [
 export function apply(ctx, config = {}) {
   const log = makeLogger(ctx);
 
+  /* ZB-26（审计 A2）：配置兜底不再静默 —— 每一条「非法值已取安全默认」都打 warn，
+   * 并整批写进激活信标（configIssues），排障时一眼看到"你写的配置没生效、为什么"。 */
+  if (CONFIG_ISSUES.length) {
+    for (const m of CONFIG_ISSUES.slice(0, 10)) log('warn', `config 兜底（已取安全默认）：${m}`);
+    if (CONFIG_ISSUES.length > 10) log('warn', `config 兜底共 ${CONFIG_ISSUES.length} 条，其余见激活信标 configIssues`);
+  }
+
   let dispatcher = null;
   if (config.runnerPath && config.workRoot) {
     dispatcher = createDispatcher({
@@ -550,6 +625,9 @@ export function apply(ctx, config = {}) {
     wakeActive: !!notifierHolder.current,
     wakeNote,
     agentsVisible,
+    // ZB-26：配置兜底留痕（非法值取了什么安全默认，一目了然）
+    configIssues: CONFIG_ISSUES.slice(0, 20),
+    configIssueCount: CONFIG_ISSUES.length,
   });
 
   const disposeAll = () => {
