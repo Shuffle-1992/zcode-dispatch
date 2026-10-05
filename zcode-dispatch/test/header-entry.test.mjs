@@ -26,45 +26,42 @@ ok(/id: 'zcode-dispatch', order: 10/.test(code), 'A2 注册 id=zcode-dispatch、
 ok(!/ctx\.slots\.inject\(SLOT,/.test(code), '★ A3 不再注册 shell.overlay（右下角浮窗已取消，避免两份 UI）');
 ok(!/zcode-dispatch\.console/.test(code), '★ A4 旧浮层 cell id（zcode-dispatch.console）已移除');
 
-console.log('\nB. 入口样式与同排一致（取自 dsh-client-ui-jobs 的 job-list 触发样式）');
+console.log('\nB. 入口样式**逐项镜像紧邻的右侧入口**「创造模式」(agent-preset .b06baG_label)');
 {
   const chip = code.match(/'\.[^']*zcd-chip\{[^]*?\}',/);
   ok(!!chip, 'B1 有 .zcd-chip 规则');
   const css = chip[0];
-  ok(/border:0/.test(css), 'B2 无边框（同排入口是纯文字按钮，不是药丸）');
-  ok(/background:(0 0|transparent)/.test(css), 'B3 无底色');
-  ok(/font-size:12px !important/.test(css), 'B4 字号 12px 且用 !important 锁死（宿主改不动）');
-  ok(/line-height:18px/.test(css), 'B5 行高 18px');
-  ok(/min-height:28px/.test(css), 'B6 min-height 28px');
-  ok(/gap:5px/.test(css), 'B7 图标/文字间距 5px（与 agent-team .EBLgjq_trigger 同值 —— 同排最接近的入口）');
-  ok(/T\.text3/.test(css), 'B8 常态色用 label-tertiary（T.text3）');
-  ok(!/font-family/.test(css), '★ B8b 芯片**不声明 font-family** —— 邻居 <button> 用 UA/平台按钮字体；写 font-family:inherit 会切成应用字体，同 12px 观感也不同（这是三轮反馈的真凶）');
-  ok(!/font:button/.test(css), '★ B8c 不再使用无效的 `font:button`（系统字体关键字只有 caption/icon/menu/message-box/small-caption/status-bar）');
-  ok(/font-weight:400 !important/.test(css), '★ B8d 字重锁 400（邻居 button 的有效字重是 UA 400；inherit 会更粗、看着更大）');
-  /* 颜色规则单独找 —— 第一条 `.zcd-chip:hover` 命中的是"所有交互态统一无底色"那条（不含颜色）。 */
+  /* ZB-27g：权威源是 dsh-client-ui-agent-preset 的 .b06baG_label（<span>）：
+   *   height:22px; line-height:22px; gap:4px; padding:0 2px 0 0; font-size:12px;
+   *   font-family/weight 不声明（继承应用字体与容器字重）；color:label-tertiary；图标 size:14。 */
+  ok(/font-size:12px !important/.test(css), 'B2 字号 12px（与邻居同值，!important 锁死）');
+  ok(/line-height:22px !important/.test(css), '★ B3 行高 22px（邻居 .b06baG_label 是 22px，不是 18px）');
+  ok(/height:22px/.test(css) && !/min-height:28px/.test(css), '★ B4 盒高 22px（邻居是 height:22px，不是 min-height:28px）');
+  ok(/gap:4px/.test(css), '★ B5 图标/文字间距 4px（邻居同值；此前 5px 来自 agent-team）');
+  ok(/padding:0 2px 0 0/.test(css), '★ B6 内边距 0 2px 0 0（邻居同值；此前 3px 7px 来自 job-list）');
+  ok(/font-family:inherit !important/.test(css), '★ B7 字体族 inherit（邻居是 <span> ⇒ 应用字体；不是按钮 UA 字体）');
+  ok(/font-weight:inherit !important/.test(css), 'B8 字重 inherit（邻居不声明字重，随容器）');
+  ok(/T\.text3\b[^;]*!important/.test(css), '★ B9 基础态 label-tertiary 且 !important（防宿主压成 label-primary ⇒ 现场"我的字比邻居亮"）');
+  ok(/border:0/.test(css) && /background:transparent/.test(css), 'B10 无边框、无底色（用户要求"不要背景色"；邻居那点极淡填充不抄）');
+  ok(/border-radius:var\(--dsw-radius-xs/.test(css), 'B11 圆角用邻居同款 --dsw-radius-xs');
+  ok(/appearance:none/.test(css) && /-webkit-appearance:none/.test(css), 'B12 appearance:none（去原生外观）');
+  ok(/box-shadow:none/.test(css), 'B13 无描边/阴影');
+  ok(/letter-spacing/.test(css) === false, 'B14 不额外改字距（邻居也没改）');
   const colorRule = code.split('\n').find((l) => l.includes('.zcd-chip:hover') && l.includes('color:'));
-  ok(!!colorRule && /T\.text\b/.test(colorRule), 'B9 hover/展开 变 label-primary（T.text，与子智能体一致）');
-  ok(/zcd-chip-chevron/.test(code), 'B10 带展开指示箭头（与同排入口一致）');
-  /* ZB-27b（用户现场「字号还是不对、有背景色」）—— 真因是样式注入时机，但顺带把"入口不该有
-   * 宿主 button 的外观"钉死，免得下次又被宿主样式带偏。 */
-  ok(/\.zcd-entry \.zcd-chip\{/.test(code), 'B11 ★ 选择器带 .zcd-entry 作用域（压过宿主 `.headerActions button` 之类规则）');
-  ok(/appearance:none/.test(css) && /-webkit-appearance:none/.test(css), 'B12 appearance:none（去宿主原生 button 外观）');
-  ok(/background:transparent/.test(css), '★ B13 背景透明（用户明确要求"不要背景色"）');
-  ok(/box-shadow:none/.test(css), 'B14 无宿主描边/阴影');
-  ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(css), '★ B15 入口样式无字面色值 ⇒ 明暗两套主题自适应（颜色只走 T.* 令牌）');
-  /* ZB-27c（用户现场「点击打开面板后，背景色又出现了」）：宿主对**已展开/已聚焦**的触发按钮有高亮态，
-   * 基础态那条压不住 ⇒ 必须把 background 在所有交互态一起重置（并对背景用 !important，宿主选择器未知）。 */
-  const reset = code.split('\n').find((l) => l.includes('.zcd-chip[aria-expanded="true"]') && l.includes('background:transparent'));
-  ok(!!reset, '★ B16 有"所有交互态统一无底色"的成组重置（含 [aria-expanded="true"]）');
-  ok(!!reset && /:hover/.test(reset) && /:focus/.test(reset) && /:active/.test(reset) && /\[aria-expanded="false"\]/.test(reset),
-    '★ B17 重置覆盖 hover / focus / focus-visible / active / aria-expanded 真与假');
-  ok(!!reset && /background:transparent !important/.test(reset) && /background-image:none !important/.test(reset),
-    '★ B18 背景用 !important 且清掉 background-image（宿主可能用渐变/填充）');
-  /* 展开指示三角：**逐字复刻**系统 IconChevronDownOutlineRegular（子智能体入口用的就是它）。 */
-  ok(/viewBox: '0 0 16 16'/.test(code) && /width: 14, height: 14/.test(code), '★ B19 三角图标用系统几何：14×14 / viewBox 16');
+  ok(!!colorRule && /T\.text\b[^;]*!important/.test(colorRule), 'B15 hover/展开 变 label-primary 且 !important（与系统触发按钮一致）');
+  ok(/zcd-chip-chevron/.test(code), 'B16 带展开指示箭头');
+  ok(/viewBox: '0 0 16 16'/.test(code) && /width: 14, height: 14/.test(code), '★ B17 三角图标 14×14 / viewBox 16（系统 IconChevronDownOutlineRegular 几何）');
   ok(/strokeWidth: 1\b/.test(code) && /M4 6L7\.29289 9\.29289C7\.68342 9\.68342 8\.31658 9\.68342 8\.70711 9\.29289L12 6/.test(code),
-    '★ B20 三角路径与 strokeWidth 逐字取自系统图标（不是自绘的 12×12/1.5px 版本）');
-  ok(/\.zcd-chip\[aria-expanded="true"\] svg\{transform:rotate\(180deg\);?\}/.test(code), 'B21 展开时旋转 **svg 本身**（与子智能体 .triggerOpen 同做法）');
+    '★ B18 三角路径与 strokeWidth 逐字取自系统图标');
+  ok(/\.zcd-chip\[aria-expanded="true"\] svg\{transform:rotate\(180deg\);?\}/.test(code), 'B19 展开时旋转 svg 本身');
+  ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(css), '★ B20 无字面色值 ⇒ 明暗两套主题自适应（颜色只走 T.* 令牌）');
+  const reset = code.split('\n').find((l) => l.includes('.zcd-chip[aria-expanded="true"]') && l.includes('background:transparent'));
+  ok(!!reset, '★ B21 有"所有交互态统一无底色"的成组重置（含 [aria-expanded="true"]）');
+  ok(!!reset && /:hover/.test(reset) && /:focus/.test(reset) && /:active/.test(reset) && /\[aria-expanded="false"\]/.test(reset),
+    '★ B22 重置覆盖 hover / focus / focus-visible / active / aria-expanded 真与假');
+  ok(!!reset && /background:transparent !important/.test(reset) && /background-image:none !important/.test(reset),
+    '★ B23 背景用 !important 且清掉 background-image');
+  ok(/\.zcd-chip\[aria-expanded="true"\] svg/.test(code), 'B24 展开态样式挂在 svg 上（与子智能体一致）');
 }
 
 console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{

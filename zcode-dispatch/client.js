@@ -244,21 +244,22 @@ window.__ModuleLoader__.load({
        * 宿主针对 `button` 元素的规则（`:focus` / `:active` / `[aria-expanded]` 填充、原生外观、
        * 焦点环）一律不再命中 —— 第三方插件无法枚举宿主的全部 button 选择器，换元素是唯一彻底做法。
        * 可访问性不受影响：role=button + tabindex=0 + Enter/Space 键盘处理（见组件）。 */
-      /* ZB-27f（用户第三次反馈「字体大小还是不对」）：真凶是 **font-family**，不是字号，也不是主题。
-       * 证据链：
-       *   · 邻居（子智能体/智能体团队/创造模式）都是 <button>，而全仓**没有**全局 `button{font:inherit}`
-       *     ⇒ 它们渲染用的是 **UA/平台按钮字体**；
-       *   · 我此前给芯片写了 `font-family:inherit` ⇒ 用**应用字体**；同 12px，应用字体 x-height 更大，
-       *     观感就是"更大"。
-       *   · ZB-27e 试图用 `font:button` 补救 —— **那是无效声明**（系统字体关键字只有 caption/icon/menu/
-       *     message-box/small-caption/status-bar，没有 button），整条被丢弃 ⇒ 自然"还是不行"。
-       * 正解：**元素与邻居保持一致（<button>）+ 不声明 font-family**，让 UA 按钮字体生效；
-       * 只把 size/weight/line-height 锁成与邻居相同的有效值（邻居 button 的有效字重是 UA 400）。 */
-      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;border:0;background:transparent;box-shadow:none;outline:none;min-height:28px;padding:3px 7px;margin:0;font-size:12px !important;font-weight:400 !important;line-height:18px !important;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:5px;border-radius:6px;user-select:none;-webkit-user-select:none;}',
+      /* ZB-27g（用户：「好多了，还是有些差别」+ 并排对照图）：**逐项镜像紧邻的右侧入口**。
+       * 权威源 = dsh-client-ui-agent-preset 的「创造模式」（`.b06baG_label`，实为 **<span>**）：
+       *   border-radius:var(--dsw-radius-xs); height:22px; line-height:22px; gap:4px;
+       *   padding:0 2px 0 0; font-size:12px; color:var(--dsw-alias-label-tertiary);
+       *   不声明 font-family/weight ⇒ 继承**应用字体**与容器字重；图标 14px（.icon{opacity:.7}）。
+       * 我此前用的 12px/18px + min-height:28px + gap:5px 来自 job-list/agent-team，
+       * 与紧邻的「创造模式」**不是同一套度量**（行高 18 vs 22、盒高 28 vs 22、gap 5 vs 4）——
+       * 这就是"还是有些差别"的来源；同时回退上一版"改用 button 的 UA 字体"的做法（邻居是 span）。
+       * 唯一不抄的是它那点极淡填充（--dsw-alias-fill-tsp-secondary）：用户明确要求"不要背景色"。 */
+      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;-webkit-tap-highlight-color:transparent;border:0;background:transparent;box-shadow:none;outline:none;height:22px;min-height:22px;padding:0 2px 0 0;margin:0;font-family:inherit !important;font-size:12px !important;font-weight:inherit !important;line-height:22px !important;white-space:nowrap;color:' + T.text3 + ' !important;cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--dsw-radius-xs,4px);user-select:none;-webkit-user-select:none;}',
       /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
-       * 焦点可见性改由**颜色**承担（与子智能体触发按钮把 :focus-visible 变成 label-primary 同思路）。 */
+       * 焦点可见性改由**颜色**承担（与邻居把 :hover/:focus-visible 变成 label-primary 同思路）。 */
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',
-      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip[aria-expanded="true"]{color:' + T.text + ';}',
+      /* 颜色也带 !important：否则宿主可能把基础态压成 label-primary（用户现场看到"我的字比邻居亮"）。
+       * 本条在后 ⇒ 同权重同重要性下覆盖上面的基础态，hover/展开仍是 label-primary（与系统一致）。 */
+      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip[aria-expanded="true"]{color:' + T.text + ' !important;}',
       /* 展开指示：与子智能体一致 —— 转的是 **svg 本身**，过渡 .12s。 */
       '.zcd-entry .zcd-chip svg{flex:none;transition:transform .12s;}',
       '.zcd-entry .zcd-chip[aria-expanded="true"] svg{transform:rotate(180deg);}',
