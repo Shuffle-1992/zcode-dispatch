@@ -221,24 +221,29 @@ window.__ModuleLoader__.load({
       '.zcd-job-head{cursor:pointer;}',
       '.zcd-planline{margin-top:4px;font-size:10.5px;color:' + T.text3 + ';white-space:normal;overflow-wrap:anywhere;line-height:1.55;}',
       /* ── ZB-27：会话标题行入口 + 悬浮弹窗（照抄 DSH 自带入口的 visual language）──
-       * 触发样式取自 dsh-client-ui-jobs 的 job-list（同槽位、同排）：
-       *   border:0; background:none; padding:3px 2px; min-height:28px; font-size:12px;
-       *   line-height:18px; gap:3px; color:label-tertiary；hover/focus 变 label-secondary。
+       * 触发样式逐项对齐 **dsh-client-ui-subagent 的 CatalogDropdown 触发按钮**（用户点名参考它），
+       * 与 dsh-client-ui-jobs 的 job-list 同值：
+       *   border-radius:var(--dsw-radius-sm); min-height:28px; color:label-tertiary;
+       *   background:0 0; border:0; padding:3px 2px; font-size:12px; line-height:18px;
+       *   display:inline-flex; gap:4px；hover/focus-visible 变 label-primary。
        *
        * ⚠️ ZB-27b（用户现场：「字号还是不对、有背景色」）：真因是**样式注入时机** ——
        * ensureStyle() 原先只挂在弹窗（PanelBody）的 effect 上，而弹窗要等用户点开才挂载，
        * 于是入口在首次点开之前**完全没样式**，用的是宿主对 <button> 的默认样式（底色 + 继承字号）。
        * 现在改成 apply() 时就注入（见文件末尾），入口一出现就是对的。
        *
-       * 选择器统一加 `.zcd-entry ` 作用域（0,2,0）压过宿主形如 `.headerActions button` 的规则；
-       * 并显式 appearance:none + background:transparent，杜绝宿主 button 底色/描边。
-       * 颜色一律走主题令牌（T.* = --dsw-alias-* 带回退）⇒ 明暗两套主题自适应。 */
+       * ⚠️ ZB-27c（用户现场：「点击打开面板后，背景色又出现了」）：宿主对**已展开/已聚焦的触发按钮**
+       * 有自己的高亮态（形如 `button[aria-expanded="true"]` 或 `:focus` 的填充背景）。故这里不只重置
+       * 基础态，而是把 background/border/box-shadow 在**所有交互态**一起重置（背景用 !important，
+       * 因为宿主选择器未知）。颜色只走主题令牌（T.* = --dsw-alias-* 带回退）⇒ 明暗两套自适应。 */
       '.zcd-entry{position:relative;display:inline-flex;}',
-      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;border:0;background:transparent;box-shadow:none;min-height:28px;padding:3px 2px;margin:0;font-family:inherit;font-size:12px;font-weight:inherit;line-height:18px;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:3px;border-radius:var(--dsw-radius-sm,6px);}',
-      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible{background:transparent;color:' + T.text2 + ';}',
-      '.zcd-entry .zcd-chip[aria-expanded="true"]{color:' + T.text2 + ';}',
-      '.zcd-entry .zcd-chip-chevron{display:inline-flex;transition:transform .12s;}',
-      '.zcd-entry .zcd-chip-chevronOpen{transform:rotate(180deg);}',
+      '.zcd-entry .zcd-chip{appearance:none;-webkit-appearance:none;border:0;background:transparent;box-shadow:none;min-height:28px;padding:3px 2px;margin:0;font-family:inherit;font-size:12px;font-weight:inherit;line-height:18px;white-space:nowrap;color:' + T.text3 + ';cursor:pointer;display:inline-flex;align-items:center;gap:4px;border-radius:var(--dsw-radius-sm,6px);}',
+      /* 所有交互态统一"无底色" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。 */
+      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0;box-shadow:none !important;}',
+      '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip[aria-expanded="true"]{color:' + T.text + ';}',
+      /* 展开指示：与子智能体一致 —— 转的是 **svg 本身**，过渡 .12s。 */
+      '.zcd-entry .zcd-chip svg{flex:none;transition:transform .12s;}',
+      '.zcd-entry .zcd-chip[aria-expanded="true"] svg{transform:rotate(180deg);}',
       /* 弹窗本体：与 job-list 的 .menu 同一套令牌（--dsw-specific-menu / elevation-prominent /
        * radius-lg），贴入口右缘展开（本入口位于标题行右端，left:0 会溢出视口）。 */
       '.zcd-menu{position:absolute;top:calc(100% + 5px);right:0;z-index:100;box-sizing:border-box;display:flex;flex-direction:column;padding:3px;background:var(--dsw-specific-menu,' + T.bg + ');border:0;border-radius:var(--dsw-radius-lg,12px);box-shadow:var(--dsw-elevation-prominent,' + T.shadow + ');width:min(var(--zcd-w,' + WIDTH.def + 'px),calc(100vw - 32px));max-height:min(560px,calc(100vh - 140px));overflow:auto;text-align:left;}',
@@ -1508,6 +1513,26 @@ window.__ModuleLoader__.load({
       return h('svg', { width: 12, height: 12, viewBox: '0 0 12 12', 'aria-hidden': true },
         h('path', { d: up ? 'M2 8 L6 4 L10 8' : 'M2 4 L6 8 L10 4', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
     }
+    /**
+     * 会话头入口的展开指示三角 —— **逐字复刻系统图标** `IconChevronDownOutlineRegular`
+     * （官方客户端 primitives 包 `dsh-client-ui-primitives` 的导出，子智能体/后台任务入口用的就是它）：
+     *   size 14（不是 12）· viewBox "0 0 16 16" · fill:none · stroke:currentColor · strokeWidth 1。
+     *
+     * 为什么单独做一个：ZB-27 第一版用了本文件既有的 IconChevron（12×12、viewBox 12、
+     * stroke-width 1.5、glyph 跨 8/12 单位）—— 用户现场对比后指出「三角形图标尺寸间距不对，参考
+     * 子智能体的」。实测两者差异：字形宽 8px vs 7px、描边 1.5px vs ≈0.88px ⇒ 明显更大更粗。
+     * 注意：几何与 strokeWidth 取自系统源码，改动即为偏离系统外观。
+     */
+    function IconChevronDownSystem({ className }) {
+      return h('svg', {
+        width: 14, height: 14, viewBox: '0 0 16 16', className, fill: 'none',
+        xmlns: 'http://www.w3.org/2000/svg', 'aria-hidden': true, strokeWidth: 1,
+      },
+        h('path', {
+          d: 'M4 6L7.29289 9.29289C7.68342 9.68342 8.31658 9.68342 8.70711 9.29289L12 6',
+          stroke: 'currentColor',
+        }));
+    }
     function IconMinus() {
       return h('svg', { width: 12, height: 12, viewBox: '0 0 12 12', 'aria-hidden': true },
         h('path', { d: 'M2.5 6 H9.5', fill: 'none', stroke: 'currentColor', 'stroke-width': 1.5, 'stroke-linecap': 'round' }));
@@ -2229,8 +2254,9 @@ window.__ModuleLoader__.load({
           onClick: () => setOpen((v) => !v),
         },
           h('span', { className: 'zcd-chip-label' }, t('title')),
-          h('span', { className: 'zcd-chip-chevron' + (open ? ' zcd-chip-chevronOpen' : ''), 'aria-hidden': true },
-            h(IconChevron, { up: false }))),
+          /* 展开指示用**系统同款图标与几何**（size 14 / viewBox 16 / strokeWidth 1），
+           * 旋转交给 CSS（`.zcd-chip[aria-expanded="true"] svg`）——与子智能体一致。 */
+          h(IconChevronDownSystem, { className: 'zcd-chip-chevron' })),
         open ? h(PanelBoundary, null, h(PanelBody)) : null);
     }
 

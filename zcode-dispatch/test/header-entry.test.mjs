@@ -36,9 +36,11 @@ console.log('\nB. 入口样式与同排一致（取自 dsh-client-ui-jobs 的 jo
   ok(/font-size:12px/.test(css), 'B4 字号 12px（与同排一致）');
   ok(/line-height:18px/.test(css), 'B5 行高 18px');
   ok(/min-height:28px/.test(css), 'B6 min-height 28px');
-  ok(/gap:3px/.test(css), 'B7 图标/文字间距 3px');
+  ok(/gap:4px/.test(css), 'B7 图标/文字间距 4px（与子智能体 CatalogDropdown 触发按钮同值）');
   ok(/T\.text3/.test(css), 'B8 常态色用 label-tertiary（T.text3）');
-  ok(/\.zcd-chip:hover/.test(code) && /T\.text2/.test(code.match(/\.zcd-chip:hover[^\n]*/)[0]), 'B9 hover 变 label-secondary（T.text2）');
+  /* 颜色规则单独找 —— 第一条 `.zcd-chip:hover` 命中的是"所有交互态统一无底色"那条（不含颜色）。 */
+  const colorRule = code.split('\n').find((l) => l.includes('.zcd-chip:hover') && l.includes('color:'));
+  ok(!!colorRule && /T\.text\b/.test(colorRule), 'B9 hover/展开 变 label-primary（T.text，与子智能体一致）');
   ok(/zcd-chip-chevron/.test(code), 'B10 带展开指示箭头（与同排入口一致）');
   /* ZB-27b（用户现场「字号还是不对、有背景色」）—— 真因是样式注入时机，但顺带把"入口不该有
    * 宿主 button 的外观"钉死，免得下次又被宿主样式带偏。 */
@@ -47,6 +49,19 @@ console.log('\nB. 入口样式与同排一致（取自 dsh-client-ui-jobs 的 jo
   ok(/background:transparent/.test(css), '★ B13 背景透明（用户明确要求"不要背景色"）');
   ok(/box-shadow:none/.test(css), 'B14 无宿主描边/阴影');
   ok(!/#[0-9a-fA-F]{3,8}\b|rgba?\(/.test(css), '★ B15 入口样式无字面色值 ⇒ 明暗两套主题自适应（颜色只走 T.* 令牌）');
+  /* ZB-27c（用户现场「点击打开面板后，背景色又出现了」）：宿主对**已展开/已聚焦**的触发按钮有高亮态，
+   * 基础态那条压不住 ⇒ 必须把 background 在所有交互态一起重置（并对背景用 !important，宿主选择器未知）。 */
+  const reset = code.split('\n').find((l) => l.includes('.zcd-chip[aria-expanded="true"]') && l.includes('background:transparent'));
+  ok(!!reset, '★ B16 有"所有交互态统一无底色"的成组重置（含 [aria-expanded="true"]）');
+  ok(!!reset && /:hover/.test(reset) && /:focus/.test(reset) && /:active/.test(reset) && /\[aria-expanded="false"\]/.test(reset),
+    '★ B17 重置覆盖 hover / focus / focus-visible / active / aria-expanded 真与假');
+  ok(!!reset && /background:transparent !important/.test(reset) && /background-image:none !important/.test(reset),
+    '★ B18 背景用 !important 且清掉 background-image（宿主可能用渐变/填充）');
+  /* 展开指示三角：**逐字复刻**系统 IconChevronDownOutlineRegular（子智能体入口用的就是它）。 */
+  ok(/viewBox: '0 0 16 16'/.test(code) && /width: 14, height: 14/.test(code), '★ B19 三角图标用系统几何：14×14 / viewBox 16');
+  ok(/strokeWidth: 1\b/.test(code) && /M4 6L7\.29289 9\.29289C7\.68342 9\.68342 8\.31658 9\.68342 8\.70711 9\.29289L12 6/.test(code),
+    '★ B20 三角路径与 strokeWidth 逐字取自系统图标（不是自绘的 12×12/1.5px 版本）');
+  ok(/\.zcd-chip\[aria-expanded="true"\] svg\{transform:rotate\(180deg\);?\}/.test(code), 'B21 展开时旋转 **svg 本身**（与子智能体 .triggerOpen 同做法）');
 }
 
 console.log('\nC. 弹窗：系统菜单样式 + 开合交互');{
