@@ -38,7 +38,7 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(/display:inline-flex/.test(css), 'B2 display:inline-flex');
   ok(/gap:4px/.test(css), '★ B3 gap 4px（子智能体 .oXE0lW_trigger 同值 —— 用户点名参考它；官方 jobs 是 3px、agent-team 是 5px，官方自身不统一）');
   ok(/min-height:28px/.test(css), '★ B4 min-height 28px（官方同值；不是 height:22px —— 那是被动装饰 agent-preset）');
-  ok(/padding:3px 7px/.test(css), '★ B5 padding 3px 7px（agent-team 官方同值 —— 用户反馈与左侧入口间距偏紧，取横向 7px 增加呼吸感）');
+  ok(/padding:3px 2px/.test(css), '★ B5 padding 3px 2px（= 左邻居子智能体的官方值：入口移到子智能体后面后，逐项与左邻居一致最不易看出差别）');
   ok(/border:0/.test(css), 'B6 border 0');
   ok(/border-radius:var\(--dsw-radius-sm/.test(css), '★ B7 圆角 --dsw-radius-sm（官方同值）');
   ok(/background:transparent/.test(css), 'B8 background transparent（官方同值；也是用户"不要背景色"的要求）');

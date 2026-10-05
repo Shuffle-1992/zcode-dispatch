@@ -274,7 +274,7 @@ window.__ModuleLoader__.load({
        * 官方各入口本身不统一：jobs 3px 2px / 子智能体 3px 2px / agent-team 3px 7px —— 取横向 7px
        * 是为了让入口两侧的呼吸感与 agent-team 一致）；border-radius:var(--dsw-radius-sm)；
        * font-size:12px; line-height:18px; color:label-tertiary；箭头 14（子智能体默认）。 */
-      '.zcd-entry .zcd-chip{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:3px 7px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:' + T.text3 + ';font-size:12px;line-height:18px;cursor:pointer;}',
+      '.zcd-entry .zcd-chip{display:inline-flex;align-items:center;gap:4px;min-height:28px;padding:3px 2px;border:0;border-radius:var(--dsw-radius-sm,6px);background:transparent;color:' + T.text3 + ';font-size:12px;line-height:18px;cursor:pointer;}',
       /* 所有交互态统一"无底色、无焦点环" —— 基础态那条压不住宿主针对 :hover/:focus/[aria-expanded] 的规则。
        * 焦点可见性改由**颜色**承担（与邻居把 :hover/:focus-visible 变成 label-primary 同思路）。 */
       '.zcd-entry .zcd-chip:hover,.zcd-entry .zcd-chip:focus,.zcd-entry .zcd-chip:focus-visible,.zcd-entry .zcd-chip:active,.zcd-entry .zcd-chip[aria-expanded="true"],.zcd-entry .zcd-chip[aria-expanded="false"]{background:transparent !important;background-image:none !important;border:0 !important;box-shadow:none !important;outline:none !important;}',
