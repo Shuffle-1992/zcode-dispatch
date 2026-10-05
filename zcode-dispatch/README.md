@@ -16,6 +16,7 @@ zcode-dispatch/
 ├─ package.json          bundle 清单（dsh.bundle.patch + dsh.client + meta/icon/locale）
 ├─ cordis.patch.yml      插入一行 id=zcode-dispatch 的 config（demo/maxConcurrent/runnerPath/ledgerPath/workRoot）
 ├─ index.js              Host 半边：apply(ctx, config)；创建 dispatcher 单例、卸载清理、注册 agent 工具
+├─ notify.mjs            ZB-22 落地自动唤醒（job 落地 → 唤醒发起会话；零 @deepseek-ai 依赖）
 ├─ wire.host.mjs         Host 接线适配器（含 creator 三步 TODO 注释块）＋ 动作唯一实现 createActionHandler
 ├─ wire.client.mjs       Client 接线适配器（含 creator 三步 TODO 注释块）＋ 轮询/demo 降级
 ├─ client.js             UI 半边：悬浮窗（React.createElement，无构建）；内嵌降级 wire
@@ -52,6 +53,9 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 | `ledgerPath` | string / `''` | 台账 `zcode-runs.jsonl` 绝对路径；留空则跳过台账回读与用量聚合 |
 | `workRoot` | string / `''` | 派发器工作根目录（`locks/`、`state/jobs.json`、`logs/` 落在这里）。留空即落到本包 `.data/` |
 | `switchPath` | string / `''` | Z12：派发总开关真值文件（宿主项目 `collab/zcode-dispatch.switch.json`）。文件缺失/损坏=开启；留空则开关不可写；测试可指向临时文件密封 |
+| `notifyOnSettle` | boolean / `true` | **ZB-22**：job 落地（`done`/`failed`/`killed`/`interrupted`/`paused`）时自动唤醒**发起它的那个会话**（与 DSH 后台任务同款，见下节）。`false` = 只派发不唤醒 |
+| `maxConsecutiveWakes` | integer / `0` | **ZB-22**：用户没说话期间允许的**连续**唤醒次数上限；`0`=不限。超出后该次通知改为注入下一步（等用户说话后预算清零） |
+| `systemPromptHint` | boolean / `true` | **ZB-22**：往 system prompt 注入一段「派发台优先、别退回 DSH 自带 subagent」提示（新会话的 agent 因此不易用错工具）。`false` = 不注入 |
 
 > **路径都是机器专有配置，仓库里不写死。** 本包的 `cordis.patch.yml` 只插入 `demo` / `maxConcurrent`；
 > 上述四个路径请在 **profile patch**（`~/.dsh/profiles/<profile>/cordis.patch.yml`）里按 id 覆盖：
@@ -229,6 +233,42 @@ wait(id, timeoutSec)     → { ok:true, job:{…终态…}, waitedSec, timedOut:
   `inject = ['tools']` 取得服务；`defineTool` 来自随 dsh 出货的 `@deepseek-ai/dsh-tools`，
   动态 import，缺包时降级为不注册 + warn，不影响激活与 UI）。
 
+### 任务落地自动唤醒（ZB-22，默认开）
+
+**现场问题**：派发之后会话**不等待**（这是 fire-and-forget，本身没错），但任务跑完
+**没有任何东西叫醒它** —— 用户得自己再发一句话「继续」。DSH 自带的后台任务不是这样：
+它落地时会把通知投进发起它的会话，会话自动被拉起。
+
+**现在派发台也一样**（实现与 `@deepseek-ai/dsh-tool-jobs` 同源契约）：
+
+| 环节 | 做法 | 依据 |
+|---|---|---|
+| 归属 | 工具 `execute(args, exec)` 取 `exec.agent.id`；`dispatch`/`retry` 成功后登记 `jobId → 会话 id` | `dsh-tool-jobs` 的 `exec.agent?.id` 用法 |
+| 触发 | `dispatcher.subscribe` 的 `job-updated` 事件里判落地：`done`/`failed`/`killed`/`interrupted`/**`paused`** | 与 `action=wait` 的落地判据同源（paused 也要人来决定） |
+| 投递 | `ctx.get('agents').get(会话id)` → `status==='idle' ? agent.followup(msg) : agent.inject(msg)` | `Agent.followup = send(next-turn, wakeup)`；`inject = send(next-step, no-wakeup)` |
+| 消息 | `{role:'user', content:[{type:'text',text}], source:{kind:'zcode-dispatch', form:'notice', summary}}` | 客户端据此渲染「本轮由通知触发」的可展开卡片；`form:'notice'` 是客户端已认识的形态（换别的字符串会抛 `unreachable context form`） |
+
+**抑制**（避免「自己做的事又叫醒自己」，与 `dsh-tool-jobs` 的 `killedByModel` / `awaited` 同语义）：
+
+- 自己 `action=kill` 掉的 job → 不发通知；
+- 自己 `action=wait` **已等到**落地的 job → 不发通知（结果已由那次工具调用返回）；
+- `wait` 超时**不**抑制（job 还在跑，落地时仍应唤醒）。
+
+**注册与降级**：`agents` 服务**既不用静态 `inject`、也不用 `ctx.inject` 等它就绪** —— 投递那一刻
+才 `ctx.get('agents')` 懒解析（cordis 对未注册/未激活的服务返回 `undefined` 而不抛）。
+理由：唤醒是「有就更好」的增强，不能让它的成立与否取决于服务解析时机是否恰好赶上 `apply`。
+服务缺席时插件照常激活，只是不唤醒（派发/面板/工具一字不变）。
+`ctx.inject(['systemPrompt'], …)` 同理注入「派发台优先」提示段（名 `tool:zcode-dispatch`，
+顺序 1605，紧随 `tool:jobs` 1600）。
+
+**排障一眼看**：`.data/state/activation.json` 里有
+`notifyOnSettle / wakeActive / wakeNote / agentsVisible / systemPromptHint / systemPromptHintActive`。
+`wakeActive:false` = 唤醒器没建起来（看 `wakeNote`）；`agentsVisible:false` = apply 那一刻
+解析不到 agents 服务（投递时仍会再试，只是要留意 DSH 日志里的「会话已不在」warn）。
+
+**证据**：`test/notify.test.mjs`（16 条：形态/幂等/抑制/预算/卸载）；
+`test/wake-integration.test.mjs`（3 条：`apply()` 全链路 —— 派发→落地→唤醒 + systemPrompt 段落 + 信标）。
+
 ## 其他会话如何发现并调用（Z13）
 
 任何 DSH 会话（包括新开的）只要宿主加载了本插件，agent 工具列表里就有 `zcode_dispatch`
@@ -356,6 +396,8 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/lock-badge.test.mjs` | 34 | 进程行锁徽标（ZB-18：区分整仓库锁 / 文件锁 N / 不取锁 / 旧版记录）+ **全仓防复发扫描**（ZB-19） |
 | `node test/memory-ban.test.mjs` | 4 | 记忆禁令注入（ZB-20：prompt/target 注入；**task 注入不进去 ⇒ memoryBanApplied=false**） |
 | `node test/panel-style.test.mjs` | 24 | 面板样式注入（ZB-21：样式只注入 head 一次，重渲染不再触碰 ⇒ 不透明/不塌左上角） |
+| `node test/notify.test.mjs` | 17 | 落地自动唤醒（ZB-22：空闲 followup / 忙碌 inject、幂等、自己 kill/wait 的抑制、唤醒预算、卸载退订、工具层译码） |
+| `node test/wake-integration.test.mjs` | 3 | 落地唤醒**全链路接线**（ZB-22：`apply()` → inject agents/systemPrompt → 派发 → 落地 → 唤醒 + 信标 `wakeActive`；关配置 / 无服务时降级） |
 | `node test/z2-verify.mjs` | — | 端到端验收（越界检查需 `Z2_HOST_REPO`，未设则 SKIP 并如实标注） |
 
 > `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），

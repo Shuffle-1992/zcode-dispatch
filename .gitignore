@@ -1,6 +1,7 @@
 # 运行期数据（不入库）
 zcode-dispatch/work/
 zcode-dispatch/.data/
+.data/
 node_modules/
 
 # 桥的运行时收发（只保留目录占位）

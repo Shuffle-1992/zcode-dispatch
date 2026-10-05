@@ -54,7 +54,7 @@ const section = (title) => console.log(`\n===== ${title} =====`);
 
 /* ---------------- 1. node --check ---------------- */
 section('1. node --check 全部 JS');
-const JS_FILES = ['index.js', 'client.js', 'wire.host.mjs', 'wire.client.mjs', 'core/dispatch-core.mjs', 'core/quota.mjs', 'bin/zcd.mjs'];
+const JS_FILES = ['index.js', 'notify.mjs', 'client.js', 'wire.host.mjs', 'wire.client.mjs', 'core/dispatch-core.mjs', 'core/quota.mjs', 'bin/zcd.mjs'];
 for (const f of JS_FILES) {
   const p = join(PKG, f);
   if (!existsSync(p)) {

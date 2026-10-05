@@ -18,10 +18,11 @@
  *    激活安全第一，UI 与派发核心不受影响。
  */
 import { createRequire } from 'node:module';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createDispatcher } from './core/dispatch-core.mjs';
+import { createSettleNotifier } from './notify.mjs';
 import { DEFAULT_SWITCH_PATH, attachHostWire, createActionHandler, readSwitch, switchFileOf } from './wire.host.mjs';
 
 /** 本文件所在目录（激活信标的兜底落点；config.workRoot 缺席时用）。 */
@@ -40,6 +41,14 @@ const DEFAULTS = {
   runnerCwd: '',
   // Z12：派发总开关真值文件（契约：宿主仓库 collab/PROTOCOL.md §7）；缺省为空 = 未接入宿主仓库
   switchPath: DEFAULT_SWITCH_PATH,
+  // ZB-22：任务落地自动唤醒（会话不必自己回来轮询）。默认开；关掉只影响「叫醒会话」，
+  // 派发/面板/工具动作一字不变。
+  notifyOnSettle: true,
+  // ZB-22：连续唤醒上限。0 = 不限（与 DSH 后台任务默认同语义）；>0 时"用户没说话期间"
+  // 最多连续唤醒这么多次，超出改为注入下一步（等用户说话后预算清零）。
+  maxConsecutiveWakes: 0,
+  // ZB-22：往 system prompt 注入一段「派发台优先」提示（新会话的 agent 因此不易退回 DSH 自带 subagent）。
+  systemPromptHint: true,
 };
 
 /**
@@ -56,6 +65,9 @@ function fallbackConfig() {
         const cfg = { ...DEFAULTS, ...(raw && typeof raw === 'object' ? raw : {}) };
         cfg.demo = !!cfg.demo;
         cfg.maxConcurrent = Math.min(8, Math.max(1, Number(cfg.maxConcurrent) || 1));
+        cfg.notifyOnSettle = cfg.notifyOnSettle !== false;
+        cfg.systemPromptHint = cfg.systemPromptHint !== false;
+        cfg.maxConsecutiveWakes = Math.max(0, Math.floor(Number(cfg.maxConsecutiveWakes) || 0));
         for (const k of ['runnerPath', 'ledgerPath', 'workRoot', 'runnerCwd', 'switchPath']) cfg[k] = typeof cfg[k] === 'string' ? cfg[k] : '';
         return { value: cfg };
       },
@@ -75,6 +87,9 @@ async function loadConfig() {
       workRoot: z.string().default('').description('派发器工作根目录（locks/、state/jobs.json、logs/ 落在这里）；留空则不创建 dispatcher'),
       runnerCwd: z.string().default('').description('runner 子进程工作目录（通常设为宿主项目根，如 F:\\My Code\\keysion dac vue）；留空 = 用 DSH 进程 cwd'),
       switchPath: z.string().default(DEFAULT_SWITCH_PATH).description('ZCode 派发总开关真值文件绝对路径（宿主仓库 collab/zcode-dispatch.switch.json，契约见其 PROTOCOL.md §7）；文件缺失/损坏视为开启；留空则开关不可写'),
+      notifyOnSettle: z.boolean().default(true).description('ZB-22：任务落地（done/failed/killed/interrupted/paused）时自动唤醒发起会话（空闲=开新一轮，忙碌=注入下一步），与 DSH 后台任务同款；false=只派发不唤醒'),
+      maxConsecutiveWakes: z.number().min(0).default(0).description('ZB-22：用户没说话期间允许的连续唤醒次数上限；0=不限；超出后改为注入（等用户说话后预算清零）'),
+      systemPromptHint: z.boolean().default(true).description('ZB-22：向 system prompt 注入「派发台优先于 DSH 自带 subagent」提示段；false=不注入'),
     });
   } catch {
     return fallbackConfig();
@@ -168,6 +183,10 @@ const DEFINE_TOOL_SOURCE = DEFINE_TOOL_RESOLVED.source;
  * 激活信标：把「defineTool 是否解析到 / 工具是否注册 / 远端面是否注册」落成一个 JSON 文件，
  * 供重启后一眼定位（ZB-01 §2.1）。路径 = config.workRoot/state/activation.json
  * （默认即 zcode-dispatch/.data/state/activation.json）；写失败**绝不抛**。
+ *
+ * ZB-22：改为**与已有内容合并**（原来整文件覆盖）。原因：唤醒能力要靠 ctx.inject 异步
+ * 拿到 agents 服务后才成立，那一刻已是 apply 之后——只覆盖就写不进「唤醒是否真的启用」，
+ * 而这条恰恰是排障时最需要一眼看到的。`at` 记录最后一次写入时间。
  */
 function beaconFile(config) {
   const root = config && typeof config.workRoot === 'string' && config.workRoot ? config.workRoot : join(PLUGIN_DIR, '.data');
@@ -177,7 +196,12 @@ function writeActivationBeacon(config, patch) {
   try {
     const file = beaconFile(config);
     mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), name: 'zcode-dispatch', ...patch }, null, 2)}\n`, 'utf8');
+    let prev = {};
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8'));
+      if (parsed && typeof parsed === 'object') prev = parsed;
+    } catch { /* 首次写入 / 文件损坏：从空对象起步 */ }
+    writeFileSync(file, `${JSON.stringify({ ...prev, at: new Date().toISOString(), name: 'zcode-dispatch', ...patch }, null, 2)}\n`, 'utf8');
   } catch { /* 信标只是诊断，写不了不影响激活 */ }
 }
 /** 工具注册失败原因（供信标；不改变 registerZcodeDispatchTool 的返回值语义）。 */
@@ -232,15 +256,18 @@ const TOOL_PARAMETERS = {
 };
 
 const TOOL_DESCRIPTION_BODY = [
-  '- action=dispatch：派发一个 run。**立即返回**，不等任务跑完（返回时 state 通常是 queued；拿结果请用 action=list/tail 轮询，或 action=wait）。kind=prompt|task|target 必须带对应内容字段 prompt|task|target（task 为任务文件绝对路径）。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、timeoutMin（正数分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|none，默认 repo）、**write（本任务要写的文件列表 —— 锁的粒度就是它）**、cwd、resume。总开关关闭时被拒绝（返回 ok:false + switch 状态），不创建 job。',
+  '- action=dispatch：派发一个 run。**立即返回**，不等任务跑完（返回时 state 通常是 queued）。拿结果有两条路：等**落地自动唤醒**（见下条，推荐），或主动 action=wait / action=tail。kind=prompt|task|target 必须带对应内容字段 prompt|task|target（task 为任务文件绝对路径）。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、timeoutMin（正数分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|none，默认 repo）、**write（本任务要写的文件列表 —— 锁的粒度就是它）**、cwd、resume。总开关关闭时被拒绝（返回 ok:false + switch 状态），不创建 job。',
+  /* ZB-22：落地自动唤醒 —— 这是「派发台能不能像 DSH 后台任务一样用」的关键。
+   * 现场症状：派发后会话不等待、直接往下走/结束，任务跑完没人叫醒它，用户得自己再发一句。 */
+  '- **落地自动唤醒（默认开）**：dispatch/retry 建出的 job 一旦落地（done / failed / killed / interrupted / **paused**），**发起它的会话会被自动唤醒**并收到一条通知——会话空闲就开新一轮，会话正忙就插进下一步（与 DSH 后台任务同款）。因此派发之后**不要轮询、不要 sleep**：继续做别的独立步骤，或直接结束本轮即可；收到「zcode-dispatch」通知后再用 action=tail / action=list 读结果。你自己 action=kill 掉的、或自己 action=wait 已经读到的 job 不会再发通知（避免自己叫醒自己）。配置 notifyOnSettle=false 可关掉唤醒。',
   /* ZB-16：锁模型（本轮重设计）。
    * 仓库锁的**粒度由 write 决定**：声明 write ⇒ 只锁那些文件（不同文件集可并发）；
    * 不声明 ⇒ 锁整个仓库（粗粒度）。memory 锁已删除。 */
   '- **锁与并发**：并发数 = min(配置 maxConcurrent, 锁闸)。锁闸按**文件集**判定：**声明 write 的任务只锁它要写的文件** —— 不同文件集可并发，写同一文件（或与"整仓库锁"重叠）才排队。**不声明 write ⇒ 锁整个仓库**，与其它任务互斥。想让多个任务真正并发，就为每个任务声明它要写的文件。lock=none 表示明确不取锁（确认无竞写关系时用）。',
   '- **记忆写入（默认约束）**：派发时**默认注入提示词**，要求子代理不执行 ZCode 记忆写入/自动 Memory 提取（不写 ~/.zcode）。注意 kind=task 的任务包内容由宿主 runner 读取内联，插件注入不进去 ⇒ 该任务的 job.memoryBanApplied=false（如实标记，未受禁令保护）。',
-  '- action=wait：等待 job 落到终态或 paused（id 必填，timeoutSec 可选，缺省取该任务 timeoutMin 的秒数）。paused 也返回（不干等，让调用方决定 retry 续跑还是换通道交接）；超时返回 timedOut:true 与当前状态，不谎报完成。',
+  '- action=wait：等待 job 落到终态或 paused（id 必填，timeoutSec 可选，缺省取该任务 timeoutMin 的秒数）。paused 也返回（不干等，让调用方决定 retry 续跑还是换通道交接）；超时返回 timedOut:true 与当前状态，不谎报完成。**已经 wait 到落地的 job 不再发落地通知**（结果你已拿到）。',
   '- action=list：列出全部 run（running/queued 优先，含状态/锁/用量/上下文占用；不含 tail 内容）。',
-  '- action=kill：按 id 终止。queued 直接移除；running 发终止信号后落 killed。',
+  '- action=kill：按 id 终止。queued 直接移除；running 发终止信号后落 killed。**自己 kill 的 job 不发落地通知**。',
   '- action=dismiss：把 paused/终态 job 从列表移除（queued/running 必须先 kill）。',
   '- action=tail：按 id 取最近输出，参数 n 默认 30（上限 200）。',
   '- action=quota：台账用量聚合（5 小时滚动 / 本周 / 今日）+ 套餐剩余额度适配器（当前恒 available:false，待接 app-server RPC）。',
@@ -285,9 +312,10 @@ function buildToolDescription(switchFile) {
  * @param {(level: string, msg: string) => void} log
  * @param {(action: string, params: object) => Promise<object>} handleAction
  * @param {string} switchFile 开关真值文件（工具描述首行的注册时快照用）
+ * @param {object} [hooks] ZB-22 落地唤醒钩子：{ notifier: {current}, log }
  * @returns {(() => void)|null} 注销函数（若注册成功），否则 null
  */
-function registerZcodeDispatchTool(ctx, log, handleAction, switchFile) {
+function registerZcodeDispatchTool(ctx, log, handleAction, switchFile, hooks = {}) {
   if (!ctx?.tools || typeof ctx.tools.register !== 'function') {
     TOOL_REGISTER_ERROR = 'ctx.tools.register 不可用（inject=[\'tools\'] 未满足？）';
     log('warn', 'ctx.tools.register 不可用：agent 工具 zcode_dispatch 未注册（非致命，UI 与派发核心不受影响）');
@@ -310,9 +338,12 @@ function registerZcodeDispatchTool(ctx, log, handleAction, switchFile) {
         schema: { type: 'json' },
         render: (_args, value) => [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 2) }],
       },
-      async execute(args) {
+      async execute(args, exec) {
         const params = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
         const result = await handleAction(params.action, params);
+        /* ZB-22：把这次动作翻译成唤醒簿记。execute 的第二个参数 exec 带发起会话
+         * （exec.agent.id）——这是「谁派发的、落地后叫醒谁」的唯一来源。簿记失败绝不影响工具结果。 */
+        noteOwnerAction(hooks, params, result, exec);
         return JSON.stringify(result); // 工具结果统一回 JSON 字符串，调用方自行解析
       },
     }));
@@ -340,6 +371,43 @@ function registerZcodeDispatchTool(ctx, log, handleAction, switchFile) {
   }
 }
 
+/**
+ * ZB-22：把一次工具动作翻译成唤醒簿记。
+ *
+ * 只有**真正的派发**（dispatch / retry 成功）才登记 job→会话 的归属；其余动作只做抑制：
+ *   · kill 成功   ⇒ 模型自己终止的 job 不必再叫醒它（等价 dsh-tool-jobs 的 killedByModel）；
+ *   · wait 到落地 ⇒ 结果已由本次工具调用返回，不必再发通知（等价其 event.awaited）；
+ *   · wait 超时   ⇒ **不**抑制（job 仍在跑，落地时应当唤醒）。
+ * 所有异常一律吞掉：簿记是增强，绝不能影响工具返回。
+ *
+ * @param {object} hooks { notifier: {current}, log }
+ * @param {object} params 工具入参（含 action / id）
+ * @param {object} result handleAction 的返回信封
+ * @param {object} exec 官方工具执行上下文（exec.agent.id = 发起会话）
+ */
+export function noteOwnerAction(hooks, params, result, exec) {
+  try {
+    const notifier = hooks?.notifier?.current;
+    if (!notifier) return;
+    const action = params?.action;
+    const id = typeof params?.id === 'string' ? params.id : (typeof params?.jobId === 'string' ? params.jobId : '');
+    if ((action === 'dispatch' || action === 'retry') && result?.ok === true && typeof result.job?.id === 'string') {
+      const ownerId = typeof exec?.agent?.id === 'string' ? exec.agent.id : '';
+      notifier.track(result.job.id, ownerId);
+      return;
+    }
+    if (action === 'kill' && result?.ok === true && id) {
+      notifier.markKilled(id);
+      return;
+    }
+    if (action === 'wait' && result?.ok === true && result.timedOut === false && id) {
+      notifier.markAwaited(id);
+    }
+  } catch (e) {
+    try { hooks?.log?.('warn', `落地唤醒簿记失败（action=${params?.action}）：${e?.message ?? e}`); } catch { /* 日志失败也不影响 */ }
+  }
+}
+
 function makeLogger(ctx) {
   return (level, msg) => {
     try {
@@ -351,7 +419,22 @@ function makeLogger(ctx) {
 }
 
 /**
- * Host 入口。返回 { dispatcher, wire, handleAction } 便于测试与 creator 调试。
+ * ZB-22：注入 system prompt 的「派发台」提示段。
+ *
+ * 现场症状「新会话的 agent 不太用派发台」的根因是**它压根没被告知**：工具的 description
+ * 只在模型主动读工具清单时起作用，而 DSH 自带 subagent 是系统提示里已有的熟路。
+ * 本段与 dsh-tool-jobs 的 `tool:jobs` 段同级，位置紧跟 TOOL_JOBS（1600+5），排在 TOOL_SUBAGENT 之前。
+ * 比工具 description 短：系统提示每轮都占 token，工具清单只在模型看工具时占。
+ */
+const SYSTEM_PROMPT_SECTION = [
+  '【ZCode 派发台】要把一个独立任务交给另一个 agent 去做时（用户说「派发 / 交给 ZCode / 让 ZCode 做 / 用 ZCode 跑 / 在派发台派一个」，或笼统说「派发这个任务」），用工具 zcode_dispatch 的 action=dispatch，**不要**改用 DSH 自带的 subagent / spawn_teammate / subagent_fork / 后台 jobs —— 只有前者会在「ZCode 派发台」面板里生成可监视的 job（独立 ZCode 进程、独立额度与会话）。',
+  '派发是 fire-and-forget：**不要**轮询、不要 sleep。job 落地（done / failed / killed / interrupted / paused）时本会话会被自动唤醒并收到一条 zcode-dispatch 通知，届时用 action=tail / action=list 读结果。',
+  '例外：用户明确要你自己做，或 action=status 显示开关已关闭 / dispatch 返回 ok:false —— 这时按工具说明退回 DSH 自带手段，并说明原因。',
+].join('\n');
+
+/**
+ * Host 入口。返回 { dispatcher, wire, handleAction, notifier } 便于测试与 creator 调试
+ * （notifier 是 ZB-22 落地唤醒器的持有者，供集成测试与排障读取；插件外无需依赖它）。
  * @param {object} ctx cordis Context
  * @param {object} config 已校验的插件 config（见 Config）
  */
@@ -374,7 +457,64 @@ export function apply(ctx, config = {}) {
 
   const handleAction = createActionHandler(dispatcher, config);
   const wire = attachHostWire(ctx, dispatcher, config);
-  const disposeTool = registerZcodeDispatchTool(ctx, log, handleAction, switchFileOf(config));
+
+  /* ───────── ZB-22：任务落地自动唤醒（会话不必自己回来轮询）─────────
+   * agents 服务**既不写进静态 inject，也不用 ctx.inject 等它就绪**：投递那一刻才解析
+   * （`ctx.get('agents')`，cordis 对未注册/未激活的服务返回 undefined 而不抛）。
+   * 理由：唤醒是「有就更好」的增强——绝不能让它成不成立取决于服务解析时机是否恰好赶上
+   * apply；真机排障只看信标 `wakeActive` / `agentsVisible` 两个字段。
+   * 释放复用下方唯一那处 `ctx.effect(disposeAll)`（不再单独注册 effect）。 */
+  const notifierHolder = { current: null };
+  let wakeNote = null;
+  let agentsVisible = null;
+  if (dispatcher && config.notifyOnSettle !== false) {
+    try {
+      agentsVisible = !!ctx?.get?.('agents');
+    } catch { agentsVisible = false; } // 解析抛错也只是「现在看不到」，投递时再试
+    try {
+      const agentsFacade = {
+        get: (id) => {
+          try { return ctx?.get?.('agents')?.get?.(id); } catch { return undefined; }
+        },
+      };
+      notifierHolder.current = createSettleNotifier({ dispatcher, agents: agentsFacade, ctx, log, config });
+      const cap = Number(config.maxConsecutiveWakes) > 0 ? `连续 ${config.maxConsecutiveWakes} 次` : '不限';
+      log('info', `任务落地自动唤醒已启用：会话空闲时 followup 唤醒、忙碌时注入下一步（连续唤醒上限：${cap}；agents 服务当前${agentsVisible ? '可见' : '未解析到 —— 投递时再试'}）`);
+    } catch (e) {
+      wakeNote = `init-failed: ${e?.message ?? e}`;
+      log('warn', `任务落地自动唤醒初始化失败：${e?.message ?? e}（派发与 UI 不受影响）`);
+    }
+  } else if (dispatcher) {
+    wakeNote = 'disabled-by-config';
+    log('info', '任务落地自动唤醒已关闭（config.notifyOnSettle=false）');
+  }
+
+  /* ───────── ZB-22：system prompt 提示段 ─────────
+   * 现场症状「新会话的 agent 不太用派发台」的根因是**它压根没被告知**：工具的
+   * description 只在模型主动看工具列表时起作用，而 DSH 自带 subagent 是系统提示里
+   * 点名推荐过的熟路。这里补一段与 dsh-tool-jobs 的 tool:jobs 段同级的提示，
+   * 位置紧跟 TOOL_JOBS 之后（1600+5），排在 TOOL_SUBAGENT 之前。 */
+  if (config.systemPromptHint !== false && typeof ctx?.inject === 'function') {
+    ctx.inject(['systemPrompt'], (spCtx) => {
+      try {
+        const base = spCtx.systemPrompt.getSectionOrder?.('TOOL_JOBS');
+        spCtx.systemPrompt.section({
+          name: 'tool:zcode-dispatch',
+          order: Number.isFinite(base) ? base + 5 : 1605,
+          text: SYSTEM_PROMPT_SECTION,
+        });
+        log('info', 'system prompt 已注入「ZCode 派发台」提示段');
+        writeActivationBeacon(config, { systemPromptHintActive: true, systemPromptHintError: null });
+      } catch (e) {
+        log('warn', `system prompt 注入失败：${e?.message ?? e}（派发与 UI 不受影响）`);
+        writeActivationBeacon(config, { systemPromptHintActive: false, systemPromptHintError: e?.message ?? String(e) });
+      }
+    });
+  } else if (config.systemPromptHint === false) {
+    writeActivationBeacon(config, { systemPromptHintActive: false, systemPromptHintError: 'disabled-by-config' });
+  }
+
+  const disposeTool = registerZcodeDispatchTool(ctx, log, handleAction, switchFileOf(config), { notifier: notifierHolder, log });
 
   /* ZB-01 激活信标（§2.1）：重启后读 .data/state/activation.json 一眼定位
    * 「包没解析到」还是「register 没成功」还是「远端面没注册」。 */
@@ -392,12 +532,23 @@ export function apply(ctx, config = {}) {
     toolRegisterError: TOOL_REGISTER_ERROR,
     remote: (wire && wire.diagnostics) || null,
     switchEnabled: readSwitch(switchFileOf(config)).enabled,
+    // ZB-22：唤醒与提示段的配置快照 + 动态结果
+    notifyOnSettle: config.notifyOnSettle !== false,
+    maxConsecutiveWakes: Number(config.maxConsecutiveWakes) || 0,
+    systemPromptHint: config.systemPromptHint !== false,
+    wakeActive: !!notifierHolder.current,
+    wakeNote,
+    agentsVisible,
   });
 
   const disposeAll = () => {
     try {
       disposeTool?.();
     } catch { /* 已注销 */ }
+    try {
+      notifierHolder.current?.dispose?.();
+      notifierHolder.current = null;
+    } catch { /* 已释放 */ }
     try {
       wire.dispose?.();
     } catch { /* 已释放 */ }
@@ -419,5 +570,5 @@ export function apply(ctx, config = {}) {
   // 注：卸载时 running job 依赖 child 'close' 事件落终态并持久化；若整个进程直接退出，
   // 下次启动由 dispatcher.restore() 把残留 running/queued 兜底标为 interrupted，状态不悬空。
 
-  return { dispatcher, wire, handleAction };
+  return { dispatcher, wire, handleAction, notifier: notifierHolder };
 }

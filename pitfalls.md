@@ -2,6 +2,19 @@
 
 > 按全局规则维护：遇到踩坑问题登记于此，避免重复踩坑。新条目置顶。
 
+## 2026-10-05 ZB-22（派发台落地自动唤醒；以及「host 代码改动何时才真生效」）
+
+现场问题（用户报告）：「派发任务时会话窗口不等待、直接继续；任务跑完没人叫醒它，得我自己再发一句。
+DSH 自带的后台任务完成时会自动把会话拉起来，派发台也应该这样。」
+
+1. **第三方插件派出去的后台工作，宿主**不会**替你叫醒会话 —— 必须自己投递通知**。DSH 自带 `job_*` 的那套（`@deepseek-ai/dsh-tool-jobs`）是它自己的实现，不是通用服务：它在 job 落地时把一条 user 角色消息投进**发起它的那个会话**（空闲 `agent.followup` 开新一轮、忙碌 `agent.inject` 插下一步）。派发台原来只有 `dispatch`（fire-and-forget）+ `wait`（主动等），于是「会话不等待」这个正确行为变成了「跑完没人叫醒」这个错误体验。正解就照它的契约抄：`exec.agent.id`（工具 `execute(args, exec)` 第二参）登记归属 → 订阅 `dispatcher` 的 `job-updated` 判落地 → `ctx.get('agents').get(会话id)` 投递。DSH 那侧的三个实现细节必须一起抄对：① 判据用「终态 **+ paused**」（paused 也要人来决定续跑/换通道，干等是错的）；② `form` 只能写 `'notice'`（客户端 `contextBody` 对未知 form 直接 `throw unreachable context form`，不是降级渲染）；③ 自己 kill 的、自己 `wait` 已等到落地的 job 要**抑制**通知（否则「自己做的事又叫醒自己」，对应它的 `killedByModel`/`awaited`）。证据：test/notify.test.mjs 17 项 + test/wake-integration.test.mjs 3 项（后者跑真 `apply()` + 假 runner，断言落地后 `followup` 恰好一次）。
+
+2. **`agents` 服务要在「投递那一刻」懒解析，别用 `ctx.inject(['agents'], …)` 等它就绪**。第一版写成 `ctx.inject`，看着更「cordis 正统」，但语义上它把「唤醒能不能用」绑在了「服务解析时机是否恰好赶上 apply」上——服务在子作用域/晚注册时回调永不来，**唤醒静默失效且没有任何报错**（信标只会停在 `wakeActive:false`）。改成 apply 里就建唤醒器、投递时 `ctx.get('agents')` 现取（cordis 的 `ReflectService._getImpl` 对未注册服务 `return` undefined 而非抛，reflect.ts:205 附近），并把这个事实写进激活信标（`agentsVisible`）。教训：**增强型能力不能有「时机依赖的静默失败」**，宁可每次现取。
+
+3. **改 host 代码（index.js 等）后，动 profile patch 只会「重新 apply 已缓存的模块」——新代码要重启 DSH 才生效**。A/B 实证：14:40:20 落盘新 `index.js` → 14:40:46 改 profile `cordis.patch.yml` → 14:40:49 信标 `at` 更新（说明 apply 确实重跑了），但信标里**没有**新代码才会写的 `notifyOnSettle/wakeActive` 字段 = 跑的还是旧模块。原因：`@deepseek-ai/dsh-hmr` 的模块监听根是 profile 目录（`root:["."]`，且默认 `ignored` 含 `**/node_modules`），本插件在仓库路径、又经 `profiles/<p>/node_modules/@local/<pkg>` 软链装配，**两头都不在监听面内**；profile patch 的变更走的是「配置监听 → 重新 apply 同一条目」，ESM 模块实例照样命中缓存。推论：① 插件 host 代码改动一律以「重启 DSH」为验收前提；② 别为了「热更新方便」把插件目录加进 `hmr.root`——`disposeAll` 卸载时会 **kill 所有 running job**（index.js 的卸载清理），编辑一个文件就能干掉一个跑了半小时的派发任务。
+
+4. **排障要看信标，不要靠「应该生效了吧」**：本轮把唤醒状态写进 `.data/state/activation.json`（`wakeActive`/`wakeNote`/`agentsVisible`/`systemPromptHintActive`），并且 `writeActivationBeacon` 从「整文件覆盖」改成「与已有内容合并」（原来只覆盖，晚到的动态结果写不进去）。上面第 3 条的「跑的还是旧模块」就是这么一眼看出来的。
+
 ## 2026-09-30 Z13（官方 API 注册 agent 工具 zcode_dispatch）
 
 1. **「宿主随包出货」≠ 本地能静态 import**：本地 node_modules 只有宿主出货包的子集（cosmokit/schemastery）。给 index.js 加静态 `import '@deepseek-ai/dsh-tools'` 会让模块加载即炸——verify-plugin ③「Config 是 Standard Schema」项会**真实 import index.js**（tools/verify-plugin.mjs:38），门禁直接红；宿主真缺包则激活死（Z10-1 同源）。正解沿用本文件 loadConfig 同款：动态 import + try/catch 降级 null，宿主内解析到同一个官方包，语义等价、失败可降。
