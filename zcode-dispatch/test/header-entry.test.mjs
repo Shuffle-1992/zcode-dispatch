@@ -85,6 +85,13 @@ console.log('\nB. 入口样式**逐项对齐官方源码**（ui-jobs/JobListActi
   ok(/matches: \{ hover: m\(':hover'\), focus: m\(':focus'\), focusVisible: m\(':focus-visible'\) \}/.test(src),
     '★ B39 诊断：记录浏览器认定的 :hover/:focus/:focus-visible（用于分辨"我的状态卡住"与"别处改色"）');
   ok(/inlineStyle: String\(el\.getAttribute\('style'\)/.test(src) && /focusIsChip:/.test(src), 'B40 诊断：记录内联样式与 document.activeElement 是否为我');
+  /* ZB-27r：决定性实验与渲染属性补测（此前只测 size/weight/family 无法解释"看着更大"）。 */
+  ok(/probe: mates\.length/.test(src) && /withMine: probe\(el, '智能体团队'\)/.test(src) && /withMate: probe\(mates\[0\], '智能体团队'\)/.test(src),
+    '★ B41 决定性实验：同一段文字分别套"我的字体"与"邻居的字体"离屏渲染并比宽高');
+  ok(/letterSpacing: c\.letterSpacing/.test(src) && /fontFeatureSettings: c\.fontFeatureSettings/.test(src)
+    && /fontSmoothing: c\.webkitFontSmoothing/.test(src) && /textRendering: c\.textRendering/.test(src),
+    '★ B42 补测渲染属性：letter-spacing / word-spacing / font-variant / font-feature-settings / text-rendering / font-smoothing / transform / zoom');
+  ok(/selectNodeContents\(n\)/.test(src), '★ B43 实测字形盒（Range 紧贴文字，反映真实字形高宽）');
   /* ZB-27i：颜色内联兜底（现场实测：resting 令牌与邻居相同，但为排除未知宿主规则，颜色也走内联）。 */
   ok(/color: hover \? T\.text : T\.text3/.test(src), '★ B31 颜色内联且**仅 hover** 高亮（resting=label-tertiary / hover=**label-primary**，与两个可见邻居 .trigger:hover 同值）');
   ok(/onMouseEnter: \(\) => setHover\(true\)/.test(src) && /onMouseLeave: \(\) => setHover\(false\)/.test(src), '★ B32 悬停态用 React 状态表达（不依赖宿主伪类命中）');

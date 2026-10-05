@@ -2339,6 +2339,13 @@ window.__ModuleLoader__.load({
           const snap = (n) => {
             const c = window.getComputedStyle(n);
             const b = n.getBoundingClientRect();
+            /* ZB-27r：补测"会影响**观感**但不出现在 font-size 里"的渲染属性（此前只测了 size/weight/family），
+             * 以及字形盒（Range 紧贴文字，能反映真实字形高度/宽度）。 */
+            let glyph = null;
+            try {
+              const r = typeof document.createRange === 'function' ? document.createRange() : null;
+              if (r) { r.selectNodeContents(n); const g = r.getBoundingClientRect(); glyph = { w: Math.round(g.width * 100) / 100, h: Math.round(g.height * 100) / 100 }; }
+            } catch { /* ignore */ }
             return {
               text: String(n.textContent || '').trim().slice(0, 12),
               tag: n.tagName,
@@ -2346,14 +2353,44 @@ window.__ModuleLoader__.load({
               w: Math.round(b.width * 100) / 100,
               top: Math.round(b.top * 100) / 100,
               fontSize: c.fontSize,
-              fontFamily: String(c.fontFamily).slice(0, 36),
+              fontFamily: c.fontFamily,
               fontWeight: c.fontWeight,
               lineHeight: c.lineHeight,
               color: c.color,
               padding: c.padding,
               gap: c.gap,
               appearance: c.appearance || c.webkitAppearance || '',
+              letterSpacing: c.letterSpacing,
+              wordSpacing: c.wordSpacing,
+              fontStyle: c.fontStyle,
+              fontStretch: c.fontStretch,
+              fontVariant: c.fontVariant,
+              fontFeatureSettings: c.fontFeatureSettings,
+              textRendering: c.textRendering,
+              fontSmoothing: c.webkitFontSmoothing || c.fontSmooth || '',
+              textShadow: c.textShadow,
+              transform: c.transform,
+              zoom: c.zoom,
+              glyph,
             };
+          };
+          /* ZB-27r：决定性实验 —— 用**同一段文字**分别套用"我的字体"与"邻居的字体"离屏渲染，
+           * 直接比宽度/高度。两者相同 ⇒ 差异只来自文字内容（拉丁 + 中文混排 vs 纯中文）；
+           * 不同 ⇒ 差异来自字体/渲染属性，按上面补测的属性继续定位。 */
+          const probe = (fontSrc, text) => {
+            const s = document.createElement('span');
+            s.textContent = text;
+            s.style.cssText = 'position:absolute;left:-9999px;top:-9999px;white-space:pre;visibility:hidden;margin:0;';
+            const c = window.getComputedStyle(fontSrc);
+            for (const p of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontStretch', 'letterSpacing', 'wordSpacing', 'fontFeatureSettings', 'fontVariant', 'textRendering']) s.style[p] = c[p];
+            s.style.webkitFontSmoothing = c.webkitFontSmoothing || '';
+            const host = root && typeof root.appendChild === 'function' ? root : null;
+            if (!host) return null;
+            host.appendChild(s);
+            const r = s.getBoundingClientRect();
+            const out = { w: Math.round(r.width * 100) / 100, h: Math.round(r.height * 100) / 100 };
+            try { host.removeChild(s); } catch { /* ignore */ }
+            return out;
           };
           const row = (typeof el.closest === 'function' ? el.closest('[class*="headerActions"]') : null)
             || (el.parentElement && el.parentElement.parentElement);
@@ -2369,6 +2406,10 @@ window.__ModuleLoader__.load({
             inlineStyle: String(el.getAttribute('style') || '').slice(0, 120),
             mine: snap(el),
             mates: mates.map(snap),
+            /* 同一段文字（取邻居的文字）在两种字体下渲染的宽度/高度 —— 决定性对比。 */
+            probe: mates.length
+              ? { text: String(mates[0].textContent || '').trim().slice(0, 12), withMine: probe(el, '智能体团队'), withMate: probe(mates[0], '智能体团队') }
+              : null,
           };
           let series = [];
           try { series = JSON.parse(window.localStorage.getItem('zcd:diag') || '[]') || []; } catch { series = []; }
