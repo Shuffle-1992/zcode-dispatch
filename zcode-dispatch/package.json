@@ -10,5 +10,5 @@
   },
   "meta": { "title": "ZCode 派发台", "description": "在 Harness 里派发/监视多个 ZCode 无头进程（单写者互斥、用量与上下文、套餐通道）" },
   "icon": "./icon.svg",
-  "files": ["index.js", "client.js", "core", "locale", "icon.svg", "README.md", "wire.host.mjs", "wire.client.mjs"]
+  "files": ["index.js", "client.js", "notify.mjs", "core", "locale", "icon.svg", "README.md", "wire.host.mjs", "wire.client.mjs"]
 }

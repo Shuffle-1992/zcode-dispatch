@@ -12,6 +12,16 @@ const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
 check('manifest: name/exports/dsh.bundle.patch', pkg.name === '@local/zcode-dispatch' && pkg.exports?.['.'] === './index.js' && pkg.exports?.['./client'] === './client.js' && pkg.dsh?.bundle?.patch === './cordis.patch.yml', `${pkg.name}`);
 check('manifest: dsh.client 平台/立即加载', pkg.dsh?.client?.platform === 'web' && pkg.dsh?.client?.immediately === true, JSON.stringify(pkg.dsh?.client ?? {}));
 check('manifest: meta 标题/描述/图标', !!pkg.meta?.title && !!pkg.meta?.description && pkg.icon === './icon.svg', `${pkg.meta?.title}`);
+/* ZB-22 补：`files` 必须覆盖 host 半边的**相对 import**。install_bundle 按 files 打包，
+ * 漏一个文件 = 装出来的插件缺模块直接加载失败（ZB-22 新增 notify.mjs 时差点踩）。
+ * 判据：index.js 里所有 ./xxx 说明符，要么直接列在 files，要么落在某个列出的目录项下。 */
+{
+  const listed = new Set(pkg.files ?? []);
+  const rel = [...readFileSync(join(PKG, 'index.js'), 'utf8').matchAll(/from\s+'(\.\/[^']+)'/g)].map((m) => m[1].replace(/^\.\//, ''));
+  const covered = (f) => listed.has(f) || [...listed].some((d) => !d.includes('.') && f.startsWith(`${d}/`));
+  const missing = rel.filter((f) => !covered(f));
+  check('manifest: files 覆盖 index.js 的相对 import', missing.length === 0, missing.length ? `缺: ${missing.join(',')}` : `${rel.length} 个相对 import 全覆盖`);
+}
 const patch = readFileSync(join(PKG, 'cordis.patch.yml'), 'utf8');
 check('patch: 插入行 id/name/config', /id:\s*zcode-dispatch/.test(patch) && /name:\s*'@local\/zcode-dispatch'/.test(patch) && /runnerPath:/.test(patch) && /ledgerPath:/.test(patch), patch.split('\n').filter((l) => /runnerPath|ledgerPath|demo|maxConcurrent/.test(l)).join(' | ').slice(0, 140));
 
