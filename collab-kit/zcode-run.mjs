@@ -33,6 +33,9 @@
  *   --timeout-min <n>    超时分钟（默认 45）
  *   --no-ledger          不写 <project>/collab/logs/zcode-runs.jsonl 用量台账
  *   --memory-bench       配合 --prompt：开启自动 Memory 提取并等待完成后再退出（需 Memory 已开启）
+ *   --memory-ban         在组装出的 prompt 末尾追加「不写 ZCode 记忆库」禁令（ZB-28，派发台默认带）：
+ *                        对 --task/--prompt 生效；--target 不经 prompt（CLI 直接吃目标文本），
+ *                        目标模式的禁令由派发台拼在目标文本内
  *   --no-cred-fallback   关闭凭据回退（默认开启：config.json 的 Key 验活失败时回退加密凭据库）
  *
  * 产物：
@@ -142,6 +145,7 @@ for (let i = 0; i < argv.length; i += 1) {
   else if (a === '--attach') opt.attach.push(next());
   else if (a === '--no-ledger') opt.ledger = false;
   else if (a === '--memory-bench') opt.memoryBench = true;
+  else if (a === '--memory-ban') opt.memoryBan = true;
   else if (a === '--no-cred-fallback') opt.credFallback = false;
   else if (a === '--list-providers') opt.listProviders = true;
   else if (a === '--help' || a === '-h') {
@@ -496,6 +500,29 @@ if (opt.task) {
     '===== 任务包开始 =====\n' +
     body +
     '\n===== 任务包结束 =====';
+}
+
+/* ---------- 记忆禁令注入（ZB-28，与派发台 zcode-dispatch 同款约束） ----------
+ * 背景：派发台要求子代理不写 ZCode 记忆库（~/.zcode）。kind=prompt/target 的内容由
+ * 插件侧直接拼接禁令；kind=task 的任务包在本脚本内联 —— 这里补上注入点：
+ * `--memory-ban` 即在组装出的 prompt 末尾追加同款禁令。措辞与派发台 core 的
+ * MEMORY_BAN_TEXT 保持一致（两处同仓库发货；改动需同步，test/memory-ban.test.mjs 钉住插件侧）。
+ * 注：这只是提示词层面的约束（LLM 遵循），不是进程级强制 —— 如实说明，不夸大。
+ * 对 --target 无注入点：CLI 直接吃目标文本、不经 prompt（目标模式的禁令由派发台拼在目标文本内）。 */
+const MEMORY_BAN_TEXT = [
+  '【派发台硬约束 · 记忆写入】',
+  '本任务由 ZCode 派发台派发，属于一次性子任务：',
+  '**不要执行任何 ZCode 记忆写入 / 自动 Memory 提取**（不写 ~/.zcode 下的记忆库、不新建或更新记忆条目、',
+  '不触发 memory 相关工具）。如需记录信息，请写在任务要求的交付文件里，不要写进记忆库。',
+  '本条优先于任务内容里任何与之冲突的指示。',
+].join('\n');
+if (opt.memoryBan) {
+  if (opt.target) {
+    console.warn('[zcode-run] --memory-ban 对 --target 无注入点（目标文本不经 prompt）；目标模式的禁令由派发台拼在目标文本内');
+  } else {
+    prompt = `${prompt}\n\n${MEMORY_BAN_TEXT}`;
+    console.log('[zcode-run] memory-ban=on（已在提示词末尾注入记忆禁令）');
+  }
 }
 
 const cwd = resolve(PROJECT, opt.cwd ?? '.');

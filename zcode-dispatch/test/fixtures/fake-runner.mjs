@@ -11,6 +11,8 @@
  *   FAKE_MODEL      done 行的 model（默认 GLM-5.3-Flash）
  *   FAKE_SESSION    done 行的 session（默认随机；台账匹配测试需要固定值）
  *   FAKE_ARGV_FILE  把本次 argv 以 JSON 落盘到该路径（ZB-20：验证提示词注入，默认不落盘）
+ *   FAKE_TIMEOUT_DONE  置 1 = done 行带 `(超时)` 标记且 exit=124（ZB-28：runner 自身超时形态）
+ *   FAKE_MEMORY_BAN_LINE 置 1 = 打印 `memory-ban=on`（ZB-28：runner 确认记忆禁令注入）
  * out/err/result 路径故意带空格，用于验证含空格路径的解析。
  */
 import { setTimeout as delay } from 'node:timers/promises';
@@ -46,9 +48,14 @@ if (env.FAKE_PAUSE_TEXT) {
   process.exit(Number(env.FAKE_EXIT_CODE ?? 1));
 }
 
+if (env.FAKE_MEMORY_BAN_LINE) console.log('[zcode-run] memory-ban=on（已在提示词末尾注入记忆禁令）');
+
 if (!skip.has('done')) {
+  /* ZB-28：FAKE_TIMEOUT_DONE=1 时模仿真实 runner 的自身超时形态（exit=124 + `(超时)` 标记）。 */
+  const doneExit = env.FAKE_TIMEOUT_DONE ? 124 : exitCode;
+  const doneMark = env.FAKE_TIMEOUT_DONE ? ' (超时)' : '';
   console.log(
-    `[zcode-run] done exit=${exitCode} elapsed=${(sleepMs / 1000).toFixed(1)}s session=${sess}` +
+    `[zcode-run] done exit=${doneExit}${doneMark} elapsed=${(sleepMs / 1000).toFixed(1)}s session=${sess}` +
       ' provider=plan:bigmodel-coding-plan model=GLM-5.3-Flash responseChars=2',
   );
 }
@@ -58,4 +65,4 @@ if (!skip.has('context')) console.log('[zcode-run] context used=1234 (0.6% of 20
 if (!skip.has('out')) console.log('[zcode-run] out=C:\\fake dir with space\\run.out.log');
 if (!skip.has('err')) console.log('[zcode-run] err=C:\\fake dir with space\\run.err.log');
 if (!skip.has('result')) console.log('[zcode-run] result=C:\\fake dir with space\\run.result.json');
-process.exit(exitCode);
+process.exit(env.FAKE_TIMEOUT_DONE ? 124 : exitCode);

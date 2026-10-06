@@ -431,6 +431,8 @@ window.__ModuleLoader__.load({
         chanOfflineHint: '未连接宿主：通道/模型来自宿主远端面，连接后这两个下拉才可选',
         chanDefaultModel: '（通道默认模型）',
         paused: '已暂停', pQuota: '额度耗尽', pEntitled: '未开通', pSigning: '需签名', pConfig: '配置错误', pUnknown: '未知原因',
+        lockWait: '排队等待', timedOut: '超时终止',
+        timedOutRunner: 'runner 超时（exit 124，--timeout-min 到点）', timedOutWatchdog: '看门狗强制终止（timeoutMin+120s 宽限后未退出）',
         resumeSame: '同通道续跑', retryHandoff: '换通道重跑', noSession: '无会话，不能同通道续跑',
         handoffConfirm: '换通道=交接重跑：会新开会话并把未完成部分交接过去', confirmHandoff: '确认交接重跑', cancel: '取消',
         parentFrom: '接续自', hop: '跳',
@@ -479,6 +481,8 @@ window.__ModuleLoader__.load({
         chanOfflineHint: 'Host not connected: channel/model come from the host Remote face and unlock once connected',
         chanDefaultModel: '(channel default model)',
         paused: 'Paused', pQuota: 'Quota exhausted', pEntitled: 'Not entitled', pSigning: 'Signing required', pConfig: 'Config error', pUnknown: 'Unknown',
+        lockWait: 'Queue wait', timedOut: 'Timed out',
+        timedOutRunner: 'runner timeout (exit 124, --timeout-min elapsed)', timedOutWatchdog: 'watchdog kill (still running after timeoutMin+120s grace)',
         resumeSame: 'Resume (same channel)', retryHandoff: 'Rerun on new channel', noSession: 'No session to resume',
         handoffConfirm: 'Channel switch = handoff rerun: a new session starts and the unfinished part is handed over', confirmHandoff: 'Confirm handoff', cancel: 'Cancel',
         parentFrom: 'continued from', hop: 'hop',
@@ -1610,6 +1614,23 @@ window.__ModuleLoader__.load({
 
     const PAUSE_LABEL_KEY = { 'quota-exhausted': 'pQuota', 'plan-not-entitled': 'pEntitled', 'provider-signing': 'pSigning', 'config-error': 'pConfig' };
     const pauseLabel = (r) => t(PAUSE_LABEL_KEY[r] ?? 'pUnknown');
+    /* ZB-28：排队可观测 —— 把 core 的 lockWait 结构转成一行人话：
+     * 「第 2/3 位 · 前方 1 个（j-xxxxxxxx） · 被 tag-x 挡住 · 预计 ≤ 0时03分20秒」。
+     * estWaitSec=null（有阻塞者未声明 timeoutMin）时如实显示「预计等待未知」，不猜。 */
+    const lockWaitText = (lw) => {
+      if (!lw) return '';
+      const parts = [];
+      if (lw.position != null) parts.push(`第 ${lw.position}/${lw.queuedTotal ?? '?'} 位`);
+      if (lw.ahead > 0) {
+        const ids = Array.isArray(lw.aheadIds) && lw.aheadIds.length ? `（${lw.aheadIds.map(shortId).join('、')}）` : '';
+        parts.push(`前方 ${lw.ahead} 个${ids}`);
+      }
+      if (Array.isArray(lw.blockers) && lw.blockers.length) {
+        parts.push(`被 ${lw.blockers.map((b) => b.holderTag || shortId(b.holderJobId) || b.lock).join('、')} 挡住`);
+      }
+      parts.push(lw.estWaitSec != null ? `预计 ≤ ${fmtSec(lw.estWaitSec)}` : '预计等待未知');
+      return parts.join(' · ');
+    };
     /* ZB-02：「关闭」（= 从列表移除 + 落盘 dismissed.json）允许的状态集合，
      * 与宿主 wire.host.mjs 的 DISMISSABLE 逐一对应（paused / 各终态）。
      * 原先 UI 只在 paused 时渲染关闭按钮 → done/failed/killed/interrupted 的 job
@@ -2186,6 +2207,10 @@ window.__ModuleLoader__.load({
             spec.timeoutMin != null ? kvRow(t('timeout'), String(spec.timeoutMin)) : null,
             kvRow(t('createdAt'), job.queuedAt ? fmtTime(job.queuedAt) : null),
             kvRow(t('sessionId'), job.sessionId),
+            /* ZB-28：排队可观测 —— queued 行展开即见「被谁挡住/前方几个/预计等待」。 */
+            job.state === 'queued' && job.lockWait ? kvRow(t('lockWait'), lockWaitText(job.lockWait)) : null,
+            /* ZB-28：超时终态可见 —— runner 自身超时（failed, exit 124）与看门狗强杀（killed）分得清。 */
+            job.timedOut ? kvRow(t('timedOut'), job.timedOutBy === 'watchdog' ? t('timedOutWatchdog') : t('timedOutRunner')) : null,
             job.pauseReason ? kvRow(t('paused'), pauseLabel(job.pauseReason)) : null,
           ),
           h('div', { className: 'zcd-note', style: { marginTop: 6 } }, t('tail')),

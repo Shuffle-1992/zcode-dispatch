@@ -139,16 +139,24 @@ return Array.isArray(body?.data) && body.data.length > 0;
 与 UI 悬浮窗操作一一对应
 （同一实现：`wire.host.mjs` 的 `createActionHandler`，references/user-actions.md「一个操作两个调用方」）。
 
-- `dispatch`：`kind=prompt|task|target` + 对应内容字段；可选 `model(GLM-5.3|GLM-5.3-Flash)`、
-  `provider(plan|personal)`、`mode(build|edit|plan|yolo，默认 edit)`、`timeoutMin(>0)`、
-  `memoryBench(仅 kind=prompt)`、`tag`、`lock(repo|none，**默认 repo**；none=明确不取锁)`、`write(预计写入的文件列表)`、`cwd`、`resume`。
+- `dispatch`：`kind=prompt|task|target` + 对应内容字段。**kind 判据（ZB-28）**：
+  `prompt`=完整指令（一次性问答/明确步骤）；`target`=**目标描述**（只说"要达成什么"，
+  ZCode 自主规划并自续跑直到达成，适合无人值守委托；与 prompt/task 互斥是 CLI 限制）；
+  `task`=任务包文件绝对路径（含交付物/验收标准的正式任务，由 runner 读文件内联）。
+  可选 `model(GLM-5.3|GLM-5.3-Flash)`、`provider(plan|personal)`、`mode(build|edit|plan|yolo，默认 edit)`、
+  `timeoutMin(>0，无上限；runner 生效下限 1 分钟)`、`memoryBench(仅 kind=prompt)`、`tag`、
+  `lock(repo|none，**默认 repo**；none=明确不取锁)`、`write(预计写入的文件列表)`、`cwd`、`resume`。
 - `list` / `kill(id)` / `dismiss(id)` / `tail(id, n=30)` / `quota`（本地台账 5h 滚动 / 本周 / 今日聚合 +
   引擎本周已用；`bin/zcd.mjs quota --json` 同时含 `local` 与 `planQuota` 两段，
   任一失败不互相影响）。`dismiss`（Z11）：把 paused/终态 job 从列表移除并落盘
   `state/dismissed.json`（queued/running 必须先 kill）；core 的 `kill` 对 paused 是空操作
   （子进程已退出），UI「关闭」按钮因此先 `kill`、kill 无效时退回 `dismiss`。
+  **`list` 的 queued 行带 `lockWait`（ZB-28 排队可观测）**，见「锁排队可观测（ZB-28）」一节。
 - `channels` / `channel set` / `retry(jobId, {provider?, model?})` / `fallback`：Z6 通道与续跑，见下节。
-- 限制：仓库写锁互斥（同锁 FIFO 排队，不报错；**文件锁任务优先放行**，见「锁与并发语义」）；`memoryBench` 仅 prompt；工具不授予/确认任何权限。
+  **选择判据（ZB-28）**：job 还在派发台里 → `retry`（簿记链完整）；手里只有裸 sessionId → `dispatch` + `resume`，
+  详见「resume 与 retry 怎么选」一节。
+- 限制：仓库写锁互斥（同锁 FIFO 排队，不报错；**文件锁任务优先放行**，见「锁与并发语义」）；`memoryBench` 仅 prompt；
+  model/provider 的 schema 枚举只是常用别名——**通道取值以 `channels` 实时清单为准**（见「枚举与 channels 清单，以谁为准」）；工具不授予/确认任何权限。
 
 ## 锁与并发语义（ZB-16 锁模型）
 
@@ -166,8 +174,13 @@ return Array.isArray(body?.data) && body.data.length > 0;
 
 > **memory 锁已删除（ZB-16）**：它保护的是 ZCode 自己的记忆库（`~/.zcode`），与仓库写入互不相干。
 > ZCode 记忆写入改由**默认注入的提示词禁令**约束（派发时自动要求子代理不写记忆库）。
-> ⚠️ 该禁令只覆盖 `kind=prompt`/`target`；**`kind=task` 的任务包内容由宿主 runner 读取内联，
-> 插件注入不进去** ⇒ 该任务 `memoryBanApplied=false`（如实标记，未受禁令保护）。
+> **ZB-28 起三种 kind 全覆盖**：`kind=prompt`/`target` 由插件把禁令直接拼进内容；
+> **`kind=task` 由宿主 runner 经 `--memory-ban` 旗标注入**（runner 内联任务包时追加同款文本）。
+> 字段语义：`memoryBanApplied=true` = 禁令已安排（三种 kind 恒 true）；
+> `memoryBanRunner=true` = runner 打印了 `memory-ban=on`（**runner 确认**注入；假/旧 runner 无此行则该位为空）。
+> ⚠️ 旧版 runner 不认识 `--memory-ban` 会报「未知参数」exit 1（fail-fast，不静默裸奔）——
+> runner 与插件同仓库（`collab-kit/`）发货，请成对升级。
+> ⚠️ 该禁令只是提示词层面的约束（LLM 遵循），不是进程级强制。
 
 > **跨层级互斥（ZB-16 修的真实缺口）**：`repo.lock`（整仓库）与 `files/*.lock`（某几个文件）
 > 曾是两套互不知情的锁 —— 一个持整仓库锁时，另一个锁某文件却照常 running。
@@ -212,6 +225,25 @@ dispatch(write: ['F:\\proj\\src\\a.ts'])   # 只锁 a.ts
 > 细粒度是「声明了才生效的可选优化」，**不是默认放宽** —— 否则不声明的任务会失去互斥保护，
 > 多个 ZCode 进程同时改同一个仓库，那正是单写者语义要防的事故。
 > 测试 `test/file-lock.test.mjs` 的第一条就是这个底线。
+
+### 锁排队可观测（ZB-28 `lockWait`）
+
+**用户可见语义（一句话）**：被整仓库锁挡住时不再盲等 —— queued 任务直接告诉你
+「被谁挡住、前面还有几个、预计还要等多久」。
+
+`list` 动作 / 面板进程行（展开）里，queued job 携带 `lockWait` 结构（其余状态恒 `null`）：
+
+| 字段 | 含义 |
+|---|---|
+| `position` / `queuedTotal` | 全局队列位次（1 起）/ 队列总长 |
+| `ahead` / `aheadIds` | **同类**前方任务数与 id（同类=文件锁任务 / 整仓库锁任务，与放行优先级同尺，同类内 FIFO；id 截前 10 个） |
+| `blockers[]` | 此刻挡住本任务的锁：`lock`（`repo` / `file:<路径>` / `cross:…` 跨层级）、持有者 `holderJobId`/`holderTag`/`holderState`、`holderElapsedSec`（已运行秒）、`holderTimeoutMin`、`holderRemainingSec`（剩余上界秒） |
+| `estWaitSec` | 预计等待秒数（**上界**）：仅当每个阻塞者都声明了 `timeoutMin` 时可估 = max(`timeoutMin`×60 + 看门狗宽限 − 已运行秒)；否则 `null` —— **不猜** |
+| `estWaitNote` | 中文说明：估计怎么来的 / 为什么是 `null` / 前方同类还会加时 |
+
+- 只读观测：计算只检查锁文件与内存 job，**绝不加锁、绝不清锁**（观测不能改变调度状态）。
+- 面板展开行显示一行人话：「`第 2/3 位 · 前方 1 个（j-xxxxxxxx） · 被 tag-x 挡住 · 预计 ≤ 0时03分20秒`」。
+- 证据：`test/lock-queue-visibility.test.mjs`（6 条：整仓锁/文件锁/跨层级指认持有者、ahead 分类计数、estWaitSec 上界与不猜、wire 透传）。
 
 ### `wait`：让会话不必轮询
 
@@ -330,6 +362,76 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
   `zcd retry <jobId> [--provider --model]` / `zcd fallback [list|set a,b,c|off]`；
   agent 工具 `zcode_dispatch` 同名 action 一一对应。
 
+## paused 与超时：触发条件、终态与 job 字段（ZB-28）
+
+**用户可见语义（一句话）**：paused 只有一种进入方式（非 0 退出 + 输出命中暂停签名）；
+超时有两条路径、两种终态（runner 超时 → failed，看门狗强杀 → killed），全部落到 job 字段可查。
+
+### paused 的全部触发条件
+
+| 条件 | 结果 |
+|---|---|
+| run 非 0 退出（**且非 kill 请求**），输出命中暂停签名之一 | **`paused`** + `pauseReason`（下表按优先级，防宽词抢定性） |
+| 非 0 退出，有输出但未命中任何签名 | `failed`（Z1 语义不变），仅记 `pauseReason: 'unknown'` 作信息字段 |
+| 非 0 退出，完全无输出（如 spawn 失败） | `failed` |
+| 自动降级链耗尽 / 某一跳失败 | 停在 `paused`（附 parseWarning） |
+
+暂停签名与优先级（`core/dispatch-core.mjs` 的 `PAUSE_SIGNATURES`，顺序即优先级）：
+
+| pauseReason | 输出关键词（不区分大小写） |
+|---|---|
+| `plan-not-entitled` | `not_entitled` / `plan-not-entitled` |
+| `provider-signing` | `ClientRequestSigningV4Error` |
+| `config-error` | `Select a model before continuing` / `CONFIGURATION_ERROR` |
+| `quota-exhausted` | `quota_exceeded` / `coding_plan_required` / `rate_limited` / `insufficient` / `429` / `balance` |
+
+paused **不占锁、不占并发、不自动重试**，队列继续跑其他任务；需要人（或调用方）决定
+`retry` 同通道续跑还是换通道交接。
+
+### timeoutMin 的边界
+
+- **无硬上限**：工具与 core 只校验 `> 0`（`timeoutMin: 99999` 合法）；
+- **runner 生效下限 1 分钟**：`zcode-run.mjs` 内部 `max(1, timeoutMin)`；
+- **看门狗兜底**：dispatcher 在 `timeoutMin × 60 + 宽限`（`timeoutGraceSec`，默认 120s）后仍未退出则强杀。
+
+### 超时终态（两条路径，别混淆）
+
+| 路径 | 终态 | job 字段 |
+|---|---|---|
+| **runner 自身超时**（`--timeout-min` 到点，done 行带 `(超时)`、exit=124） | **`failed`** | `timedOut=true`、`timedOutBy='runner'`、`exitCode=124` |
+| **dispatcher 看门狗强杀**（超时 + 宽限后仍未退出） | **`killed`** | `timedOut=true`、`timedOutBy='watchdog'`、`watchdogSec`=开火秒数、parseWarning 留痕 |
+| （对照）dispatcher 重启/属主进程消失的残留清理 | `interrupted` | 与超时**无关**，`interruptReason` 记原因 |
+
+### 相关 job 字段一览（ZB-28 起齐备）
+
+`pauseReason` / `pauseDetail` / `pausedAt`（进入 paused 的时刻，非 paused 恒 null）/
+`timedOut` / `timedOutBy`（`'runner'` | `'watchdog'`）/ `watchdogSec` / `memoryBanRunner`（见「锁与并发语义」）。
+
+证据：`test/pause-timeout.test.mjs`（5 条：`(超时)` 标记解析、看门狗 → killed、runner 超时 → failed、
+paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
+
+## resume 与 retry 怎么选（ZB-28）
+
+**一句话判据：job 还在派发台里 → `retry`（簿记链完整）；手里只有裸 sessionId → `dispatch` + `resume`。**
+
+| 场景 | 用法 | 发生什么 |
+|---|---|---|
+| 上一次 run 是**派发台的 job**（paused/终态） | `action=retry, id` | 内部自动判定：同通道且有 sessionId → 真 `--resume` 续跑（绝不带 `--model`，F2）；换通道或无 sessionId → 交接重跑（新会话 + 五要素交接提示词）。`parentJobId/attempts/hopCount/handedOffTo/resumedBy` 簿记全自动 |
+| 手里只有**裸 sessionId**（job 已不在派发台，或 run 来自派发台之外） | `action=dispatch, resume: <sessionId>`（+ 同通道） | 新建 job 续接该会话；core 不会注入通道默认 model（F2：`--resume` 带 `--model` 必失败） |
+| 想在同一会话里发**新指令** | `dispatch(resume)` 带新 prompt（面板「续接」按钮同款） | 同上 |
+
+## 枚举与 channels 清单，以谁为准（ZB-28）
+
+**一句话：通道可用性与真实 id，一律以 `action=channels` 的实时清单为唯一权威。**
+
+- 工具 schema 里 `model`/`provider` 的 **enum 只是常用别名提示**（GLM-5.3 / GLM-5.3-Flash；plan / personal），
+  且可能被宿主按白名单强制 —— 它**不是**全量通道表；
+- `channels` 清单来自 runner `--list-providers` 真实输出 + 权益缓存 + 个人 provider 配置
+  （解析不出就空清单 + warnings，绝不猜测）；
+- 要派发到**枚举之外**的通道（如 `builtin:…` 真实 id）：用 `action=channel`（provider 接受清单里任意 id）
+  设为默认通道，再**不带** provider/model 派发（未显式指定时自动采用默认通道）——这条路径不受枚举限制；
+- per-dispatch 显式 `provider`/`model` 仅用于枚举内的常用值；两者不一致时，**以 channels 为准**。
+
 ## 真数据 vs demo 判据（Z8 接线后）
 
 面板标题栏徽标（`connLabel`）直接标明当前数据来源，逐级降级、绝不白屏：
@@ -402,7 +504,9 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | `node test/lock-ui.test.mjs` | 26 | 派发区锁控件与中文锁名（ZB-16/17：仓库文件锁开关 + 要写的文件 + 分区名「仓库文件锁」） |
 | `node test/lock-priority.test.mjs` | 4 | 调度优先级（ZB-17：文件锁任务优先放行；同类内 FIFO；整仓库锁执行时文件锁等待） |
 | `node test/lock-badge.test.mjs` | 34 | 进程行锁徽标（ZB-18：区分整仓库锁 / 文件锁 N / 不取锁 / 旧版记录）+ **全仓防复发扫描**（ZB-19） |
-| `node test/memory-ban.test.mjs` | 4 | 记忆禁令注入（ZB-20：prompt/target 注入；**task 注入不进去 ⇒ memoryBanApplied=false**） |
+| `node test/lock-queue-visibility.test.mjs` | 6 | 锁排队可观测（ZB-28：lockWait 的 blockers 指认持有者、ahead 同类计数、estWaitSec 上界/不猜、跨层级 cross 条目、wire 透传） |
+| `node test/pause-timeout.test.mjs` | 5 | paused 与超时（ZB-28：`(超时)` 标记 → failed+timedOutBy=runner、看门狗 → killed、pausedAt 落字段、unknown 分支、timeoutMin 校验） |
+| `node test/memory-ban.test.mjs` | 6 | 记忆禁令注入（ZB-20/28：prompt/target 拼进内容；**task 经 runner `--memory-ban` 旗标**，memoryBanRunner=runner 确认位） |
 | `node test/panel-style.test.mjs` | 24 | 样式注入与作用域（ZB-21/27：样式只注入 head 一次、重渲染不触碰；border-box 限定 .zcd-menu 子树） |
 | `node test/notify.test.mjs` | 21 | 落地自动唤醒（ZB-22：空闲 followup / 忙碌 inject、幂等、自己 kill/wait 的抑制、唤醒预算、卸载退订、工具层译码） |
 | `node test/wake-integration.test.mjs` | 3 | 落地唤醒**全链路接线**（ZB-22：`apply()` → inject agents/systemPrompt → 派发 → 落地 → 唤醒 + 信标 `wakeActive`；关配置 / 无服务时降级） |

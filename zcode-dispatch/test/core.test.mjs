@@ -390,9 +390,10 @@ test('runner 路径无效 → state=failed、exitCode 记录、有 warning 不�
 });
 
 test('parseRunnerLine 单元：真实 runner 各种行格式（含 - 值与三行分开的 out/err/result）', () => {
+  /* ZB-28：`(超时)` 标记不再被丢弃 —— done 行带它时额外返回 timedOut:true（runner 自身超时）。 */
   assert.deepEqual(
     { ...parseRunnerLine('[zcode-run] done exit=124 (超时) elapsed=30.0s session=sess_1 provider=plan:bigmodel-coding-plan model=GLM-5.3 responseChars=88') },
-    { exitCode: 124, runnerElapsedSec: 30, sessionId: 'sess_1', provider: 'plan:bigmodel-coding-plan', model: 'GLM-5.3', responseChars: 88, authoritative: true, summarySeen: true },
+    { exitCode: 124, runnerElapsedSec: 30, sessionId: 'sess_1', provider: 'plan:bigmodel-coding-plan', model: 'GLM-5.3', responseChars: 88, authoritative: true, summarySeen: true, timedOut: true },
   );
   assert.equal(parseRunnerLine('[zcode-run] usage requests=- in=5 out=- cacheRead=-').usage.requests, null);
   const ctx = parseRunnerLine('[zcode-run] context used=28290 (14.1% of 200000) turnCount=-');
