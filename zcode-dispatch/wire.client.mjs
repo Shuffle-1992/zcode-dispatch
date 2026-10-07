@@ -38,6 +38,37 @@ const DEMO_TICK_MS = 1000;
 const DEMO_START_MS = 1200;
 const DEMO_RUN_MS = 5000;
 
+/* ZB-30：降级**目标**归一（与 core/dispatch-core.mjs 的 normFallbackTargets、client.js 内联副本同语义）。
+ * 接受字符串（旧 chain 项）/ 对象（{provider|id|channel, model?, reasoningLevel?|thinking?}）；
+ * 无 provider 的项丢弃（不猜），顺序保留；null 字段 = 沿用原任务该维度。 */
+function normTargets(list) {
+  if (list == null) return [];
+  const arr = Array.isArray(list) ? list : [list];
+  const out = [];
+  for (const item of arr) {
+    if (typeof item === 'string') {
+      const id = item.trim();
+      if (id) out.push({ provider: id, model: null, reasoningLevel: null });
+      continue;
+    }
+    if (!item || typeof item !== 'object') continue;
+    const provider = String(item.provider ?? item.id ?? item.channel ?? '').trim();
+    if (!provider) continue;
+    const model = item.model == null || item.model === '' ? null : String(item.model);
+    const rl = item.reasoningLevel ?? item.thinking ?? null;
+    out.push({ provider, model, reasoningLevel: rl == null || rl === '' ? null : String(rl) });
+  }
+  return out;
+}
+function fallbackShape(targets) {
+  return {
+    enabled: targets.length > 0,
+    chain: targets.map((x) => x.provider),
+    targets,
+    target: targets[0] ?? null,
+  };
+}
+
 /* 与 wire.host.mjs 导出的 FACE_NAME / EVENT_NAME 保持一致（此处不复用 import：
  * 本文件未来可能在浏览器加载，不能牵出宿主半边及其 core 依赖）。 */
 const FACE_NAME = 'zcodeDispatch';
@@ -280,9 +311,10 @@ export function createClientWire(ctx, config = {}) {
         return errOf(e);
       }
     };
-    const fallbackSetImpl = async (chain) => {
+    const fallbackSetImpl = async (target) => {
       try {
-        return await face.setFallbackChain(chain ?? null);
+        /* ZB-30：对象 = 单目标（面板开关 + 通道/模型/思考强度）；null = 关闭；数组 = 旧形状。 */
+        return await face.setFallbackChain(target ?? null);
       } catch (e) {
         return errOf(e);
       }
@@ -374,13 +406,19 @@ export function createClientWire(ctx, config = {}) {
       async fallbackGet() {
         try {
           const r = await face.fallbackChain();
-          return { ok: true, enabled: Boolean(r?.enabled), chain: Array.isArray(r?.chain) ? r.chain : [] };
+          return {
+            ok: true,
+            enabled: Boolean(r?.enabled),
+            chain: Array.isArray(r?.chain) ? r.chain : [],
+            targets: Array.isArray(r?.targets) ? r.targets : [], // ZB-30
+            target: r?.target ?? null,
+          };
         } catch (e) {
           return errOf(e);
         }
       },
-      async fallbackSet(chain) {
-        return fallbackSetImpl(chain);
+      async fallbackSet(target) {
+        return fallbackSetImpl(target);
       },
       /* ---- Z7 与宿主 face 同名对齐（转发旧实现，语义一致） ---- */
       setChannel: (c) => channelSetImpl(c),
@@ -459,10 +497,10 @@ export function createClientWire(ctx, config = {}) {
       channelSet: (c) => call('channel', c ?? {}),
       retry: (id, opts) => call('retry', { id, ...(opts ?? {}) }),
       fallbackGet: () => call('fallback', {}),
-      fallbackSet: (chain) => call('fallback', { chain }),
+      fallbackSet: (target) => call('fallback', { chain: target ?? null }),
       // Z7 与宿主 face 同名对齐（转发旧实现，语义一致）
       setChannel: (c) => call('channel', c ?? {}),
-      setFallbackChain: (chain) => call('fallback', { chain: chain ?? null }),
+      setFallbackChain: (target) => call('fallback', { chain: target ?? null }),
       // Z12：派发总开关（外部源未提供时 call() 返回 {ok:false,error}，UI 自行降级为只读）
       switchGet: () => call('switchGet', {}),
       switchSet: (next) => call('switchSet', next ?? {}),
@@ -491,7 +529,7 @@ export function createClientWire(ctx, config = {}) {
     { id: 'builtin:zai-coding-plan', name: 'Z.ai Coding Plan（演示）', enabled: false, reason: 'oauth_provider_inactive', endpoint: 'https://api.z.ai/api/anthropic', models: ['GLM-5.3', 'GLM-5.3-Flash'] },
   ];
   let channel = { provider: 'plan', model: 'GLM-5.3-Flash' };
-  let chain = [];
+  let chain = []; // ZB-30：降级目标列表 [{provider, model, reasoningLevel}]
 
   const lockHolder = () => [...jobs.values()].find((j) => j.state === 'running') ?? null;
   const snapshot = () => {
@@ -581,10 +619,9 @@ export function createClientWire(ctx, config = {}) {
     };
     return { ok: true, channel: { ...channel } };
   };
-  const legacyFallbackSet = async (list) => {
-    const arr = Array.isArray(list) ? list : String(list ?? '').split(',');
-    chain = arr.map((x) => String(x).trim()).filter(Boolean);
-    return { ok: true, enabled: chain.length > 0, chain: [...chain] };
+  const legacyFallbackSet = async (target) => {
+    chain = normTargets(target); // ZB-30：对象 = 单目标；null = 关闭；数组/字符串 = 旧形状
+    return { ok: true, ...fallbackShape(chain) };
   };
 
   return {
@@ -747,9 +784,9 @@ export function createClientWire(ctx, config = {}) {
       return { ok: true, job: { ...nj } };
     },
     async fallbackGet() {
-      return { ok: true, enabled: chain.length > 0, chain: [...chain] };
+      return { ok: true, ...fallbackShape(chain) };
     },
-    fallbackSet: (list) => legacyFallbackSet(list),
+    fallbackSet: (target) => legacyFallbackSet(target),
     /* ---- Z7 与宿主 face 同名对齐（转发旧实现，语义一致） ---- */
     setChannel: (c) => legacyChannelSet(c),
     setFallbackChain: (l) => legacyFallbackSet(l),

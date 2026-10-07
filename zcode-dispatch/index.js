@@ -324,7 +324,9 @@ const TOOL_PARAMETERS = {
   id: { type: 'string', description: 'kill/tail/retry：job id（形如 j-xxxx）' },
   n: { type: 'integer', description: 'tail：行数（≥ 1，默认 30，上限 200）' },
   retryModel: { type: 'string', description: 'retry：目标模型（同通道续跑时不允许传——--resume 带 --model 必失败）' },
-  chain: { type: 'array', items: { type: 'string' }, description: 'fallback：降级链（通道 id 数组，顺序即优先级；空数组=关闭）' },
+  /* ZB-30：降级目标 = 有序数组；元素为通道 id 字符串（工具 schema 只允许字符串数组——
+   * 对象形状留给面板/CLI 经 face.setFallbackChain 直传）。单目标 = provider + model + thinking。 */
+  chain: { type: 'array', items: { type: 'string' }, description: 'fallback：降级目标通道 id 数组（有序，空数组/null=关闭）。单目标也可直接传 provider（+model/thinking）' },
 };
 
 const TOOL_DESCRIPTION_BODY = [
@@ -353,7 +355,7 @@ const TOOL_DESCRIPTION_BODY = [
   '- action=channels：通道清单（含 enabled/原因/端点/模型；解析失败返回空数组+warnings，不猜）。**这份实时清单是通道可用性与真实 id 的唯一权威**；每个通道附 `thinkingLevels`（该通道各模型的思考强度合法档位，随模型声明不同；缺失 = 旧 runner 未探测，档位传 agent 即可）。',
   '- action=channel：读默认通道（无参）或设置（provider 必带，**接受 channels 清单里的任意 id**，model 可选，**thinking 可设通道默认思考强度：`agent`=Agent决定 或具体档位——未显式传 thinking 的派发一律按它执行，这就是给派发 Agent 的规定**）——之后未显式指定通道/思考强度的 dispatch 都用它。要派发到清单里**枚举之外**的通道（如 `builtin:…` 真实 id），走这里设默认通道，再不带 provider/model 派发即可。',
   '- action=retry：续跑/交接已落地的 job（**选择判据：job 还在派发台里 → 用 retry；手里只有裸 sessionId（job 已不在或来自派发台之外）→ 用 dispatch + resume**）。retry 内部自动判定：同通道且有 sessionId → --resume 续跑（不要传 retryModel：--resume 带 --model 必失败）；换通道（或无 sessionId）→ 交接重跑（新会话+交接提示词），新 job 带 parentJobId/attempts/hopCount。可用 provider / retryModel（或 model）。总开关关闭时同样被拒绝。',
-  '- action=fallback：读降级链（无参）或设置 chain（通道 id 数组，空数组=关闭）。开启后额度耗尽/未开通/需签名会自动交接重跑到链上下一个可用通道（会消耗下游通道额度）。',
+  '- action=fallback：读降级设置（无参）或设置目标。**目标 = 有序数组**：`chain` 传通道 id 数组（每个目标可另用 `provider` + `model` + `thinking` 设**单目标**，与面板开关同形；`chain: []` 或 `chain: null` = 关闭）。开启后额度耗尽/未开通/需签名会自动交接重跑到下一个可用目标（会消耗下游通道额度）；目标的 model/thinking 缺省 = 沿用原任务（thinking 具体档位对该次交接硬性生效，仅新建会话）。',
   '限制：仓库写锁互斥（同锁排队、不报错；**文件锁任务优先放行**，同类内保持 FIFO）；memoryBench 仅 kind=prompt；timeoutMin 必须 >0（无上限）；model/provider 的 schema 枚举只是常用别名（可能被宿主强制）——**通道取值以 action=channels 实时清单为准**，枚举外通道经 action=channel 设默认后使用；本工具不授予或确认任何权限。',
 ].join('\n');
 

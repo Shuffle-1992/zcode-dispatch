@@ -217,6 +217,12 @@ window.__ModuleLoader__.load({
       '.zcd-btn2:active{transform:translateY(1px);}',
       '.zcd-note{font-size:11px;line-height:16px;color:' + T.text3 + ';white-space:normal;overflow-wrap:anywhere;}',
       '.zcd-chain{display:flex;align-items:center;gap:5px;flex-wrap:wrap;}',
+      /* ZB-30：自动降级开关（与标题栏派发开关同一视觉语言：指示灯 + 文案；此处是**分区内的行**，
+       * 故给按钮态 + hover/disabled 反馈，并允许它占满左侧（.zcd-spring 把状态徽标推到行尾）。 */
+      '.zcd-toggle{flex:none;font-size:12px;line-height:17px;padding:2px 8px;border:1px solid ' + T.border + ';border-radius:8px;color:' + T.text2 + ';}',
+      'button.zcd-toggle{background:transparent;font:inherit;cursor:pointer;transition:background-color .15s ease,color .15s ease,border-color .15s ease;}',
+      'button.zcd-toggle:hover:not(:disabled){background:' + T.hover + ';color:' + T.text + ';border-color:' + T.text3 + ';}',
+      'button.zcd-toggle:disabled{opacity:.5;cursor:default;}',
       '.zcd-tailwrap{margin-top:0;}',
       '.zcd-mono{max-height:160px;overflow:auto;font-size:11px;line-height:16px;padding:6px;background:' + T.sunken + ';border-radius:4px;font-family:' + T.mono + ';white-space:pre-wrap;word-break:break-all;}',
       '.zcd-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:8px;}',
@@ -454,9 +460,11 @@ window.__ModuleLoader__.load({
         resumeSame: '同通道续跑', retryHandoff: '换通道重跑', noSession: '无会话，不能同通道续跑',
         handoffConfirm: '换通道=交接重跑：会新开会话并把未完成部分交接过去', confirmHandoff: '确认交接重跑', cancel: '取消',
         parentFrom: '接续自', hop: '跳',
-        fallbackTitle: '自动降级链', fallbackStateOff: '关', fallbackStateOn: '开',
-        fallbackPh: '通道 id，逗号分隔，按顺序', fallbackSave: '开启降级链', fallbackOffBtn: '关闭降级链',
-        fallbackConfirm2: '再次点击确认：会自动消耗下游通道额度', fallbackSaved: '降级链已更新：', fallbackEmptyErr: '请先填写至少一个通道 id',
+        fallbackTitle: '自动降级', fallbackStateOff: '关', fallbackStateOn: '开',
+        fallbackEnableTitle: '自动降级：点击开启/关闭。开启后额度耗尽 / 未开通 / 需签名时会自动交接重跑到下面选定的目标（会消耗下游通道额度）',
+        fallbackHint: '仅新建会话生效；模型/思考强度留空（通道默认模型、Agent决定）时沿用原任务。',
+        fallbackKeepModel: '（沿用原任务模型）', fallbackKeepThinking: '（沿用原任务思考强度）',
+        fallbackOfflineHint: '未连接宿主：降级设置存在宿主工作目录，连接后才可读写',
         switchOn: '派发：开', switchOff: '派发：关', switchUnknown: '派发：未知',
         switchTitle: 'ZCode 派发总开关：点击切换（写入 collab/zcode-dispatch.switch.json，全部会话生效）',
         switchHintOffline: '未连接宿主：请在终端执行 zcode-switch.mjs 切换',
@@ -509,9 +517,11 @@ window.__ModuleLoader__.load({
         resumeSame: 'Resume (same channel)', retryHandoff: 'Rerun on new channel', noSession: 'No session to resume',
         handoffConfirm: 'Channel switch = handoff rerun: a new session starts and the unfinished part is handed over', confirmHandoff: 'Confirm handoff', cancel: 'Cancel',
         parentFrom: 'continued from', hop: 'hop',
-        fallbackTitle: 'Auto fallback chain', fallbackStateOff: 'Off', fallbackStateOn: 'On',
-        fallbackPh: 'Channel ids, comma separated, in order', fallbackSave: 'Enable fallback', fallbackOffBtn: 'Disable fallback',
-        fallbackConfirm2: 'Click again to confirm: downstream channel quota will be consumed', fallbackSaved: 'Fallback chain updated: ', fallbackEmptyErr: 'At least one channel id is required',
+        fallbackTitle: 'Auto fallback', fallbackStateOff: 'Off', fallbackStateOn: 'On',
+        fallbackEnableTitle: 'Auto fallback: click to enable/disable. When enabled, quota-exhausted / not-entitled / signing-required pauses hand off to the target chosen below (downstream quota is consumed)',
+        fallbackHint: 'New sessions only; leaving model/thinking empty (channel default model, Agent decides) keeps the original task values.',
+        fallbackKeepModel: '(keep original task model)', fallbackKeepThinking: '(keep original task thinking)',
+        fallbackOfflineHint: 'Host not connected: fallback settings live in the host work dir and unlock once connected',
         switchOn: 'Dispatch: on', switchOff: 'Dispatch: off', switchUnknown: 'Dispatch: ?',
         switchTitle: 'ZCode dispatch master switch: click to toggle (writes collab/zcode-dispatch.switch.json, effective for all sessions)',
         switchHintOffline: 'Host not connected: run zcode-switch.mjs in a terminal to toggle',
@@ -883,9 +893,10 @@ window.__ModuleLoader__.load({
           return errOf(e);
         }
       };
-      const fallbackSetImpl = async (chain) => {
+      const fallbackSetImpl = async (target) => {
         try {
-          return await face.setFallbackChain(chain ?? null);
+          /* ZB-30：对象 = 单目标（面板）；null = 关闭；数组 = 旧形状（多目标，CLI 用）。 */
+          return await face.setFallbackChain(target ?? null);
         } catch (e) {
           return errOf(e);
         }
@@ -984,7 +995,13 @@ window.__ModuleLoader__.load({
         async fallbackGet() {
           try {
             const r = await face.fallbackChain();
-            return { ok: true, enabled: Boolean(r?.enabled), chain: Array.isArray(r?.chain) ? r.chain : [] };
+            return {
+              ok: true,
+              enabled: Boolean(r?.enabled),
+              chain: Array.isArray(r?.chain) ? r.chain : [],
+              targets: Array.isArray(r?.targets) ? r.targets : [], // ZB-30
+              target: r?.target ?? null,
+            };
           } catch (e) {
             return errOf(e);
           }
@@ -1079,7 +1096,7 @@ window.__ModuleLoader__.load({
         channelSet: (c) => call('channel', c ?? {}),
         retry: (id, opts) => call('retry', { id, ...(opts ?? {}) }),
         fallbackGet: () => call('fallback', {}),
-        fallbackSet: (chain) => call('fallback', { chain }),
+        fallbackSet: (target) => call('fallback', { chain: target ?? null }),
         // Z12：外部源未提供时 call() 返回 {ok:false,error}，UI 自行降级为只读
         switchGet: () => call('switchGet', {}),
         switchSet: (next) => call('switchSet', next ?? {}),
@@ -1218,7 +1235,7 @@ window.__ModuleLoader__.load({
         { id: 'builtin:zai-coding-plan', name: 'Z.ai Coding Plan（演示）', enabled: false, reason: 'oauth_provider_inactive', endpoint: 'https://api.z.ai/api/anthropic', models: ['GLM-5.3', 'GLM-5.3-Flash'] },
       ];
       let demoChannel = { provider: 'plan', model: 'GLM-5.3-Flash' };
-      let demoChain = [];
+      let demoTargets = []; // ZB-30：demo 降级目标（[{provider, model, reasoningLevel}]）
       const pendingTransitions = new Set(); // dispose 时连同派发编排的挂起定时器一起清
       const later = (fn, ms) => {
         const t = setTimeout(() => {
@@ -1469,12 +1486,11 @@ window.__ModuleLoader__.load({
           return { ok: true, job: { ...nj } };
         },
         async fallbackGet() {
-          return { ok: true, enabled: demoChain.length > 0, chain: [...demoChain] };
+          return { ok: true, ...fallbackShape(demoTargets) };
         },
-        async fallbackSet(list) {
-          const arr = Array.isArray(list) ? list : String(list ?? '').split(',');
-          demoChain = arr.map((x) => String(x).trim()).filter(Boolean);
-          return { ok: true, enabled: demoChain.length > 0, chain: [...demoChain] };
+        async fallbackSet(target) {
+          demoTargets = normTargets(target);
+          return { ok: true, ...fallbackShape(demoTargets) };
         },
         // Z12：demo 不读/写真值文件（假数据不伪装开关状态，更不许写真值）
         async switchGet() {
@@ -1690,6 +1706,34 @@ window.__ModuleLoader__.load({
      * low/high/max），只在显示层映射中文标签；未知档位（上游新增）原样显示，绝不隐藏、不猜语义。 */
     const THINKING_LABEL_KEY = { disabled: 'thinkDisabled', enabled: 'thinkEnabled', low: 'thinkLow', high: 'thinkHigh', max: 'thinkMax' };
     const thinkingLabel = (lv) => (lv == null || lv === '' ? '' : t(THINKING_LABEL_KEY[lv] ?? '') || lv);
+    /* ZB-30：降级**目标**归一（与 core/dispatch-core.mjs 的 normFallbackTargets 同语义）。
+     * 接受字符串（旧 chain 项）/ 对象（{provider|id|channel, model?, reasoningLevel?|thinking?}）；
+     * 无 provider 的项丢弃（不猜），顺序保留。null 字段 = 沿用原任务该维度。 */
+    const normTargets = (list) => {
+      if (list == null) return [];
+      const arr = Array.isArray(list) ? list : [list];
+      const out = [];
+      for (const item of arr) {
+        if (typeof item === 'string') {
+          const id = item.trim();
+          if (id) out.push({ provider: id, model: null, reasoningLevel: null });
+          continue;
+        }
+        if (!item || typeof item !== 'object') continue;
+        const provider = String(item.provider ?? item.id ?? item.channel ?? '').trim();
+        if (!provider) continue;
+        const model = item.model == null || item.model === '' ? null : String(item.model);
+        const rl = item.reasoningLevel ?? item.thinking ?? null;
+        out.push({ provider, model, reasoningLevel: rl == null || rl === '' ? null : String(rl) });
+      }
+      return out;
+    };
+    const fallbackShape = (targets) => ({
+      enabled: targets.length > 0,
+      chain: targets.map((x) => x.provider),
+      targets,
+      target: targets[0] ?? null,
+    });
     /* ZB-28：排队可观测 —— 把 core 的 lockWait 结构转成一行人话：
      * 「第 2/3 位 · 前方 1 个（j-xxxxxxxx） · 被 tag-x 挡住 · 预计 ≤ 0时03分20秒」。
      * estWaitSec=null（有阻塞者未声明 timeoutMin）时如实显示「预计等待未知」，不猜。 */
@@ -1850,11 +1894,14 @@ window.__ModuleLoader__.load({
       );
     }
 
-    /* 通道分区：切换器（provider+model，不可用项置灰带原因）+ 自动降级链开关（二次确认）。 */
+    /* 通道分区：切换器（provider+model+思考强度，不可用项置灰带原因）+ 自动降级开关。
+     * ZB-30（用户要求）：「自动降级」改成**开关**（参考派发总开关：点击开/关、带指示灯），
+     * 打开后下面才显示 通道 / 模型 / 思考强度 三个下拉（与上面「通道」分区同形）；关闭时不显示。
+     * 目标为空的两维（模型、思考强度）语义是「沿用原任务」，故首项标签不是「Agent决定」
+     * （降级是自动触发的，此刻并没有 Agent 在决定——与 ZB-29c 移除派发栏 Agent决定同一条理由）。 */
     function ChannelSection({ channelsInfo, channel, fallback, onSwitch, onFallbackSet, offline, offlineReason }) {
-      const [chainInput, setChainInput] = useState('');
-      const [confirming, setConfirming] = useState(false);
       const [fbFeedback, setFbFeedback] = useState(null);
+      const [busy, setBusy] = useState(false);
       const channels = channelsInfo?.channels ?? [];
       const warnings = channelsInfo?.warnings ?? [];
       const sel = channels.find((c) => c.id === channel.provider) ?? null;
@@ -1871,38 +1918,57 @@ window.__ModuleLoader__.load({
       const modelOptions = models.length
         ? models
         : (modelValue ? [modelValue] : []); // 通道没给模型表时至少显示当前值
-      const chainText = (fallback?.chain ?? []).join(', ');
 
-      const trySetChain = (list) => {
-        if (list.length === 0) {
-          setFbFeedback({ kind: 'err', text: t('fallbackEmptyErr') });
+      /* 降级目标（单目标；core 仍支持多目标列表供 CLI 使用）。targets[0] 为准，旧 chain 兜底。 */
+      const fbEnabled = !!fallback?.enabled;
+      const fbTarget = fallback?.target ?? null;
+      const fbProvider = fbTarget?.provider ?? '';
+      const fbSel = channels.find((c) => c.id === fbProvider) ?? null;
+      const fbModels = fbSel && Array.isArray(fbSel.models) ? fbSel.models : (fbTarget?.model ? [fbTarget.model] : []);
+      const fbLevels = Array.isArray(fbSel?.thinkingLevels) ? fbSel.thinkingLevels : [];
+      const fbModel = fbTarget?.model ?? '';
+      const fbThinking = fbTarget?.reasoningLevel ?? '';
+
+      /** 写降级目标（对象 ⇒ 开启；null ⇒ 关闭）。乐观回显交给 PanelBody 的权威值校正。 */
+      const saveTarget = (patch) => {
+        const next = {
+          provider: fbProvider || channel.provider || 'plan',
+          model: fbModel || null,
+          reasoningLevel: fbThinking || null,
+          ...patch,
+        };
+        setBusy(true);
+        Promise.resolve(onFallbackSet(next)).finally(() => setBusy(false));
+      };
+      const toggleFallback = () => {
+        /* 判据与「通道」分区的两个下拉一致：只看 busy 与「有没有通道清单」。
+         * 刻意**不**因 offline（conn!=='live'）禁用 —— ext/demo 数据源同样提供 fallback 方法，
+         * 真正无源时 channels 为空，这里自然禁用。 */
+        if (busy || channels.length === 0) return;
+        if (fbEnabled) {
+          setBusy(true);
+          Promise.resolve(onFallbackSet(null)).finally(() => setBusy(false));
           return;
         }
-        const unknown = list.filter((id) => !channels.some((c) => c.id === id));
-        onFallbackSet(list);
-        setConfirming(false);
-        setFbFeedback({
-          kind: unknown.length ? 'err' : 'ok',
-          text: t('fallbackSaved') + list.join(' → ') + (unknown.length ? `（未知通道：${unknown.join(', ')}）` : ''),
+        /* 开启：默认目标 = 当前默认通道 + 当前通道档位（模型/思考强度跟着「通道」分区的选择走），
+         * 当前通道不可用时退到第一个可用通道（否则降级一开就是死路）。 */
+        const firstEnabled = channels.find((c) => c.enabled);
+        const provider = (sel && sel.enabled ? channel.provider : null) ?? firstEnabled?.id ?? channel.provider ?? 'plan';
+        saveTarget({
+          provider,
+          model: provider === channel.provider ? (channel.model ?? null) : null,
+          reasoningLevel: provider === channel.provider && channel.reasoningLevel && channel.reasoningLevel !== 'agent' ? channel.reasoningLevel : null,
         });
+        setFbFeedback(null);
       };
-      const saveClick = () => {
-        const list = chainInput.split(',').map((s) => s.trim()).filter(Boolean);
-        if (list.length === 0) {
-          setFbFeedback({ kind: 'err', text: t('fallbackEmptyErr') });
-          return;
-        }
-        if (!confirming) {
-          setConfirming(true); // 二次确认：会自动消耗下游通道额度
-          return;
-        }
-        trySetChain(list);
+      const fbSwitchProvider = (id) => {
+        const c = channels.find((x) => x.id === id);
+        if (!c || !c.enabled) return;
+        saveTarget({ provider: id, model: null }); // 换通道 ⇒ 模型/档位回到「沿用原任务」
       };
-      const offClick = () => {
-        onFallbackSet([]);
-        setConfirming(false);
-        setFbFeedback({ kind: 'ok', text: t('fallbackSaved') + t('fallbackStateOff') });
-      };
+      const fbSwitchModel = (m) => saveTarget({ model: m || null });
+      const fbSwitchThinking = (lv) => saveTarget({ reasoningLevel: lv || null });
+      const fbUnknown = fbEnabled && fbProvider && !channels.some((c) => c.id === fbProvider);
 
       return h('div', { className: 'zcd-stack' },
         warnings.length ? h('div', { className: 'zcd-feedback zcd-err' }, `${t('chanLoadFail')}: ${warnings[0]}`) : null,
@@ -1952,22 +2018,53 @@ window.__ModuleLoader__.load({
         })(),
         h('div', { className: 'zcd-note', role: 'status' },
           `${t('chanNewTask')}${channel.provider}/${channel.model || t('chanDefaultModel')} · ${t('thinking')}: ${channel.reasoningLevel === 'agent' || !channel.reasoningLevel ? t('thinkingAgentShort') : thinkingLabel(channel.reasoningLevel)}`),
-        h('div', { className: 'zcd-row' },
-          h('span', { className: 'zcd-label' }, t('fallbackTitle')),
-          h('span', { className: 'zcd-badge' }, fallback?.enabled ? t('fallbackStateOn') : t('fallbackStateOff')),
-          (fallback?.chain ?? []).length ? h('span', { className: 'zcd-chain' },
-            (fallback.chain).map((id, i) => h('span', { key: `${id}-${i}`, className: 'zcd-badge' }, id))) : null,
-        ),
-        h('div', { className: 'zcd-row' },
-          h('input', {
-            className: 'zcd-input', type: 'text', value: chainInput, placeholder: chainText || t('fallbackPh'),
-            onChange: (e) => { setChainInput(e.target.value); setConfirming(false); },
-            style: { flex: 1, minWidth: 120 }, 'aria-label': t('fallbackTitle'),
-          }),
-          h('button', { className: 'zcd-btn2', onClick: saveClick }, confirming ? t('fallbackConfirm2') : t('fallbackSave')),
-          (fallback?.chain ?? []).length ? h('button', { className: 'zcd-btn2', onClick: offClick }, t('fallbackOffBtn')) : null,
-        ),
-        confirming ? h('div', { className: 'zcd-note', role: 'alert' }, t('fallbackConfirm2')) : null,
+        /* ── ZB-30：自动降级（开关 + 开启后的目标三下拉） ── */
+        h('div', { className: 'zcd-field' },
+          h('button', {
+            className: 'zcd-switch zcd-toggle', type: 'button',
+            title: offline ? t('fallbackOfflineHint') : t('fallbackEnableTitle'),
+            disabled: busy || channels.length === 0,
+            onClick: toggleFallback, 'aria-pressed': fbEnabled,
+          },
+            h('span', { className: 'zcd-dot', style: { background: fbEnabled ? T.stDone : T.danger } }),
+            `${t('fallbackTitle')}：${fbEnabled ? t('fallbackStateOn') : t('fallbackStateOff')}`),
+          h('span', { className: 'zcd-spring' }),
+          fbEnabled && fbTarget
+            ? h('span', { className: 'zcd-badge', title: `${fbProvider}${fbModel ? `/${fbModel}` : ''}` },
+              `${fbProvider}${fbModel ? `/${fbModel}` : ''}${fbThinking ? ` · ${thinkingLabel(fbThinking)}` : ''}`)
+            : null),
+        /* 关闭时不显示下面的选择项（用户要求：关闭不显示）。 */
+        fbEnabled ? h('div', { className: 'zcd-stack' },
+          h('div', { className: 'zcd-field' },
+            h('span', { className: 'zcd-field-k' }, t('provider')),
+            h('select', {
+              className: 'zcd-select zcd-field-v', value: fbProvider,
+              onChange: (e) => fbSwitchProvider(e.target.value), 'aria-label': `${t('fallbackTitle')}-${t('provider')}`,
+              disabled: busy || channels.length === 0,
+            },
+              fbUnknown ? h('option', { value: fbProvider }, fbProvider) : null,
+              channels.map((c) => h('option', { key: c.id, value: c.id, disabled: !c.enabled },
+                `${c.name ?? c.id}${c.enabled ? '' : `（${t('chanDisabled')}：${c.reason ?? '-'}）`}`)))),
+          h('div', { className: 'zcd-field' },
+            h('span', { className: 'zcd-field-k' }, t('model')),
+            h('select', {
+              className: 'zcd-select zcd-field-v', value: fbModel,
+              onChange: (e) => fbSwitchModel(e.target.value), 'aria-label': `${t('fallbackTitle')}-${t('model')}`,
+              disabled: busy,
+            },
+              h('option', { value: '' }, t('fallbackKeepModel')),
+              fbModels.map((m) => h('option', { key: m, value: m }, m)))),
+          h('div', { className: 'zcd-field' },
+            h('span', { className: 'zcd-field-k' }, t('thinking')),
+            h('select', {
+              className: 'zcd-select zcd-field-v', value: fbThinking,
+              onChange: (e) => fbSwitchThinking(e.target.value), 'aria-label': `${t('fallbackTitle')}-${t('thinking')}`,
+              disabled: busy,
+            },
+              h('option', { value: '' }, t('fallbackKeepThinking')),
+              fbLevels.map((lv) => h('option', { key: lv, value: lv }, thinkingLabel(lv))))),
+          h('div', { className: 'zcd-note', role: 'status' }, t('fallbackHint')),
+        ) : null,
         fbFeedback ? h('div', { className: `zcd-feedback${fbFeedback.kind === 'err' ? ' zcd-err' : ''}`, role: 'status' }, fbFeedback.text) : null,
       );
     }
@@ -2576,7 +2673,7 @@ window.__ModuleLoader__.load({
       // Z6：通道清单 / 默认通道 / 降级链（挂载时拉一次；切换即时回显，wire 返回后用权威值校正）
       const [channelsInfo, setChannelsInfo] = useState({ channels: [], warnings: [] });
       const [channel, setChannelState] = useState({ provider: 'plan', model: 'GLM-5.3-Flash' });
-      const [fallback, setFallbackState] = useState({ enabled: false, chain: [] });
+      const [fallback, setFallbackState] = useState({ enabled: false, chain: [], targets: [], target: null });
       useEffect(() => {
         let alive = true;
         Promise.resolve(channels()).then((r) => {
@@ -2586,7 +2683,7 @@ window.__ModuleLoader__.load({
           if (alive && r && r.ok && r.channel && r.channel.provider) setChannelState(r.channel);
         });
         Promise.resolve(fallbackGet()).then((r) => {
-          if (alive && r && r.ok) setFallbackState({ enabled: !!r.enabled, chain: r.chain ?? [] });
+          if (alive && r && r.ok) setFallbackState({ enabled: !!r.enabled, chain: r.chain ?? [], targets: r.targets ?? [], target: r.target ?? null });
         });
         return () => {
           alive = false;
@@ -2611,9 +2708,10 @@ window.__ModuleLoader__.load({
         if (job.tag) spec.tag = `${job.tag}-c`;
         return dispatch(spec);
       }, [dispatch]);
-      const onFallbackSet = useCallback((list) => {
-        Promise.resolve(fallbackSet(list)).then((r) => {
-          if (r && r.ok) setFallbackState({ enabled: !!r.enabled, chain: r.chain ?? [] });
+      /* ZB-30：自动降级目标写入（对象 = 单目标开启；null = 关闭）。wire 返回权威值后校正回显。 */
+      const onFallbackSet = useCallback((target) => {
+        Promise.resolve(fallbackSet(target)).then((r) => {
+          if (r && r.ok) setFallbackState({ enabled: !!r.enabled, chain: r.chain ?? [], targets: r.targets ?? [], target: r.target ?? null });
         });
       }, [fallbackSet]);
       // Z12：派发总开关切换（成功 → 1s 轮询带回新快照、徽标自动翻转；失败 → 错误进面板反馈行）

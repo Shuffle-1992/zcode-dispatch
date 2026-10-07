@@ -154,6 +154,8 @@ return Array.isArray(body?.data) && body.data.length > 0;
   （子进程已退出），UI「关闭」按钮因此先 `kill`、kill 无效时退回 `dismiss`。
   **`list` 的 queued 行带 `lockWait`（ZB-28 排队可观测）**，见「锁排队可观测（ZB-28）」一节。
 - `channels` / `channel set` / `retry(jobId, {provider?, model?})` / `fallback`：Z6 通道与续跑，见下节。
+  `fallback`（ZB-30）：无参=读设置；`chain:[id,…]` 或 `chain:null` 设/关多目标；单目标用
+  `provider` + `model` + `thinking`（与面板开关同形）。
   **选择判据（ZB-28）**：job 还在派发台里 → `retry`（簿记链完整）；手里只有裸 sessionId → `dispatch` + `resume`，
   详见「resume 与 retry 怎么选」一节。
 - 限制：仓库写锁互斥（同锁 FIFO 排队，不报错；**文件锁任务优先放行**，见「锁与并发语义」）；`memoryBench` 仅 prompt；
@@ -356,11 +358,20 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 - **进程行展开**（Z11）：点击行头（非按钮区）展开该 job 的派发要素——kind、prompt/task/target
   原文（截 1200 字符）、provider/model、mode、cwd、timeoutMin、createdAt、sessionId、
   pauseReason（中文标签）与「输出」tail 子块；多进程靠它区分「谁在跑什么」。
-- **自动降级链**（默认关）：面板开关或 `zcd fallback set <a,b,c>` 开启（二次确认）；仅当暂停
-  原因属于 {额度耗尽 / 未开通 / 需签名} 时，按交接语义自动跳到链上下一个**可用**通道，
-  最多 `chain.length` 跳；链耗尽或某一跳失败即停在 `paused`。⚠ 开启即授权**自动消耗下游通道额度**。
+- **自动降级**（默认关，ZB-30 起是**开关 + 单目标**）：面板「通道」分区里一个带指示灯的开关
+  （与标题栏派发总开关同一套视觉语言：点击开/关、`aria-pressed` 反映状态）；**打开后**才显示
+  通道 / 模型 / 思考强度三个下拉（与上面「通道」分区同形，档位仍走中文标签），**关闭时不显示**。
+  语义：仅当暂停原因属于 {额度耗尽 / 未开通 / 需签名} 时，按交接语义自动跳到选定目标；
+  目标的 model / 思考强度留空（「沿用原任务…」）则沿用原任务该维度。⚠ 开启即授权**自动消耗下游通道额度**。
+  - core 侧状态是**有序目标列表** `[{provider, model, reasoningLevel}]`（`<workRoot>/state/fallback.json`，
+    `version: 2`；旧 `version: 1` 的 `chain` 自动迁移，不丢配置）；面板开关只设一个目标
+    （`setFallbackTarget`），CLI/工具仍可设多目标（`setFallbackChain`）。
+    `getFallbackChain()` 返回 `{enabled, chain（旧形状 id 列表）, targets, target（首项）}` —— 旧读者照旧可读。
+  - 目标下拉里**没有「Agent决定」**：降级是自动触发的，那一刻并没有 Agent 在决定（与 ZB-29c 移除
+    派发栏「Agent决定」同一条理由）；留空 = 沿用原任务。
 - CLI 对照：`zcd channels [--json]` / `zcd channel set <provider> [--model]` /
-  `zcd retry <jobId> [--provider --model]` / `zcd fallback [list|set a,b,c|off]`；
+  `zcd retry <jobId> [--provider --model]` /
+  `zcd fallback [list|set a,b,c|set <id> --model <m> --thinking <lv>|off]`；
   agent 工具 `zcode_dispatch` 同名 action 一一对应。
 
 ## paused 与超时：触发条件、终态与 job 字段（ZB-28）
@@ -375,7 +386,7 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
 | run 非 0 退出（**且非 kill 请求**），输出命中暂停签名之一 | **`paused`** + `pauseReason`（下表按优先级，防宽词抢定性） |
 | 非 0 退出，有输出但未命中任何签名 | `failed`（Z1 语义不变），仅记 `pauseReason: 'unknown'` 作信息字段 |
 | 非 0 退出，完全无输出（如 spawn 失败） | `failed` |
-| 自动降级链耗尽 / 某一跳失败 | 停在 `paused`（附 parseWarning） |
+| 自动降级目标耗尽 / 某一跳失败 | 停在 `paused`（附 parseWarning） |
 
 暂停签名与优先级（`core/dispatch-core.mjs` 的 `PAUSE_SIGNATURES`，顺序即优先级）：
 
@@ -541,6 +552,8 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 | `node test/lock-queue-visibility.test.mjs` | 6 | 锁排队可观测（ZB-28：lockWait 的 blockers 指认持有者、ahead 同类计数、estWaitSec 上界/不猜、跨层级 cross 条目、wire 透传） |
 | `node test/pause-timeout.test.mjs` | 5 | paused 与超时（ZB-28：`(超时)` 标记 → failed+timedOutBy=runner、看门狗 → killed、pausedAt 落字段、unknown 分支、timeoutMin 校验） |
 | `node test/thinking-level.test.mjs` | 7 | 思考强度（ZB-29：`thinking` 参数与 'agent'=Agent决定不透传、档位透传 `--reasoning-level`、channels[].thinkingLevels、validateSpec、交接沿用、runner 注入 hermetic 干跑 + fail-fast + resume 跳过） |
+| `node test/fallback-target.test.mjs` | 6 | 自动降级目标（ZB-30：`setFallbackTarget` 单目标/关闭/落盘 v2 与 v1 迁移、跳转带目标 model+档位、未指定则沿用原任务、wire 对象/数组/null 三形状、face 对象走单目标、面板源码形态、文案四处齐备） |
+| `node test/fallback-ui.test.mjs` | 16 | 自动降级**真渲染**（ZB-30：关闭态只有开关且无目标下拉、开启后出现通道/模型/思考强度三下拉、档位中文标签且 value 仍原始、目标里无「Agent决定」、点开关 → wire 收到 `chain:null`、关闭后下拉消失） |
 | `node test/memory-ban.test.mjs` | 6 | 记忆禁令注入（ZB-20/28：prompt/target 拼进内容；**task 经 runner `--memory-ban` 旗标**，memoryBanRunner=runner 确认位） |
 | `node test/panel-style.test.mjs` | 24 | 样式注入与作用域（ZB-21/27：样式只注入 head 一次、重渲染不触碰；border-box 限定 .zcd-menu 子树） |
 | `node test/notify.test.mjs` | 21 | 落地自动唤醒（ZB-22：空闲 followup / 忙碌 inject、幂等、自己 kill/wait 的抑制、唤醒预算、卸载退订、工具层译码） |

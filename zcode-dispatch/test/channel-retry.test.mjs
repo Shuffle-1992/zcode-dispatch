@@ -244,7 +244,16 @@ test('自动降级链：链必须在 pause 之前 set；跳过不可用通道；
     }),
   });
   d.setFallbackChain(['plan', 'ch-b', 'ch-c']); // 必须在 dispatch/pause 之前（finalize 时读）
-  assert.deepEqual(d.getFallbackChain(), { enabled: true, chain: ['plan', 'ch-b', 'ch-c'] });
+  /* ZB-30：返回值同时带旧形状（chain=通道 id 列表）与新形状（targets=[{provider,model,reasoningLevel}]）。 */
+  const fb0 = d.getFallbackChain();
+  assert.equal(fb0.enabled, true);
+  assert.deepEqual(fb0.chain, ['plan', 'ch-b', 'ch-c'], '旧形状 chain 仍在（CLI/旧客户端可读）');
+  assert.deepEqual(fb0.targets, [
+    { provider: 'plan', model: null, reasoningLevel: null },
+    { provider: 'ch-b', model: null, reasoningLevel: null },
+    { provider: 'ch-c', model: null, reasoningLevel: null },
+  ], '新形状 targets：字符串项补全为 {provider,model:null,reasoningLevel:null}');
+  assert.deepEqual(fb0.target, fb0.targets[0], 'target = 首项');
 
   // 全程保持暂停签名：A(plan) 暂停 → 自动跳 ch-c（跳过不可用的 ch-b）→ ch-c 再暂停 → 链耗尽停 paused
   await withEnv({ FAKE_SLEEP_MS: '20', FAKE_EXIT_CODE: '1', FAKE_PAUSE_TEXT: 'quota_exceeded', FAKE_DONE_BEFORE_PAUSE: null, FAKE_SESSION: null }, async () => {

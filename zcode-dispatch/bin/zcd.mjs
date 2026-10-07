@@ -15,7 +15,7 @@
  *   node bin/zcd.mjs channels [--json]              # 通道清单（含可用性与原因；解析失败给 warnings 不猜）
  *   node bin/zcd.mjs channel [set <provider> [--model <m>]]   # 查看/设默认通道（持久化到 state/channel.json）
  *   node bin/zcd.mjs retry <jobId> [--provider <p>] [--model <m>]  # 同通道=--resume 续跑（绝不带 --model）；换通道=交接重跑
- *   node bin/zcd.mjs fallback [list|set a,b,c|off]   # 自动降级链（默认关；set 即开启）
+ *   node bin/zcd.mjs fallback [list|set a,b,c|set <id> --model <m> --thinking <lv>|off]   # 自动降级（默认关；set 即开启）
  *
  * dispatch 附加：--kind task|prompt|target --prompt/--task/--target --model --provider
  *   --mode build|edit|plan|yolo --tag --timeout-min --cwd --resume --memory-bench
@@ -412,25 +412,33 @@ async function cmdFallback() {
   if (sub === 'set') {
     const csv = pos[2];
     if (!csv) {
-      console.error('[zcd] 用法: fallback set <id1,id2,…>（顺序即优先级）');
+      console.error('[zcd] 用法: fallback set <id1,id2,…>（顺序即优先级；也可 set <id> --model <m> --thinking <lv> 设单目标）');
       process.exit(1);
     }
-    const fb = d.setFallbackChain(csv.split(',').map((s) => s.trim()).filter(Boolean));
-    console.log(`[zcd] 降级链已开启: ${fb.chain.join(' → ')}`);
-    console.log('[zcd] 注意：额度耗尽/未开通/需签名时会自动交接重跑到链上下一个可用通道，会自动消耗下游通道额度');
+    /* ZB-30：带 --model/--thinking（或只有一个通道 id）⇒ 单目标（与面板开关同形）；
+     * 纯逗号列表 ⇒ 多目标（只带通道 id，模型/档位沿用原任务）。 */
+    const ids = csv.split(',').map((s) => s.trim()).filter(Boolean);
+    const one = ids.length === 1 && (opt.model != null || opt.thinking != null || opt.reasoningLevel != null);
+    const fb = one
+      ? d.setFallbackTarget({ provider: ids[0], model: opt.model ?? null, reasoningLevel: opt.thinking ?? opt.reasoningLevel ?? null })
+      : d.setFallbackChain(ids);
+    console.log(`[zcd] 自动降级已开启: ${fb.targets.map((t) => `${t.provider}${t.model ? `/${t.model}` : ''}${t.reasoningLevel ? `@${t.reasoningLevel}` : ''}`).join(' → ')}`);
+    console.log('[zcd] 注意：额度耗尽/未开通/需签名时会自动交接重跑到下一个可用目标，会自动消耗下游通道额度');
     return;
   }
   if (sub === 'off') {
     d.setFallbackChain([]);
-    console.log('[zcd] 降级链已关闭');
+    console.log('[zcd] 自动降级已关闭');
     return;
   }
   if (sub != null && sub !== 'list') {
-    console.error('[zcd] 用法: fallback [list|set a,b,c|off]');
+    console.error('[zcd] 用法: fallback [list|set a,b,c|set <id> --model <m> --thinking <lv>|off]');
     process.exit(1);
   }
   const fb = d.getFallbackChain();
-  console.log(fb.enabled ? `降级链: ${fb.chain.join(' → ')}` : '降级链: 关（fallback set a,b,c 开启）');
+  console.log(fb.enabled
+    ? `自动降级: ${fb.targets.map((t) => `${t.provider}${t.model ? `/${t.model}` : ''}${t.reasoningLevel ? `@${t.reasoningLevel}` : ''}`).join(' → ')}`
+    : '自动降级: 关（fallback set a,b,c 开启）');
 }
 
 const commands = { help: usage, list: cmdList, dispatch: cmdDispatch, watch: cmdWatch, quota: cmdQuota, 'plan-quota': cmdPlanQuota, kill: cmdKill, tail: cmdTail, channels: cmdChannels, channel: cmdChannel, retry: cmdRetry, fallback: cmdFallback };

@@ -45,6 +45,12 @@
  * 自动降级链（默认关）：setFallbackChain([...]) 后，paused 且原因属
  *   {quota-exhausted, plan-not-entitled, provider-signing} 时自动按 retry 交接语义
  *   跳到链上下一个可用通道，最多 chain.length 跳；链耗尽/一跳失败即停在 paused。
+ * 自动降级目标（ZB-30，面板入口）：状态是**有序目标列表** [{provider, model, reasoningLevel}]——
+ *   setFallbackTarget({provider, model, reasoningLevel}) 设单个（面板：通道+模型+思考强度，
+ *   开启时下面三个下拉与「通道」分区同形），setFallbackTarget(null) = 关闭；
+ *   旧入口 setFallbackChain([ids]) 归一成同形列表（model/reasoningLevel=null ⇒ 沿用原任务）。
+ *   两者写**同一份状态**（<workRoot>/state/fallback.json，version 2；旧 version 1 的 chain 自动迁移）。
+ *   getFallbackChain() 返回 {enabled, chain(旧形状 id 列表), targets, target(首项)}。
  *
  * 测试注入：env `ZCD_FAKE_RUNNER` 覆盖 runner 路径；`options.spawnImpl` 替换 spawn；
  *   `options.now` 注入时钟（返回 ms 数值或 Date 的函数）；
@@ -456,7 +462,9 @@ export function createDispatcher(options = {}) {
   const channelFile = join(dirState, 'channel.json');
   const fallbackFile = join(dirState, 'fallback.json');
   let channel = { provider: 'plan', model: null, reasoningLevel: 'agent' }; // ZB-29d：通道默认思考强度（'agent'=Agent决定，给派发 Agent 的规定）
-  let fallbackChain = [];
+  /* ZB-30：自动降级**目标**（有序）。旧形状只是通道 id 列表，新形状每项还带 model/reasoningLevel
+   * （面板开启降级后可选模型与思考强度，与「通道」分区同形）。null 字段 = 沿用原任务该维度。 */
+  let fallbackTargets = [];
 
   const isTerminal = (job) => TERMINAL_STATES.has(job.state);
   const nextId = () => `j-${Date.now().toString(36)}-${(seqCounter++).toString(36)}-${randomBytes(2).toString('hex')}`;
@@ -1238,19 +1246,20 @@ export function createDispatcher(options = {}) {
   /* ---------- Z6：通道 / retry / 交接重跑 / 自动降级链 ---------- */
 
   /**
-   * paused 且原因可降级时按链自动交接。链上从当前通道之后找第一个「可用」通道跳过去
-   * （可用性来自 listChannels，不猜）；当前通道不在链上则从头找；跳数以 chain.length 封顶；
-   * 链耗尽或某一跳执行失败都停在 paused 并留 warning。
+   * paused 且原因可降级时按**目标列表**自动交接。从当前通道之后找第一个「可用」目标跳过去
+   * （可用性来自 listChannels，不猜）；当前通道不在列表上则从头找；跳数以列表长度封顶；
+   * 列表耗尽或某一跳执行失败都停在 paused 并留 warning。
+   * ZB-30：每个目标可带 model / reasoningLevel（面板设置）——有则覆盖，无则沿用原任务。
    */
   function maybeAutoFallback(job) {
-    if (fallbackChain.length === 0) return;
-    if (Number(job.hopCount ?? 0) >= fallbackChain.length) {
-      job.parseWarnings.push(`fallback-chain: 已达链长上限（${fallbackChain.length} 跳），停止自动降级`);
+    if (fallbackTargets.length === 0) return;
+    if (Number(job.hopCount ?? 0) >= fallbackTargets.length) {
+      job.parseWarnings.push(`fallback-chain: 已达目标数上限（${fallbackTargets.length} 跳），停止自动降级`);
       persist();
       emit('job-updated', job);
       return;
     }
-    const startIdx = fallbackChain.indexOf(job.spec.provider ?? 'plan');
+    const startIdx = fallbackTargets.findIndex((t) => t.provider === (job.spec.provider ?? 'plan'));
     void (async () => {
       try {
         const cur = jobs.get(job.id);
@@ -1263,16 +1272,21 @@ export function createDispatcher(options = {}) {
         }
         const live = jobs.get(job.id);
         if (!live || live.state !== 'paused') return;
-        for (let i = startIdx + 1; i < fallbackChain.length; i += 1) {
-          const target = fallbackChain[i];
-          const ch = channels.find((c) => c.id === target);
+        for (let i = startIdx + 1; i < fallbackTargets.length; i += 1) {
+          const target = fallbackTargets[i];
+          const ch = channels.find((c) => c.id === target.provider);
           if (ch && ch.enabled) {
-            live.parseWarnings.push(`fallback-chain: 自动跳到 ${target}（交接重跑）`);
-            retry(live.id, { provider: target, autoFallback: true });
+            live.parseWarnings.push(`fallback-chain: 自动跳到 ${target.provider}${target.model ? `/${target.model}` : ''}（交接重跑）`);
+            retry(live.id, {
+              provider: target.provider,
+              model: target.model,
+              reasoningLevel: target.reasoningLevel,
+              autoFallback: true,
+            });
             return;
           }
         }
-        live.parseWarnings.push('fallback-chain: 链上没有下一个可用通道，保持 paused');
+        live.parseWarnings.push('fallback-chain: 目标列表里没有下一个可用通道，保持 paused');
         persist();
         emit('job-updated', live);
       } catch (e) {
@@ -1327,22 +1341,78 @@ export function createDispatcher(options = {}) {
     } catch { /* 无文件/损坏：用默认通道 */ }
   }
 
+  /* ZB-30：降级**目标**归一 —— 每项 {provider, model, reasoningLevel}（model/reasoningLevel 可为 null
+   * = 沿用原任务）。接受三种入参：字符串（旧 chain 项）/ {provider|id|channel, model?, reasoningLevel?|thinking?}。
+   * 非法项（无 provider）直接丢弃（不猜），并保留顺序。 */
+  function normFallbackTargets(list) {
+    if (list == null) return [];
+    if (!Array.isArray(list)) throw new TypeError('setFallbackTarget/setFallbackChain: 需要数组（空数组/null = 关闭）');
+    const out = [];
+    for (const item of list) {
+      if (typeof item === 'string') {
+        const id = item.trim();
+        if (id) out.push({ provider: id, model: null, reasoningLevel: null });
+        continue;
+      }
+      if (!item || typeof item !== 'object') continue;
+      const provider = String(item.provider ?? item.id ?? item.channel ?? '').trim();
+      if (!provider) continue;
+      const model = item.model == null || item.model === '' ? null : String(item.model);
+      const rl = normReasoning(item.reasoningLevel ?? item.thinking ?? null, null);
+      out.push({ provider, model, reasoningLevel: rl });
+    }
+    return out;
+  }
+
+  function persistFallback() {
+    atomicWrite(fallbackFile, `${JSON.stringify({
+      version: 2,
+      chain: fallbackTargets.map((t) => t.provider), // 旧读者（CLI list / 旧客户端）仍能读
+      targets: fallbackTargets,
+      updatedAt: new Date(nowMs()).toISOString(),
+    }, null, 2)}\n`);
+  }
+
+  /** 旧入口：通道 id 数组（等价于只有 provider 的目标列表）。 */
   function setFallbackChain(list) {
-    if (list == null) list = [];
-    if (!Array.isArray(list)) throw new TypeError('setFallbackChain: 需要通道 id 数组（空数组 = 关闭）');
-    fallbackChain = list.map((x) => String(x).trim()).filter(Boolean);
-    atomicWrite(fallbackFile, `${JSON.stringify({ version: 1, chain: fallbackChain, updatedAt: new Date(nowMs()).toISOString() }, null, 2)}\n`);
+    fallbackTargets = normFallbackTargets(list);
+    persistFallback();
     return getFallbackChain();
   }
 
+  /** ZB-30（面板入口）：设置**单个**降级目标（通道+模型+思考强度）；null/空 = 关闭降级。 */
+  function setFallbackTarget(target) {
+    if (target == null || target === '') {
+      fallbackTargets = [];
+    } else if (typeof target === 'string') {
+      fallbackTargets = normFallbackTargets([target]);
+    } else {
+      fallbackTargets = normFallbackTargets([target]);
+      if (fallbackTargets.length === 0) throw new TypeError('setFallbackTarget: 需要 provider（通道 id）');
+    }
+    persistFallback();
+    return getFallbackChain();
+  }
+
+  /** {enabled, chain（旧形状：通道 id 列表）, targets（新形状：含 model/思考强度）, target（首项）}。 */
   function getFallbackChain() {
-    return { enabled: fallbackChain.length > 0, chain: [...fallbackChain] };
+    const targets = fallbackTargets.map((t) => ({ ...t }));
+    return {
+      enabled: targets.length > 0,
+      chain: targets.map((t) => t.provider),
+      targets,
+      target: targets[0] ?? null,
+    };
   }
 
   function loadFallbackState() {
     try {
       const data = JSON.parse(readFileSync(fallbackFile, 'utf8'));
-      if (data && Array.isArray(data.chain)) fallbackChain = data.chain.map((x) => String(x)).filter(Boolean);
+      if (data && Array.isArray(data.targets)) {
+        fallbackTargets = normFallbackTargets(data.targets); // ZB-30 新形状
+      } else if (data && Array.isArray(data.chain)) {
+        fallbackTargets = normFallbackTargets(data.chain); // 旧 version 1 自动迁移（只带通道 id）
+      }
     } catch { /* 无文件/损坏：默认关 */ }
   }
 
@@ -1717,6 +1787,11 @@ export function createDispatcher(options = {}) {
     }
     const targetProvider = opts.provider != null && opts.provider !== '' ? String(opts.provider) : null;
     const targetModel = opts.model != null && opts.model !== '' ? String(opts.model) : null;
+    /* ZB-30：降级目标可指定思考强度（面板设置）。null/'' = 沿用原任务档位（下面的 spec 展开）。
+     * 'agent' 是**显式**值 ⇒ 照传（runner 按 ZCode 默认规则解析成实际档）。 */
+    const targetReasoning = opts.reasoningLevel == null || opts.reasoningLevel === ''
+      ? null
+      : String(opts.reasoningLevel);
     const origProvider = job.spec.provider ?? 'plan'; // runner 缺省即 plan
     const sameChannel = targetProvider == null || targetProvider === origProvider;
     const at = new Date(nowMs()).toISOString();
@@ -1756,8 +1831,9 @@ export function createDispatcher(options = {}) {
       ...(job.spec.lock ? { lock: job.spec.lock } : {}),
       ...(job.spec.cwd ? { cwd: job.spec.cwd } : {}),
       ...(job.spec.timeoutMin != null ? { timeoutMin: job.spec.timeoutMin } : {}),
-      /* ZB-29：交接重跑是新会话，沿用原任务的思考强度档位（'agent' 照传 = 继续不覆盖）。 */
-      ...(job.spec.reasoningLevel ? { reasoningLevel: job.spec.reasoningLevel } : {}),
+      /* ZB-29：交接重跑是新会话，沿用原任务的思考强度档位（'agent' 照传 = 继续不覆盖）。
+       * ZB-30：降级目标显式带了档位 ⇒ 用它（面板设置的硬性规定）；未带 ⇒ 沿用原任务。 */
+      ...((targetReasoning ?? job.spec.reasoningLevel) ? { reasoningLevel: targetReasoning ?? job.spec.reasoningLevel } : {}),
       ...(job.tag ? { tag: `${job.tag}-h${prevAttempts.length + 1}` } : {}),
     };
     const nj = dispatchRaw(spec, { raw: true }); // 簿记必须写在存储态真实对象上（get() 返回克隆，写它会丢）
@@ -1899,6 +1975,7 @@ export function createDispatcher(options = {}) {
     retry,
     buildHandoffPrompt,
     setFallbackChain,
+    setFallbackTarget, // ZB-30：面板入口（单目标：通道+模型+思考强度；null=关闭）
     getFallbackChain,
   };
 }

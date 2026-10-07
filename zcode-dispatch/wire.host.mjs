@@ -418,9 +418,18 @@ export function createActionHandler(dispatcher, config = {}) {
           return { ok: true, job: slimJob(job) };
         }
         case 'fallback': {
+          /* ZB-30：chain 既可是通道 id 数组（旧形状），也可是目标对象/对象数组（{provider,model,reasoningLevel}）。
+           * null/空数组 = 关闭；单个对象 = 单目标（面板开关 + 三个下拉）。 */
           if (p.chain !== undefined) {
-            const list = Array.isArray(p.chain) ? p.chain : String(p.chain).split(',');
-            dispatcher.setFallbackChain(list);
+            const raw = p.chain;
+            if (raw == null) dispatcher.setFallbackChain([]);
+            else if (Array.isArray(raw)) dispatcher.setFallbackChain(raw);
+            else if (typeof raw === 'object') dispatcher.setFallbackTarget(raw);
+            else dispatcher.setFallbackChain(String(raw).split(','));
+          } else if (p.provider !== undefined) {
+            dispatcher.setFallbackTarget({ provider: p.provider, model: p.model, reasoningLevel: p.reasoningLevel ?? p.thinking });
+          } else if (p.target !== undefined) {
+            dispatcher.setFallbackTarget(p.target);
           }
           return { ok: true, ...dispatcher.getFallbackChain() };
         }
@@ -513,14 +522,18 @@ export function createRemoteFace(dispatcher, config = {}) {
       return viaAction('channel', { provider: next.provider, model: next.model });
     },
     /**
-     * setFallbackChain(list|null)：null/undefined = 清空降级链（core.setFallbackChain
-     * 语义）；注意 createActionHandler 的 fallback 动作对 null chain 会误拆成 ["null"]，
+     * setFallbackChain(list|null)：null/undefined = 清空降级（core.setFallbackChain 语义）。
+     * ZB-30：list 也接受目标对象数组 [{provider, model, reasoningLevel}]（面板/CLI 新形状）；
+     * 单个对象（非数组）走 setFallbackTarget —— 面板开关只设一个目标。
+     * 注意 createActionHandler 的 fallback 动作对 null chain 会误拆成 ["null"]（旧缺陷），
      * 这里不走它、直调 core。
      */
     async setFallbackChain(list) {
       if (!dispatcher) return { ok: false, error: NOT_READY };
       try {
-        const r = dispatcher.setFallbackChain(list == null ? [] : list);
+        const r = (list != null && !Array.isArray(list) && typeof list === 'object')
+          ? dispatcher.setFallbackTarget(list)
+          : dispatcher.setFallbackChain(list == null ? [] : list);
         return { ok: true, ...r };
       } catch (e) {
         return { ok: false, error: e?.message ?? String(e) };
