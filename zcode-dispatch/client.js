@@ -191,7 +191,9 @@ window.__ModuleLoader__.load({
       /* ZB-29b（用户要求）：进程名左对齐（margin-right:auto 把右侧徽标群推到行尾）；下行整体右对齐。 */
       '.zcd-job-line .zcd-job-tag{margin-right:auto;}',
       '.zcd-job-line2{justify-content:flex-end;}',
-      '.zcd-job-tag{font-weight:600;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      /* ZB-29b（用户要求）：进程名**尽可能显示完整** —— 去掉 110px 截断上限；
+       * 空间实在不够（名字超过整行宽）才 ellipsis 兜底（右侧徽标会先折行让位）。 */
+      '.zcd-job-tag{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0;max-width:100%;}',
       '.zcd-dim{color:' + T.text3 + ';white-space:nowrap;font-size:10px;line-height:15px;}',
       '.zcd-spring{flex:1;}',
       '.zcd-badge{flex:none;font-size:10px;line-height:15px;padding:1px 5px;border:1px solid ' + T.border + ';border-radius:4px;color:' + T.text2 + ';white-space:nowrap;}',
