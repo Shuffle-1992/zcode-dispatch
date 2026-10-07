@@ -421,6 +421,7 @@ window.__ModuleLoader__.load({
         model: '模型', provider: '通道', providerPlan: '套餐', providerPersonal: '个人 Key',
         mode: '模式', timeout: '超时(分)', bench: '--memory-bench',
         thinking: '思考强度', thinkingAgent: 'Agent决定（按任务判断）', thinkingAgentShort: 'Agent决定',
+        thinkDisabled: '关闭思考', thinkEnabled: '开启思考', thinkLow: '低强度', thinkHigh: '高强度', thinkMax: '最高强度',
         thinkingFollow: '跟随通道', dispatchThinkingHint: '跟随通道=按通道设置的思考强度派发（在「通道」分区设置）；具体档位=本条派发严格生效（仅新建会话）',
         chanThinkingHint: '通道默认思考强度：Agent决定=由派发方 Agent 按任务自行改传具体档位；具体档位=给派发 Agent 的硬性规定（未显式指定的派发一律按它执行，仅新建会话生效）',
         thinkingHint: 'Agent决定=由派发方按任务判断并改传具体档位；具体档位严格生效（仅新建会话；--resume 沿用原会话档位）',
@@ -475,6 +476,7 @@ window.__ModuleLoader__.load({
         model: 'Model', provider: 'Channel', providerPlan: 'Plan', providerPersonal: 'Personal key',
         mode: 'Mode', timeout: 'Timeout (min)', bench: '--memory-bench',
         thinking: 'Thinking', thinkingAgent: 'Agent decides (per task)', thinkingAgentShort: 'Agent decides',
+        thinkDisabled: 'Thinking off', thinkEnabled: 'Thinking on', thinkLow: 'Low effort', thinkHigh: 'High effort', thinkMax: 'Max effort',
         thinkingFollow: 'Follow channel', dispatchThinkingHint: "Follow channel = dispatch with the channel's thinking setting (set in the Channels section); a concrete level is enforced for this dispatch (new sessions only)",
         chanThinkingHint: 'Channel default thinking: Agent decides = the dispatching agent picks a concrete level per task; a concrete level is a hard rule for dispatched agents (dispatches without an explicit level follow it; new sessions only)',
         thinkingHint: 'Agent decides = the dispatching agent picks a concrete level per task; a concrete level is enforced (new sessions only; --resume keeps the session level)',
@@ -1684,6 +1686,10 @@ window.__ModuleLoader__.load({
 
     const PAUSE_LABEL_KEY = { 'quota-exhausted': 'pQuota', 'plan-not-entitled': 'pEntitled', 'provider-signing': 'pSigning', 'config-error': 'pConfig' };
     const pauseLabel = (r) => t(PAUSE_LABEL_KEY[r] ?? 'pUnknown');
+    /* ZB-29e（用户要求）：思考强度档位**中文显示** —— 值与传输一律用原始字符串（disabled/enabled/
+     * low/high/max），只在显示层映射中文标签；未知档位（上游新增）原样显示，绝不隐藏、不猜语义。 */
+    const THINKING_LABEL_KEY = { disabled: 'thinkDisabled', enabled: 'thinkEnabled', low: 'thinkLow', high: 'thinkHigh', max: 'thinkMax' };
+    const thinkingLabel = (lv) => (lv == null || lv === '' ? '' : t(THINKING_LABEL_KEY[lv] ?? '') || lv);
     /* ZB-28：排队可观测 —— 把 core 的 lockWait 结构转成一行人话：
      * 「第 2/3 位 · 前方 1 个（j-xxxxxxxx） · 被 tag-x 挡住 · 预计 ≤ 0时03分20秒」。
      * estWaitSec=null（有阻塞者未声明 timeoutMin）时如实显示「预计等待未知」，不猜。 */
@@ -1942,10 +1948,10 @@ window.__ModuleLoader__.load({
               disabled: channels.length === 0 || !sel || !sel.enabled,
             },
               h('option', { value: 'agent' }, t('thinkingAgent')),
-              levels.map((lv) => h('option', { key: lv, value: lv }, lv))));
+              levels.map((lv) => h('option', { key: lv, value: lv }, thinkingLabel(lv)))));
         })(),
         h('div', { className: 'zcd-note', role: 'status' },
-          `${t('chanNewTask')}${channel.provider}/${channel.model || t('chanDefaultModel')} · ${t('thinking')}: ${channel.reasoningLevel === 'agent' ? t('thinkingAgentShort') : (channel.reasoningLevel ?? t('thinkingAgentShort'))}`),
+          `${t('chanNewTask')}${channel.provider}/${channel.model || t('chanDefaultModel')} · ${t('thinking')}: ${channel.reasoningLevel === 'agent' || !channel.reasoningLevel ? t('thinkingAgentShort') : thinkingLabel(channel.reasoningLevel)}`),
         h('div', { className: 'zcd-row' },
           h('span', { className: 'zcd-label' }, t('fallbackTitle')),
           h('span', { className: 'zcd-badge' }, fallback?.enabled ? t('fallbackStateOn') : t('fallbackStateOff')),
@@ -2148,8 +2154,8 @@ window.__ModuleLoader__.load({
             (() => {
               const shown = thinkingShown(job);
               return shown ? h('span', {
-                className: 'zcd-badge', title: t('thinkingHint'),
-              }, shown) : null;
+                className: 'zcd-badge', title: `${t('thinking')}：${thinkingLabel(shown)}（${shown}）`,
+              }, thinkingLabel(shown)) : null;
             })(),
             paused ? h('span', { className: 'zcd-badge s-paused', title: job.pauseDetail ?? '' }, `${t('paused')}：${pauseLabel(job.pauseReason)}`) : null,
             job.parentJobId ? h('span', { className: 'zcd-badge', title: job.parentJobId }, `${t('parentFrom')} ${shortId(job.parentJobId)}`) : null,
@@ -2231,8 +2237,8 @@ window.__ModuleLoader__.load({
             detailBody != null && detailBody !== '' ? h('div', { className: 'zcd-mono' }, clampText(detailBody, 1200)) : null,
             kvRow(t('provider'), spec.provider ?? job.provider),
             kvRow(t('model'), spec.model ?? job.model),
-            /* ZB-29：思考强度紧跟「模型」——显示**实际生效档位**（确定不了时隐藏）。 */
-            thinkingShown(job) ? kvRow(t('thinking'), thinkingShown(job)) : null,
+            /* ZB-29：思考强度紧跟「模型」——显示**实际生效档位**（确定不了时隐藏；档位走中文标签）。 */
+            thinkingShown(job) ? kvRow(t('thinking'), `${thinkingLabel(thinkingShown(job))}（${thinkingShown(job)}）`) : null,
             kvRow(t('mode'), spec.mode),
             kvRow(t('cwd'), spec.cwd),
             spec.timeoutMin != null ? kvRow(t('timeout'), String(spec.timeoutMin)) : null,

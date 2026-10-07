@@ -101,6 +101,19 @@ test('listChannels：通道带 thinkingLevels（plan 别名继承选中 provider
   const clientSrc = readFileSync(join(HERE, '..', 'client.js'), 'utf8');
   assert.ok(/Array\.isArray\(sel\?\.thinkingLevels\)/.test(clientSrc),
     '★ 面板按数组消费 sel.thinkingLevels（不是 map 取值）');
+  /* ★ ZB-29e：档位**中文显示** —— 值仍传原始字符串（disabled/enabled/…），只在显示层映射标签；
+   * 未知档位原样显示（不隐藏、不猜语义）。 */
+  assert.ok(/const THINKING_LABEL_KEY = \{ disabled: 'thinkDisabled'/.test(clientSrc),
+    '★ 档位中文标签映射表存在（disabled/enabled/low/high/max）');
+  assert.ok(/const thinkingLabel = \(lv\) => \(lv == null \|\| lv === '' \? '' : t\(THINKING_LABEL_KEY\[lv\] \?\? ''\) \|\| lv\)/.test(clientSrc),
+    '★ thinkingLabel：命中映射走中文，未知档位原样回退（不隐藏）');
+  assert.ok(/h\('option', \{ key: lv, value: lv \}, thinkingLabel\(lv\)\)/.test(clientSrc),
+    '★ 通道下拉：option value 仍是原始档位字符串，label 用中文');
+  const zh = JSON.parse(readFileSync(join(HERE, '..', 'locale', 'zh.json'), 'utf8'));
+  const en = JSON.parse(readFileSync(join(HERE, '..', 'locale', 'en.json'), 'utf8'));
+  for (const k of ['thinkDisabled', 'thinkEnabled', 'thinkLow', 'thinkHigh', 'thinkMax']) {
+    assert.ok(zh.ui[k] && en.ui[k], `locale 中英都有档位标签 ${k}（zh=${zh.ui[k]}）`);
+  }
   assert.equal(r.channels.find((c) => c.id === 'personal').thinkingLevels, undefined, 'personal 无探测数据 ⇒ 不猜');
 });
 
