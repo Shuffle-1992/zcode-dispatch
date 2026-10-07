@@ -1927,14 +1927,11 @@ window.__ModuleLoader__.load({
             h('option', { value: '' }, t('chanDefaultModel')),
             modelOptions.map((m) => h('option', { key: m, value: m }, m)))),
         /* ZB-29d：通道默认思考强度——**这才是给派发 Agent 的规定**：
-         * 'Agent决定'=派发方 Agent 按任务自行改传具体档位；具体档位=未显式指定的派发一律按它执行。 */
+         * 'Agent决定'=派发方 Agent 按任务自行改传具体档位；具体档位=未显式指定的派发一律按它执行。
+         * ⚠️ core 的 `thinkingLevels` 是**数组**（该通道各模型档位集的并集），不是 map ——
+         * 曾误当 map 取值（lvMap[model]）导致下拉只剩「Agent决定」（现场 bug，测试已钉住形状契约）。 */
         (() => {
-          const lvMap = sel?.thinkingLevels ?? null;
-          const set = new Set();
-          if (lvMap) {
-            const ids = channel.model ? [channel.model] : Object.keys(lvMap);
-            for (const id of ids) for (const x of (lvMap[id] ?? [])) set.add(x);
-          }
+          const levels = Array.isArray(sel?.thinkingLevels) ? sel.thinkingLevels : [];
           const cur = channel.reasoningLevel ?? 'agent';
           return h('div', { className: 'zcd-field' },
             h('span', { className: 'zcd-field-k' }, t('thinking')),
@@ -1945,7 +1942,7 @@ window.__ModuleLoader__.load({
               disabled: channels.length === 0 || !sel || !sel.enabled,
             },
               h('option', { value: 'agent' }, t('thinkingAgent')),
-              [...set].map((lv) => h('option', { key: lv, value: lv }, lv))));
+              levels.map((lv) => h('option', { key: lv, value: lv }, lv))));
         })(),
         h('div', { className: 'zcd-note', role: 'status' },
           `${t('chanNewTask')}${channel.provider}/${channel.model || t('chanDefaultModel')} · ${t('thinking')}: ${channel.reasoningLevel === 'agent' ? t('thinkingAgentShort') : (channel.reasoningLevel ?? t('thinkingAgentShort'))}`),

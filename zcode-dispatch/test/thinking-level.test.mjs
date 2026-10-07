@@ -95,6 +95,12 @@ test('listChannels：通道带 thinkingLevels（plan 别名继承选中 provider
   const raw = r.channels.find((c) => c.id === 'builtin:bigmodel-coding-plan');
   assert.deepEqual(raw.thinkingLevels, ['disabled', 'enabled'], 'raw 通道带档位并集');
   assert.deepEqual(plan.thinkingLevels, ['disabled', 'enabled'], 'plan 别名继承选中 provider 的档位');
+  /* ★ 形状契约：thinkingLevels 是**数组**（并集），不是 map —— 面板按数组消费。
+   * 曾把面板写成 map 取值（lvMap[model]）⇒ 下拉只剩 Agent决定（现场 bug，此处防复发）。 */
+  assert.ok(Array.isArray(raw.thinkingLevels), '★ thinkingLevels 是数组（面板据此渲染档位选项）');
+  const clientSrc = readFileSync(join(HERE, '..', 'client.js'), 'utf8');
+  assert.ok(/Array\.isArray\(sel\?\.thinkingLevels\)/.test(clientSrc),
+    '★ 面板按数组消费 sel.thinkingLevels（不是 map 取值）');
   assert.equal(r.channels.find((c) => c.id === 'personal').thinkingLevels, undefined, 'personal 无探测数据 ⇒ 不猜');
 });
 
