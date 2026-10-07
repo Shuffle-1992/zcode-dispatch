@@ -134,11 +134,15 @@ console.log('\nD. 解耦：入口不建 wire；浮窗时代的状态与交互不
   ok(!/panelUi/.test(src), '★ D3 ZB-24 的模块级共享 store 已移除（入口只是开合开关）');
   ok(!/setMinimized|ui\.minimized/.test(code), '★ D4 最小化状态/药丸相关代码已清除');
   ok(!/zcd-pill|zcd-min|className: 'zcd-root'|zcd-titlebar|zcd-grip/.test(code), '★ D5 药丸/浮窗类名与标记已清除');
-  /* ZB-27w：共享 wire 契约（模块级单例 + 引用计数；最后一个使用者才 dispose）。 */
-  ok(/let SHARED_WIRE = null;/.test(code) && /let SHARED_REFS = 0;/.test(code), '★ D6 共享 wire 单例与引用计数声明');
-  ok(/ref\.current = acquireSharedWire\(\);/.test(code) && !/ref\.current = createWire\(\)/.test(code), '★ D7 useWire 取得共享实例');
-  ok(/releaseSharedWire\(\);/.test(code) && /if \(SHARED_REFS === 0 && SHARED_WIRE\)/.test(code), '★ D8 释放走引用计数，最后一个才 dispose');
-  ok(/function invalidateSharedWire\(\)/.test(code) && /invalidateSharedWire\(\); setRemoteEpoch/.test(code), '★ D9 远端就绪后作废重建共享 wire');
+  /* ZB-27w：共享 wire 契约（模块级单例 + 引用计数；最后一个使用者才 dispose）。
+   * ZB-28b：实现改为 createSharedWireRegistry 工厂 + **配对释放**（release 指名自己
+   * acquire 的那条，守卫 refs===0 && current===wire）——旧无参 release 在 epoch 重建的
+   * 双释放下会把入口正持有的 live wire 处决掉，正是「状态灯冻结」事故的根因。 */
+  ok(/function createSharedWireRegistry\(createWireImpl\)/.test(code) && /let current = null;/.test(code) && /let refs = 0;/.test(code), '★ D6 共享 wire 单例与引用计数（createSharedWireRegistry 工厂）');
+  ok(/ref\.current = \{ wire: acquireSharedWire\(\), epoch: remoteEpoch \};/.test(code) && !/ref\.current = createWire\(\)/.test(code), '★ D7 useWire 取得共享实例');
+  ok(/refs === 0 && current && current === wire/.test(code), '★ D8 释放走引用计数且**配对**（只 dispose 自己那条；最后一个才 dispose）');
+  ok(/releaseSharedWire\(wire\);/.test(code) && !/releaseSharedWire\(\);/.test(code), '★ D8b 释放**指名 wire**（无参调用绝迹）');
+  ok(/function invalidateSharedWire\(\)/.test(code) && /invalidateSharedWire\(\);/.test(code) && /setRemoteEpoch/.test(code), '★ D9 远端就绪后作废重建共享 wire');
   /* ZB-27w：入口活动图标 + 被误删的脉动 keyframes。 */
   ok(/className: 'zcd-chip-activity'/.test(code), '★ D10 入口有活动槽位 .zcd-chip-activity');
   ok(/\.zcd-chip-activity\{flex:none;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;\}/.test(code),

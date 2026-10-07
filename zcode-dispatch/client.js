@@ -702,14 +702,22 @@ window.__ModuleLoader__.load({
     const remoteWaiters = new Set();
     /** $mount 结果留痕：离线态提示据此给出可读原因（不猜）。 */
     const MOUNT_DIAG = { attempted: false, ok: null, error: null };
+    let REMOTE_READY = false; // ZB-28b：就绪旗标 —— waiter 注册晚于就绪时补投，防消费者永远停在降级 wire
     function markRemoteReady(svc) {
       if (svc) REMOTE_SVC = svc;
+      REMOTE_READY = true;
       for (const fn of [...remoteWaiters]) {
         try { fn(); } catch { /* 单个订阅者异常不影响其他 */ }
       }
     }
     function onRemoteReady(fn) {
       remoteWaiters.add(fn);
+      /* ZB-28b：**补投** —— 若就绪早于本消费者挂载（旗标已立），立即触发一次。
+       * 否则这个消费者的 epoch 永远不 bump：首帧建成降级 wire 时 remote 恰好已就绪的
+       * 竞态窗口里，它会一直拿着降级 wire（旧代码此窗口内 markRemoteReady 空放）。 */
+      if (REMOTE_READY) {
+        try { fn(); } catch { /* ignore */ }
+      }
       return () => remoteWaiters.delete(fn);
     }
 
@@ -868,6 +876,7 @@ window.__ModuleLoader__.load({
         }
       };
       return {
+        kind: 'remote', // ZB-28b：useWire 自愈判据用（非 remote 且远端可解析 ⇒ 重建）
         subscribe(cb) {
           if (typeof cb !== 'function') throw new TypeError('subscribe(cb): cb 必须是函数');
           subs.add(cb);
@@ -1013,6 +1022,7 @@ window.__ModuleLoader__.load({
         }
       };
       return {
+        kind: 'ext', // ZB-28b
         subscribe(cb) {
           subs.add(cb);
           const poll = () => {
@@ -1082,6 +1092,7 @@ window.__ModuleLoader__.load({
       };
       const denied = async () => ({ ok: false, error: OFFLINE_ERR });
       return {
+        kind: 'offline', // ZB-28b
         subscribe(cb) {
           if (typeof cb !== 'function') throw new TypeError('subscribe(cb): cb 必须是函数');
           subs.add(cb);
@@ -1263,6 +1274,7 @@ window.__ModuleLoader__.load({
         }
       };
       return {
+        kind: 'demo', // ZB-28b
         subscribe(cb) {
           subs.add(cb);
           emit();
@@ -1492,6 +1504,7 @@ window.__ModuleLoader__.load({
 
     /* 最后一道兜底 wire：连降级链都起不来时使用，保证组件永远有 wire（失败可见，不静默消失） */
     const DEAD_WIRE = {
+      kind: 'dead', // ZB-28b
       conn: 'error',
       subscribe(fn) {
         try { fn({ conn: 'error', snapshot: null, quota: null, planQuota: null }); } catch { /* ignore */ }
@@ -1512,33 +1525,57 @@ window.__ModuleLoader__.load({
       switchSet: async () => ({ ok: false, error: 'wire 不可用' }),
     };
 
-    /* ─────────────── 共享 wire（ZB-27w） ───────────────
+    /* ─────────────── 共享 wire（ZB-27w；ZB-28b 修引用计数） ───────────────
      * 背景：会话头入口（每个会话一枚，常驻）需要"有没有进行中的任务"来显示图标，
      * 而面板也需要同一份快照。若各自建 wire，就会变成"每会话一条 1s 轮询"（此前被明确否掉）。
      * 做法：**模块级单例 + 引用计数** —— 谁先需要谁创建，最后一个释放者负责 dispose。
-     * 远端命名空间就绪（$mount 成功后）时作废重建一次：首帧探测可能落空、建成降级 wire。 */
-    let SHARED_WIRE = null;
-    let SHARED_REFS = 0;
-    function acquireSharedWire() {
-      if (!SHARED_WIRE) {
-        try { SHARED_WIRE = createWire() ?? DEAD_WIRE; } catch { SHARED_WIRE = DEAD_WIRE; }
-      }
-      SHARED_REFS += 1;
-      return SHARED_WIRE;
+     * 远端命名空间就绪（$mount 成功后）时作废重建一次：首帧探测可能落空、建成降级 wire。
+     *
+     * ★ ZB-28b（用户报「派发台开始工作时不显示状态灯，切换会话后才显示」）——根因有两个，
+     * 都在引用计数上：
+     *   ① 旧 `releaseSharedWire()` **无参**：谁把计数减到 0，就 dispose **当前** SHARED_WIRE。
+     *      epoch 重建路径里同一次消费会被放两次（render 换 wire 一次 + effect 清理一次），
+     *      第二次落地时 SHARED_WIRE 已是新 wire ⇒ 计数提前漏到 0，而新 wire 还活着
+     *      （入口靠 subscribe 的即时 tick 复活了它）——refs 从此停在 0。此后任何一次
+     *      「面板开→关」的 release 都会命中 `refs===0 && SHARED_WIRE` ⇒ 把**入口还订阅着
+     *      的那条 live wire** dispose 掉（subs.clear + 停轮询）⇒ 入口从此收不到任何快照，
+     *      状态灯冻结，直到切换会话重挂载才重建 —— 正是现场症状。
+     *   ② waiter 注册晚于就绪：`markRemoteReady` 空放一次，该消费者的 epoch 永远不 bump，
+     *      手里永远停在降级 wire（修法见 onRemoteReady 的 REMOTE_READY 补投）。
+     * 修法：**配对释放**（release 指名自己 acquire 的那条；守卫 `refs===0 && current===wire`）
+     * + **一次消费一放**（useWire render 期只 acquire，旧 wire 由 effect 清理单点释放）
+     * + **补投**（REMOTE_READY 旗标 + peek 守卫，见 onRemoteReady / useWire 的回调）。 */
+    function createSharedWireRegistry(createWireImpl) {
+      let current = null;
+      let refs = 0;
+      return {
+        acquire() {
+          if (!current) current = createWireImpl();
+          refs += 1;
+          return current;
+        },
+        release(wire) {
+          refs = Math.max(0, refs - 1);
+          if (refs === 0 && current && current === wire) {
+            try { current.dispose?.(); } catch { /* ignore */ }
+            current = null;
+          }
+        },
+        invalidate() {
+          if (!current) return;
+          try { current.dispose?.(); } catch { /* ignore */ }
+          current = null;
+        },
+        peek() { return current; }, // ZB-28b：useWire 回调判「当前 wire 是否已 remote」用（不作废别人手上的 live wire）
+      };
     }
-    function releaseSharedWire() {
-      SHARED_REFS = Math.max(0, SHARED_REFS - 1);
-      if (SHARED_REFS === 0 && SHARED_WIRE) {
-        try { SHARED_WIRE.dispose?.(); } catch { /* ignore */ }
-        SHARED_WIRE = null;
-      }
-    }
-    /** 远端就绪后作废共享 wire（下一次 acquire 会重建；订阅方通过 epoch 重挂）。 */
-    function invalidateSharedWire() {
-      if (!SHARED_WIRE) return;
-      try { SHARED_WIRE.dispose?.(); } catch { /* ignore */ }
-      SHARED_WIRE = null;
-    }
+    const sharedWires = createSharedWireRegistry(() => {
+      try { return createWire() ?? DEAD_WIRE; } catch { return DEAD_WIRE; }
+    });
+    function acquireSharedWire() { return sharedWires.acquire(); }
+    /** ZB-28b：**配对释放** —— 必须传自己 acquire 到的那条 wire；不传是编程错误（旧无参形态已删除）。 */
+    function releaseSharedWire(wire) { return sharedWires.release(wire); }
+    function invalidateSharedWire() { return sharedWires.invalidate(); }
 
     /* ─────────────── 组件 ─────────────── */
     /* 渲染兜底：任何渲染期异常都转成一张可见的失败卡片，而不是静默消失。
@@ -1584,23 +1621,35 @@ window.__ModuleLoader__.load({
       /* ZB-01：远端命名空间就绪后必须重建一次 wire——否则首次渲染建成的降级 wire
        * 会被 useRef 永久沿用（$mount 异步，首帧探测必然可能落空）。
        * ZB-27w：wire 改为**模块级共享单例**（引用计数），入口与面板共用同一条轮询 ——
-       * 于是"每个会话头入口都建一条 wire"的问题不复存在。 */
+       * 于是"每个会话头入口都建一条 wire"的问题不复存在。
+       *
+       * ★ ZB-28b（用户报「派发台开始工作时不显示状态灯，切换会话后才显示」）：
+       * 计数必须**一次消费一放** —— render 期**只 acquire**（换 epoch / 换 wire 也一样），
+       * 旧 wire 由订阅 effect 的清理**单点配对释放**。旧代码在 render 重建里先无参 release
+       * 一次、effect 清理又 release 一次 ⇒ 同一消费被放两遍、refs 提前漏到 0；而无参
+       * release 的处决守卫只看计数不看归属，于是任何后续一次 release（典型：面板开→关）
+       * 都会把**入口还订阅着的 live wire** dispose 掉（subs.clear + 停轮询）⇒ 入口从此
+       * 收不到快照、状态灯冻结，直到切换会话重挂载才重建 —— 正是现场症状。
+       * 配套：release 一律**指名**自己 acquire 到的那条 wire（createSharedWireRegistry 的
+       * current===wire 守卫）；onRemoteReady 补投防 waiter 注册晚于就绪（见上）。 */
       const [remoteEpoch, setRemoteEpoch] = useState(0);
-      useEffect(() => onRemoteReady(() => { invalidateSharedWire(); setRemoteEpoch((n) => n + 1); }), []);
-      const ref = useRef(null);
-      const builtEpoch = useRef(-1);
-      if (ref.current == null || builtEpoch.current !== remoteEpoch) {
-        try { releaseSharedWire(); } catch { /* 旧引用释放失败不阻塞重建 */ }
-        ref.current = acquireSharedWire();
-        builtEpoch.current = remoteEpoch;
+      useEffect(() => onRemoteReady(() => {
+        /* 当前 wire 已是 remote 时**不**作废（否则后挂载消费者的补投会把别人手上
+         * 的 live wire 处决掉——那正是本轮修的事故形态）；只在还是降级 wire 时作废重建。 */
+        if (sharedWires.peek()?.kind !== 'remote') invalidateSharedWire();
+        setRemoteEpoch((n) => n + 1);
+      }), []);
+      const ref = useRef(null); // { wire, epoch }
+      if (ref.current == null || ref.current.epoch !== remoteEpoch) {
+        ref.current = { wire: acquireSharedWire(), epoch: remoteEpoch };
       }
-      const wire = ref.current;
+      const wire = ref.current.wire;
       const [state, setState] = useState({ conn: 'connecting', snapshot: null, quota: null, planQuota: null });
       useEffect(() => {
         const un = wire.subscribe((b) => setState(b));
         return () => {
           un();
-          releaseSharedWire(); // 释放自己那一份；最后一个使用者才真正 dispose
+          releaseSharedWire(wire); // ZB-28b：放**自己这条**（配对；旧 wire 的唯一释放点就在这里）
         };
       }, [wire]);
       return {
