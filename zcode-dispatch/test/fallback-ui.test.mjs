@@ -49,7 +49,7 @@ const EXT = {
   getSnapshot: () => ({ generatedAt: 'x', counts: { running: 0, queued: 0 }, jobs: [], locks: {}, queue: [] }),
   getQuota: () => null,
   channels: async () => ({ ok: true, channels: CHANNELS, warnings: [] }),
-  channel: async () => ({ ok: true, channel: { provider: 'plan', model: 'GLM-5.3-Flash', reasoningLevel: 'agent' } }),
+  channel: async () => ({ ok: true, channel: { provider: 'personal', model: 'deepseek-flash', reasoningLevel: 'agent' } }),
   fallback: async (arg) => {
     fallbackCalls.push(arg);
     if (arg && arg.chain === null) return { ok: true, enabled: false, chain: [], targets: [], target: null };
@@ -171,19 +171,26 @@ const toggle = toggleOf(buttons);
 ok(!!toggle && toggle.props['aria-pressed'] === true, '② 开启态 aria-pressed=true');
 ok(String(dotOf(toggle).props.style.background).includes('state-success'), '② 开启态指示灯用成功状态色令牌');
 ok(selects.length === 6, `② 开启后出现目标三下拉（通道/模型/思考强度 ⇒ 共 6 个，实际 ${selects.length}）`);
+/* 本测试让**上面「通道」与下面降级目标选中同一个通道**（personal/deepseek-flash）——
+ * 这样"选项逻辑完全一致"可以用「两侧 option 列表逐字相等」直接证明。 */
 const labels = selects.flatMap(optLabels);
-ok(labels.includes('关闭思考') && labels.includes('开启思考'), '③ 档位 option 中文标签（disabled→关闭思考 / enabled→开启思考）');
-ok(labels.includes('高强度') && labels.includes('最高强度'), '③ deepseek 通道的四档中文（高强度/最高强度）');
+ok(labels.includes('关闭思考') && labels.includes('低强度') && labels.includes('高强度') && labels.includes('最高强度'),
+  '③ 档位 option 中文标签（deepseek 四档：关闭思考/低强度/高强度/最高强度）');
 ok(selects.some((s) => (s.children ?? []).some((c) => c && c.type === 'option' && c.props.value === 'high')),
   '③ option value 仍是原始档位字符串（high）—— 中文只在 label');
-ok(labels.includes('（沿用原任务模型）') && labels.includes('（沿用原任务思考强度）'),
-  '★ 模型/档位首项是「沿用原任务」（不是 Agent决定）');
-/* 作用域必须只取**降级目标**的三个下拉（后 3 个）：上面「通道」分区的档位下拉首项本来就该是
- * 「Agent决定」（那是给派发 Agent 的规定，ZB-29d）。 */
+ok(labels.includes('（通道默认模型）') && labels.includes('Agent决定（按任务判断）'),
+  '★ 模型/档位首项与上面「通道」分区**逐字一致**（通道默认模型 / Agent决定）');
+/* ZB-30b（用户要求「不要沿用原任务，就跟上面完全一致的选项逻辑」）：作用域取后 3 个下拉。 */
 const fbSelects = selects.slice(3);
 const fbLabels = fbSelects.flatMap(optLabels);
-ok(fbLabels.length > 0 && !fbLabels.some((l) => l.includes('Agent决定')),
-  '★ 降级目标下拉里不出现「Agent决定」（自动降级时没有 Agent 在决定）');
+ok(fbLabels.includes('Agent决定（按任务判断）'),
+  '★ 降级档位下拉首项 = Agent决定（与上面「通道」分区同一套选项逻辑）');
+ok(!fbLabels.some((l) => l.includes('沿用原任务')),
+  '★ 降级目标下拉里不再出现「沿用原任务…」（用户明确要求去掉）');
+/* 两个分区的选项集**逐项相等**（通道/模型/档位）：这是"完全一致"的硬证据。 */
+const chanLabels = selects.slice(0, 3).flatMap(optLabels);
+ok(JSON.stringify(fbLabels) === JSON.stringify(chanLabels),
+  `★ 降级三下拉的选项与「通道」三下拉逐字相同（实际 ${JSON.stringify(fbLabels)}）`);
 
 /* ---------- ④ 点开关 → 关闭（wire 收到 null） ---------- */
 const before = fallbackCalls.length;
@@ -203,6 +210,27 @@ ok(/async fallbackGet\(\) \{\s*return \{ ok: true, \.\.\.fallbackShape\(demoTarg
 ok(/async fallbackSet\(target\) \{\s*demoTargets = normTargets\(target\);/.test(src),
   '⑤ demo 数据源的 fallbackSet 用同一 normTargets（对象/数组/null 三形状一致）');
 ok(/let demoTargets = \[\];/.test(src) && !/let demoChain/.test(src), '⑤ 旧的 demoChain 已彻底替换（不留死变量）');
+
+/* ---------- ⑥ 面板写值 = 下拉显示值（不落 CLI 侧的 null「沿用原任务」） ---------- */
+{
+  const modelSel = fbSelects[1];
+  const n0 = fallbackCalls.length;
+  modelSel.props.onChange({ target: { value: '' } }); // 选「（通道默认模型）」
+  await new Promise((r) => setTimeout(r, 20));
+  ok(fallbackCalls.length === n0 + 1, '⑥ 改模型触发一次写入');
+  const wrote = fallbackCalls[fallbackCalls.length - 1].chain;
+  ok(wrote.model === null, '⑥ 模型选「（通道默认模型）」⇒ 写 null（交接时不传 --model）');
+  /* ★ 核心不变量：**写什么 = 下拉显示什么**。stub 存的是 reasoningLevel:'high'（下拉显示「高强度」），
+   * 故只改模型也必须把 'high' 一起写回 —— 不能被 null/空值悄悄改写。 */
+  ok(wrote.reasoningLevel === 'high',
+    `★ 只改模型时档位按**下拉显示值**写回（实际 ${JSON.stringify(wrote.reasoningLevel)}）`);
+  /* 旧存值 reasoningLevel=null（CLI 侧的「沿用原任务」）在面板里显示为「Agent决定」；
+   * 面板一编辑即按显示值归一成 'agent' —— 由源码不变量保证（base 不读 fbTarget.reasoningLevel）。 */
+  ok(!/reasoningLevel: fbTarget\?\.reasoningLevel \?\? null/.test(src),
+    '★ saveTarget 的 base 不读存值（否则「显示 Agent决定、实存 null」两回事）');
+  ok(/reasoningLevel: fbThinking \|\| 'agent'/.test(src),
+    '★ saveTarget 的 base 用下拉显示值，未设时落 agent');
+}
 
 console.log(`\n===== ZB-30 UI 渲染：${pass} PASS / 0 FAIL =====`);
 process.exit(0);

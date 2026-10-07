@@ -144,7 +144,7 @@ test('★ B. 自动降级：跳到目标时带上目标通道的 model 与思考
   });
 });
 
-test('B2. 目标未指定 model/档位 ⇒ 沿用原任务（不误设 null/agent）', async () => {
+test('B2. core/CLI 路径：目标未指定 model/档位（null）⇒ 沿用原任务（面板不再产生 null，见 D 段）', async () => {
   const d = createDispatcher({
     runnerPath: FAKE_RUNNER,
     workRoot: newDir('zcd-fb-keep-'),
@@ -210,8 +210,16 @@ test('D. ★ client.js：降级开关带指示灯（.zcd-dot）、aria-pressed�
     && /aria-label': `\$\{t\('fallbackTitle'\)\}-\$\{t\('model'\)\}`/.test(src)
     && /aria-label': `\$\{t\('fallbackTitle'\)\}-\$\{t\('thinking'\)\}`/.test(src),
     '目标三下拉各带「降级-通道/模型/思考强度」aria-label（与「通道」分区区分，避免重复标签）');
-  assert.ok(/t\('fallbackKeepModel'\)/.test(src) && /t\('fallbackKeepThinking'\)/.test(src),
-    '★ 模型/档位首项是「沿用原任务」（不是 Agent决定 —— 降级是自动触发的，没有 Agent 在决定）');
+  /* ZB-30b（用户要求「不要沿用原任务，就跟上面完全一致的选项逻辑」）：
+   * 模型首项 = 与上面同一个 key（chanDefaultModel）；档位首项 = 与上面同一个 key（thinkingAgent）。 */
+  assert.ok(/h\('option', \{ value: '' \}, t\('chanDefaultModel'\)\)/.test(src),
+    '★ 降级模型首项 = （通道默认模型），与上面「通道」分区同一个文案键');
+  assert.ok(/h\('option', \{ value: 'agent' \}, t\('thinkingAgent'\)\)/.test(src),
+    '★ 降级档位首项 = Agent决定（按任务判断），与上面「通道」分区同一个文案键');
+  assert.ok(!/fallbackKeepModel|fallbackKeepThinking/.test(src),
+    '★ 「沿用原任务…」文案键已彻底移除（用户明确要求）');
+  assert.ok(/disabled: busy \|\| !fbSel \|\| !fbSel\.enabled/.test(src),
+    '★ 降级模型下拉的禁用判据与上面一致（跟随所选通道是否可用）');
   assert.ok(!/fallbackPh|fallbackSave|fallbackOffBtn|fallbackConfirm2/.test(src),
     '★ 旧的「逗号输入 + 二次确认按钮」形态已彻底移除（不留死代码）');
   assert.ok(!/fallbackEmptyErr/.test(src) && !/fallbackSaved/.test(src), '旧文案键不再被引用');
@@ -225,10 +233,13 @@ test('E. 文案：新增键在 client STRINGS 与 locale 中英四处齐备', ()
   const src = readFileSync(join(HERE, '..', 'client.js'), 'utf8');
   const zh = JSON.parse(readFileSync(join(HERE, '..', 'locale', 'zh.json'), 'utf8')).ui;
   const en = JSON.parse(readFileSync(join(HERE, '..', 'locale', 'en.json'), 'utf8')).ui;
-  for (const k of ['fallbackTitle', 'fallbackStateOff', 'fallbackStateOn', 'fallbackEnableTitle', 'fallbackHint', 'fallbackKeepModel', 'fallbackKeepThinking', 'fallbackOfflineHint']) {
+  for (const k of ['fallbackTitle', 'fallbackStateOff', 'fallbackStateOn', 'fallbackEnableTitle', 'fallbackHint', 'fallbackOfflineHint']) {
     assert.ok(new RegExp(`${k}:`).test(src), `client.js STRINGS 含 ${k}`);
     assert.ok(zh[k], `locale/zh.json 含 ${k}`);
     assert.ok(en[k], `locale/en.json 含 ${k}`);
+  }
+  for (const k of ['fallbackKeepModel', 'fallbackKeepThinking']) {
+    assert.ok(!zh[k] && !en[k], `locale 已删除 ${k}（沿用原任务文案不再存在）`);
   }
   assert.equal(zh.fallbackTitle, '自动降级', '标题去掉「链」字（现在是开关 + 单目标）');
 });

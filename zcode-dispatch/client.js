@@ -462,8 +462,7 @@ window.__ModuleLoader__.load({
         parentFrom: '接续自', hop: '跳',
         fallbackTitle: '自动降级', fallbackStateOff: '关', fallbackStateOn: '开',
         fallbackEnableTitle: '自动降级：点击开启/关闭。开启后额度耗尽 / 未开通 / 需签名时会自动交接重跑到下面选定的目标（会消耗下游通道额度）',
-        fallbackHint: '仅新建会话生效；模型/思考强度留空（通道默认模型、Agent决定）时沿用原任务。',
-        fallbackKeepModel: '（沿用原任务模型）', fallbackKeepThinking: '（沿用原任务思考强度）',
+        fallbackHint: '选项逻辑与上面「通道」完全一致：模型留空=该通道默认模型；思考强度「Agent决定」=按 ZCode 默认规则解析。仅新建会话生效。',
         fallbackOfflineHint: '未连接宿主：降级设置存在宿主工作目录，连接后才可读写',
         switchOn: '派发：开', switchOff: '派发：关', switchUnknown: '派发：未知',
         switchTitle: 'ZCode 派发总开关：点击切换（写入 collab/zcode-dispatch.switch.json，全部会话生效）',
@@ -519,8 +518,7 @@ window.__ModuleLoader__.load({
         parentFrom: 'continued from', hop: 'hop',
         fallbackTitle: 'Auto fallback', fallbackStateOff: 'Off', fallbackStateOn: 'On',
         fallbackEnableTitle: 'Auto fallback: click to enable/disable. When enabled, quota-exhausted / not-entitled / signing-required pauses hand off to the target chosen below (downstream quota is consumed)',
-        fallbackHint: 'New sessions only; leaving model/thinking empty (channel default model, Agent decides) keeps the original task values.',
-        fallbackKeepModel: '(keep original task model)', fallbackKeepThinking: '(keep original task thinking)',
+        fallbackHint: 'Same option logic as the Channels section above: empty model = that channel\'s default model; "Agent decides" resolves via ZCode\'s default rule. New sessions only.',
         fallbackOfflineHint: 'Host not connected: fallback settings live in the host work dir and unlock once connected',
         switchOn: 'Dispatch: on', switchOff: 'Dispatch: off', switchUnknown: 'Dispatch: ?',
         switchTitle: 'ZCode dispatch master switch: click to toggle (writes collab/zcode-dispatch.switch.json, effective for all sessions)',
@@ -1927,14 +1925,26 @@ window.__ModuleLoader__.load({
       const fbModels = fbSel && Array.isArray(fbSel.models) ? fbSel.models : (fbTarget?.model ? [fbTarget.model] : []);
       const fbLevels = Array.isArray(fbSel?.thinkingLevels) ? fbSel.thinkingLevels : [];
       const fbModel = fbTarget?.model ?? '';
-      const fbThinking = fbTarget?.reasoningLevel ?? '';
+      /* ZB-30b（用户要求「不要沿用原任务，就跟上面完全一致的选项逻辑」）：降级目标的模型/思考强度
+       * 用与上面「通道」分区**逐字相同**的选项集与默认值 —— 模型首项 `（通道默认模型）`（值 ''）、
+       * 思考强度首项 `Agent决定（按任务判断）`（值 'agent'）。语义也随之对齐：
+       *   · model='' ⇒ 不传 --model（用该 provider 的默认模型，= 上面的「通道默认模型」）
+       *   · reasoningLevel='agent' ⇒ runner 按 ZCode 默认规则解析（模型声明档位的最后一档），
+       *     与上面「Agent决定」在未显式指定档位时走的是同一条规则（仅新建会话生效）。
+       * 注：core/CLI 侧的 `null` 仍表示"沿用原任务"（旧调用方兼容），面板不再产生 null。 */
+      const fbThinking = fbTarget?.reasoningLevel ?? 'agent';
 
-      /** 写降级目标（对象 ⇒ 开启；null ⇒ 关闭）。乐观回显交给 PanelBody 的权威值校正。 */
+      /** 写降级目标（对象 ⇒ 开启；null ⇒ 关闭）。乐观回显交给 PanelBody 的权威值校正。
+       * ⚠️ 面板里**显示什么就写什么**（与上面「通道」分区同一纪律）：
+       *   · model: ''（通道默认模型）⇒ 写 `null` ⇒ 交接时不传 `--model`（= 该 provider 默认模型）
+       *   · reasoningLevel: 显示值（未设时 `'agent'`）⇒ 原样写。**不保留** CLI/工具设的
+       *     `null`（沿用原任务）—— 否则用户只改模型也会把下拉显示的「Agent决定」与实际存值
+       *     弄成两回事（显示 Agent决定、实际沿用原任务）。一次面板编辑即归一成面板语义。 */
       const saveTarget = (patch) => {
         const next = {
           provider: fbProvider || channel.provider || 'plan',
           model: fbModel || null,
-          reasoningLevel: fbThinking || null,
+          reasoningLevel: fbThinking || 'agent',
           ...patch,
         };
         setBusy(true);
@@ -1950,24 +1960,28 @@ window.__ModuleLoader__.load({
           Promise.resolve(onFallbackSet(null)).finally(() => setBusy(false));
           return;
         }
-        /* 开启：默认目标 = 当前默认通道 + 当前通道档位（模型/思考强度跟着「通道」分区的选择走），
+        /* 开启：默认目标 = 当前默认通道 + 当前通道的模型/档位（与「通道」分区逐字一致：
+         * 未选模型 ⇒ ''（通道默认模型）；档位未设 ⇒ 'agent'（Agent决定））。
          * 当前通道不可用时退到第一个可用通道（否则降级一开就是死路）。 */
         const firstEnabled = channels.find((c) => c.enabled);
         const provider = (sel && sel.enabled ? channel.provider : null) ?? firstEnabled?.id ?? channel.provider ?? 'plan';
         saveTarget({
           provider,
           model: provider === channel.provider ? (channel.model ?? null) : null,
-          reasoningLevel: provider === channel.provider && channel.reasoningLevel && channel.reasoningLevel !== 'agent' ? channel.reasoningLevel : null,
+          /* 与「通道」分区同一条默认值：未设档位 ⇒ 'agent'（Agent决定），不落 null
+           * （null 是 CLI 侧的"沿用原任务"，面板不再产生）。 */
+          reasoningLevel: provider === channel.provider ? (channel.reasoningLevel ?? 'agent') : 'agent',
         });
         setFbFeedback(null);
       };
       const fbSwitchProvider = (id) => {
         const c = channels.find((x) => x.id === id);
         if (!c || !c.enabled) return;
-        saveTarget({ provider: id, model: null }); // 换通道 ⇒ 模型/档位回到「沿用原任务」
+        /* 换通道 ⇒ 模型/档位回到「通道默认模型 / Agent决定」（与上面切 provider 的行为同形）。 */
+        saveTarget({ provider: id, model: null, reasoningLevel: 'agent' });
       };
       const fbSwitchModel = (m) => saveTarget({ model: m || null });
-      const fbSwitchThinking = (lv) => saveTarget({ reasoningLevel: lv || null });
+      const fbSwitchThinking = (lv) => saveTarget({ reasoningLevel: lv || 'agent' });
       const fbUnknown = fbEnabled && fbProvider && !channels.some((c) => c.id === fbProvider);
 
       return h('div', { className: 'zcd-stack' },
@@ -2031,9 +2045,11 @@ window.__ModuleLoader__.load({
           h('span', { className: 'zcd-spring' }),
           fbEnabled && fbTarget
             ? h('span', { className: 'zcd-badge', title: `${fbProvider}${fbModel ? `/${fbModel}` : ''}` },
-              `${fbProvider}${fbModel ? `/${fbModel}` : ''}${fbThinking ? ` · ${thinkingLabel(fbThinking)}` : ''}`)
+              `${fbProvider}${fbModel ? `/${fbModel}` : ''} · ${fbThinking === 'agent' || !fbThinking ? t('thinkingAgentShort') : thinkingLabel(fbThinking)}`)
             : null),
-        /* 关闭时不显示下面的选择项（用户要求：关闭不显示）。 */
+        /* 关闭时不显示下面的选择项（用户要求：关闭不显示）。
+         * ZB-30b：三个下拉与上面「通道」分区**完全一致的选项逻辑** —— 同样的首项
+         * （`（通道默认模型）` / `Agent决定（按任务判断）`）、同样的档位并集、同样的禁用判据。 */
         fbEnabled ? h('div', { className: 'zcd-stack' },
           h('div', { className: 'zcd-field' },
             h('span', { className: 'zcd-field-k' }, t('provider')),
@@ -2050,18 +2066,18 @@ window.__ModuleLoader__.load({
             h('select', {
               className: 'zcd-select zcd-field-v', value: fbModel,
               onChange: (e) => fbSwitchModel(e.target.value), 'aria-label': `${t('fallbackTitle')}-${t('model')}`,
-              disabled: busy,
+              disabled: busy || !fbSel || !fbSel.enabled,
             },
-              h('option', { value: '' }, t('fallbackKeepModel')),
+              h('option', { value: '' }, t('chanDefaultModel')),
               fbModels.map((m) => h('option', { key: m, value: m }, m)))),
           h('div', { className: 'zcd-field' },
             h('span', { className: 'zcd-field-k' }, t('thinking')),
             h('select', {
               className: 'zcd-select zcd-field-v', value: fbThinking,
               onChange: (e) => fbSwitchThinking(e.target.value), 'aria-label': `${t('fallbackTitle')}-${t('thinking')}`,
-              disabled: busy,
+              disabled: busy || channels.length === 0 || !fbSel || !fbSel.enabled,
             },
-              h('option', { value: '' }, t('fallbackKeepThinking')),
+              h('option', { value: 'agent' }, t('thinkingAgent')),
               fbLevels.map((lv) => h('option', { key: lv, value: lv }, thinkingLabel(lv))))),
           h('div', { className: 'zcd-note', role: 'status' }, t('fallbackHint')),
         ) : null,

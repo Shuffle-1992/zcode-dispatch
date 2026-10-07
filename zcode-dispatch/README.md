@@ -360,15 +360,21 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
   pauseReason（中文标签）与「输出」tail 子块；多进程靠它区分「谁在跑什么」。
 - **自动降级**（默认关，ZB-30 起是**开关 + 单目标**）：面板「通道」分区里一个带指示灯的开关
   （与标题栏派发总开关同一套视觉语言：点击开/关、`aria-pressed` 反映状态）；**打开后**才显示
-  通道 / 模型 / 思考强度三个下拉（与上面「通道」分区同形，档位仍走中文标签），**关闭时不显示**。
+  通道 / 模型 / 思考强度三个下拉，**关闭时不显示**。
+  **三个下拉与上面「通道」分区完全一致的选项逻辑**（ZB-30b，用户要求）：同样的通道清单、
+  同样的模型首项 `（通道默认模型）`（值 `''`）、同样的档位首项 `Agent决定（按任务判断）`
+  （值 `'agent'`）、同样的档位并集与中文标签、同样的禁用判据。
   语义：仅当暂停原因属于 {额度耗尽 / 未开通 / 需签名} 时，按交接语义自动跳到选定目标；
-  目标的 model / 思考强度留空（「沿用原任务…」）则沿用原任务该维度。⚠ 开启即授权**自动消耗下游通道额度**。
+  模型留空 ⇒ 该 provider 的默认模型；档位 `agent` ⇒ runner 按 ZCode 默认规则解析（模型声明
+  档位的最后一档），与上面「Agent决定」在未显式指定档位时走同一条规则。⚠ 开启即授权
+  **自动消耗下游通道额度**。
   - core 侧状态是**有序目标列表** `[{provider, model, reasoningLevel}]`（`<workRoot>/state/fallback.json`，
     `version: 2`；旧 `version: 1` 的 `chain` 自动迁移，不丢配置）；面板开关只设一个目标
     （`setFallbackTarget`），CLI/工具仍可设多目标（`setFallbackChain`）。
     `getFallbackChain()` 返回 `{enabled, chain（旧形状 id 列表）, targets, target（首项）}` —— 旧读者照旧可读。
-  - 目标下拉里**没有「Agent决定」**：降级是自动触发的，那一刻并没有 Agent 在决定（与 ZB-29c 移除
-    派发栏「Agent决定」同一条理由）；留空 = 沿用原任务。
+  - `model` / `reasoningLevel` 的 **`null` = 沿用原任务**（core/CLI 兼容语义，旧调用方照旧）；
+    面板**不再产生 `null`** —— 它始终写 `''`（通道默认模型）/ `'agent'`（Agent决定），
+    与上面「通道」分区的默认值逐字一致。
 - CLI 对照：`zcd channels [--json]` / `zcd channel set <provider> [--model]` /
   `zcd retry <jobId> [--provider --model]` /
   `zcd fallback [list|set a,b,c|set <id> --model <m> --thinking <lv>|off]`；
