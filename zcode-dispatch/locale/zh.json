@@ -49,6 +49,8 @@
     "dispatchThinkingHint": "跟随通道=按通道设置的思考强度派发（在「通道」分区设置）；具体档位=本条派发严格生效（仅新建会话）",
     "chanThinkingHint": "通道默认思考强度：Agent决定=由派发方 Agent 按任务自行改传具体档位；具体档位=给派发 Agent 的硬性规定（未显式指定的派发一律按它执行，仅新建会话生效）",
     "thinkingHint": "Agent决定=由派发方按任务判断并改传具体档位；具体档位严格生效（仅新建会话；--resume 沿用原会话档位）",
+    "thinkingStale": "已失效",
+    "thinkingStaleHint": "该档位不在当前模型声明的取值里（可能因模型档位表更新而失效）——派发会被 runner 拒绝，请改选一个有效档位",
     "content": "内容",
     "dispatch": "派发",
     "queuedBtn": "排队中…",

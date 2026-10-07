@@ -445,21 +445,31 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 
 | 取值 | 行为 |
 |---|---|
-| `agent`（**默认**，Agent决定） | 由调用方 Agent 按任务判断并**改传具体档位**（判断准则已写进工具说明：查询/机械 ⇒ 低档；复杂推理/架构 ⇒ 高档）。未改传时 runner 按 **ZCode 自身默认规则**解析——该模型声明档位的**最后一档**（GLM-5.3 ⇒ `enabled`、deepseek-v4 系 ⇒ `max`；= headless 未显式选择时 `QKe`/`v3i` 的 `values.at(-1)` registry-fallback 行为）——并**显式注入** ⇒ 进程上显示实际生效档位，而非「Agent决定」字样。模型未声明档位 ⇒ 不注入 + 警告 |
-| 具体档位（如 `enabled`） | 严格生效：runner 写入临时 provider 配置的 `defaultModelSelection.options.reasoningLevel`（ZCode headless 启动读取它作为**会话初始模型选择**）；面板/人工派发同理 |
+| `agent`（**默认**，Agent决定） | 由调用方 Agent 按任务判断并**改传具体档位**（判断准则已写进工具说明：查询/机械 ⇒ 低档；复杂推理/架构 ⇒ 高档）。未改传时 runner 按 **ZCode 自身默认规则**解析——该模型声明档位的**最后一档**（GLM-5.3 系 ⇒ `max`、deepseek 系 ⇒ `max`；= headless 未显式选择时 `QKe`/`v3i` 的 `values.at(-1)` registry-fallback 行为）——并**显式注入** ⇒ 进程上显示实际生效档位，而非「Agent决定」字样。模型未声明档位 ⇒ 不注入 + 警告 |
+| 具体档位（如 `high`） | 严格生效：runner 写入临时 provider 配置的 `defaultModelSelection.options.reasoningLevel`（ZCode headless 启动读取它作为**会话初始模型选择**）；面板/人工派发同理 |
 
 规则与边界：
 
 - **档位集合随模型声明不同，不写死枚举**：runner 探测 builtin 配置 `modelRules`（按序 overlay），
   经 `--list-providers` 输出 `[zcode-run] reasoning-levels <model>=<a,b>`，core 解析为
-  `channels[].thinkingLevels` 供面板下拉与 Agent 查询。当前实测：GLM-5.3/Flash = `disabled|enabled`；
-  deepseek-v4 系 = `disabled|low|high|max`。
+  `channels[].thinkingLevels` 供面板下拉与 Agent 查询。当前实测：**GLM-5.3 / GLM-5.3-Flash =
+  `low|high|max`**；**deepseek-flash / deepseek-v4 系 = `disabled|low|high|max`**。
+  - ⚠️ **匹配式必须与 ZCode 逐字同式**（ZB-31 修的现场 bug）：ZCode 用
+    `new RegExp('^(?:'+modelMatch+')$','i')`（**锚定 + 忽略大小写**）。漏 `i` 会让小写规则
+    （如 `.*glm-5\.3(?:-flash)?(?:…)?` → `low,high,max`）**永不命中**大写模型 id `GLM-5.3`，
+    于是只剩更早的宽规则 `.*glm-5(?:…)?` → `disabled,enabled` —— 面板就少了低/高/最高三档。
+  - ⚠️ **枚举面必须含个人通道模型**：`--list-providers` 的模型集 = 桌面端 `config.json` 的
+    `provider[*].models` **∪ 个人通道 `provider_config.json` 的 `personalModelIds`/`modelOrder`**。
+    `deepseek-flash` 只出现在后者；漏了 ⇒ 该通道一条档位行都没有 ⇒ 面板无档位选项。
 - **fail-fast 不静默**：runner 校验（模型声明了档位集合而请求值不在其中 ⇒ 拒绝派发并列出可用值）；
   ZCode 会话创建也会校验（defaultModelSelection 非法 ⇒ 会话创建失败）。
 - **仅新建会话生效**：`--resume` 沿用原会话档位（ZCode 语义；core 对 resume 不透传，runner 警告）。
 - **可观测**：job 带 `reasoningLevel`（请求档：agent/具体档）与 `reasoningLevelApplied`/`reasoningTarget`
   （实际生效档 + 注入目标）；**进程行模型徽标后显示实际生效档位**（Agent决定档解析出的具体档），
   详情行同步；无法确定（旧 runner / --resume / 模型未声明）时隐藏，不伪造。
+- **失效档位显式可见（ZB-31）**：存值不在当前模型声明的档位集里时（如模型档位表更新后），
+  下拉会把它**显式列为一项并标注「已失效」**+ tooltip 说明 —— 否则 `<select>` 找不到匹配 option
+  时会静默显示首项「Agent决定」，显示与事实不符（而派发会被 runner 拒绝）。
 - **通道默认思考强度（ZB-29d）**：面板「通道」分区可设（`action=channel` 带 thinking：
   `Agent决定` 或具体档位）——**这就是给派发 Agent 的规定**：设具体档位时，未显式传 thinking 的
   派发一律按它执行；设 `Agent决定` 时派发 Agent 按任务自行改传具体档位。回退在 core `dispatch()`
@@ -558,6 +568,7 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 | `node test/lock-queue-visibility.test.mjs` | 6 | 锁排队可观测（ZB-28：lockWait 的 blockers 指认持有者、ahead 同类计数、estWaitSec 上界/不猜、跨层级 cross 条目、wire 透传） |
 | `node test/pause-timeout.test.mjs` | 5 | paused 与超时（ZB-28：`(超时)` 标记 → failed+timedOutBy=runner、看门狗 → killed、pausedAt 落字段、unknown 分支、timeoutMin 校验） |
 | `node test/thinking-level.test.mjs` | 7 | 思考强度（ZB-29：`thinking` 参数与 'agent'=Agent决定不透传、档位透传 `--reasoning-level`、channels[].thinkingLevels、validateSpec、交接沿用、runner 注入 hermetic 干跑 + fail-fast + resume 跳过） |
+| `node test/thinking-levels-coverage.test.mjs` | 6 | 思考强度**探测漏档**（ZB-31：个人通道模型纳入 `--list-providers`、匹配式与 ZCode 逐字同式（`^(?:)$`+i）、plan/personal 都带 thinkingLevels、真实内置配置现场值、失效档位显式列出、fail-fast 报错列出修正后取值） |
 | `node test/fallback-target.test.mjs` | 6 | 自动降级目标（ZB-30：`setFallbackTarget` 单目标/关闭/落盘 v2 与 v1 迁移、跳转带目标 model+档位、未指定则沿用原任务、wire 对象/数组/null 三形状、face 对象走单目标、面板源码形态、文案四处齐备） |
 | `node test/fallback-ui.test.mjs` | 16 | 自动降级**真渲染**（ZB-30：关闭态只有开关且无目标下拉、开启后出现通道/模型/思考强度三下拉、档位中文标签且 value 仍原始、目标里无「Agent决定」、点开关 → wire 收到 `chain:null`、关闭后下拉消失） |
 | `node test/memory-ban.test.mjs` | 6 | 记忆禁令注入（ZB-20/28：prompt/target 拼进内容；**task 经 runner `--memory-ban` 旗标**，memoryBanRunner=runner 确认位） |

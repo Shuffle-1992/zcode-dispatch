@@ -431,6 +431,7 @@ window.__ModuleLoader__.load({
         thinkingFollow: '跟随通道', dispatchThinkingHint: '跟随通道=按通道设置的思考强度派发（在「通道」分区设置）；具体档位=本条派发严格生效（仅新建会话）',
         chanThinkingHint: '通道默认思考强度：Agent决定=由派发方 Agent 按任务自行改传具体档位；具体档位=给派发 Agent 的硬性规定（未显式指定的派发一律按它执行，仅新建会话生效）',
         thinkingHint: 'Agent决定=由派发方按任务判断并改传具体档位；具体档位严格生效（仅新建会话；--resume 沿用原会话档位）',
+        thinkingStale: '已失效', thinkingStaleHint: '该档位不在当前模型声明的取值里（可能因模型档位表更新而失效）——派发会被 runner 拒绝，请改选一个有效档位',
         dispatch: '派发', queuedBtn: '排队中…', runningBtn: '执行中…', sending: '提交中…',
         fbQueued: '已排队：', errPrefix: '失败：', errEmpty: '请先填写内容',
         content: '内容', noJobs: '暂无进程记录', exit: '退出', kill: '终止', tail: '输出', tailLoading: '读取中…', tailEmpty: '（无输出）',
@@ -487,6 +488,7 @@ window.__ModuleLoader__.load({
         thinkingFollow: 'Follow channel', dispatchThinkingHint: "Follow channel = dispatch with the channel's thinking setting (set in the Channels section); a concrete level is enforced for this dispatch (new sessions only)",
         chanThinkingHint: 'Channel default thinking: Agent decides = the dispatching agent picks a concrete level per task; a concrete level is a hard rule for dispatched agents (dispatches without an explicit level follow it; new sessions only)',
         thinkingHint: 'Agent decides = the dispatching agent picks a concrete level per task; a concrete level is enforced (new sessions only; --resume keeps the session level)',
+        thinkingStale: 'stale', thinkingStaleHint: 'This level is not in the current model declaration (the model level table may have changed) — dispatch would be rejected by the runner; pick a valid level',
         dispatch: 'Dispatch', queuedBtn: 'Queued…', runningBtn: 'Running…', sending: 'Sending…',
         fbQueued: 'Queued: ', errPrefix: 'Failed: ', errEmpty: 'Content is required',
         content: 'Content', noJobs: 'No process records yet', exit: 'exit', kill: 'Kill', tail: 'Tail', tailLoading: 'Loading…', tailEmpty: '(no output)',
@@ -2019,15 +2021,22 @@ window.__ModuleLoader__.load({
         (() => {
           const levels = Array.isArray(sel?.thinkingLevels) ? sel.thinkingLevels : [];
           const cur = channel.reasoningLevel ?? 'agent';
+          /* ZB-31：**失效档位必须显式列出**。修复探测匹配式后，某些"修复前存下的"档位
+           * （如 GLM-5.3 的 `disabled`，旧探测误判为合法）已不在当前 levels 里；若不列出，
+           * `<select value="disabled">` 找不到匹配 option ⇒ 浏览器显示首项「Agent决定」，
+           * 与真实存值不符（且派发会被 runner fail-fast 拒绝）。故显式补一项并标注「已失效」，
+           * 让用户看到真相并主动改选。 */
+          const stale = cur !== 'agent' && !levels.includes(cur);
           return h('div', { className: 'zcd-field' },
             h('span', { className: 'zcd-field-k' }, t('thinking')),
             h('select', {
               className: 'zcd-select zcd-field-v', value: cur,
               onChange: (e) => onSwitch({ provider: channel.provider, model: channel.model ?? null, reasoningLevel: e.target.value }),
-              'aria-label': t('thinking'), title: t('chanThinkingHint'),
+              'aria-label': t('thinking'), title: stale ? t('thinkingStaleHint') : t('chanThinkingHint'),
               disabled: channels.length === 0 || !sel || !sel.enabled,
             },
               h('option', { value: 'agent' }, t('thinkingAgent')),
+              stale ? h('option', { value: cur }, `${thinkingLabel(cur)}（${t('thinkingStale')}）`) : null,
               levels.map((lv) => h('option', { key: lv, value: lv }, thinkingLabel(lv)))));
         })(),
         h('div', { className: 'zcd-note', role: 'status' },
@@ -2078,6 +2087,10 @@ window.__ModuleLoader__.load({
               disabled: busy || channels.length === 0 || !fbSel || !fbSel.enabled,
             },
               h('option', { value: 'agent' }, t('thinkingAgent')),
+              /* ZB-31：与「通道」分区同一条纪律 —— 失效档位显式列出（见上面注释）。 */
+              fbThinking !== 'agent' && !fbLevels.includes(fbThinking)
+                ? h('option', { value: fbThinking }, `${thinkingLabel(fbThinking)}（${t('thinkingStale')}）`)
+                : null,
               fbLevels.map((lv) => h('option', { key: lv, value: lv }, thinkingLabel(lv))))),
           h('div', { className: 'zcd-note', role: 'status' }, t('fallbackHint')),
         ) : null,

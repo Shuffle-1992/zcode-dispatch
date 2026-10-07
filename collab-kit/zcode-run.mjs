@@ -181,11 +181,27 @@ const isPlanKey = (k) => /coding-plan|start-plan/.test(k);
 const planCandidates = () => Object.entries(appProviders).filter(([k]) => isPlanKey(k));
 
 /* ---------- 思考强度（ZB-29：ZCode Thought Level / reasoningLevel） ----------
- * 取值**随模型声明不同**（内置配置 modelRules 按序 overlay，后者覆盖前者）：
- * GLM-5 系为 disabled|enabled；deepseek-flash 为 disabled|low|high|max（1M 上下文模型）。
+ * 取值**随模型声明不同**（内置配置 modelRules 按序 overlay，后者覆盖前者）。
  * 注入点 = 临时 provider 配置顶层的 defaultModelSelection（headless 启动读取它作为会话
  * 初始模型选择；--resume 由 ZCode 明确跳过 —— 沿用原会话档位）。
- * 在此只做**探测**（供 --list-providers 与校验提示），不写死枚举。 */
+ * 在此只做**探测**（供 --list-providers 与校验提示），不写死枚举。
+ *
+ * ⚠️ ZB-31（用户报「GLM-5.3 系 / deepseek-flash 没有低/高/最高选项」）—— 探测**漏了两处**，
+ * 都不是「CLI 不支持」，而是本探测器的匹配式与枚举面与 ZCode 不一致：
+ *
+ *  ① **匹配式**：ZCode 用 `vWt(modelMatch, modelId, true)` = `new RegExp('^(?:'+match+')$','i')`
+ *     —— **锚定 + 忽略大小写**（zcode.cjs:1064 附近的 `function vWt(e,t,n=!1){return new RegExp(...)}`）。
+ *     本文件原先用 `new RegExp(r.modelMatch).test(id)`：**无锚点、无 i**。
+ *     后果（实测）：内置 modelRules 里 `.*glm-5(?:…)?` → `disabled,enabled` 排在
+ *     `.*glm-5\.3(?:-flash)?(?:…)?` → `low,high,max` **之前**；ZCode 忽略大小写 ⇒ 两条都命中，
+ *     后者（.3）覆盖前者 ⇒ 真值 low,high,max。本文件大小写敏感 ⇒ `glm-5.3` 那条**永不命中**
+ *     （模型 id 是 `GLM-5.3`），只剩 `.*glm-5(?:…)?` 的 disabled,enabled ⇒ 面板只有两档。
+ *  ② **枚举面**：`--list-providers` 只遍历桌面端 `config.json` 的 `provider[*].models` 并集，
+ *     而 `deepseek-flash` 只出现在**个人通道**（`provider_config.json` 的 `personalModelIds`）
+ *     里 ⇒ 它一条 `reasoning-levels` 行都没有 ⇒ core 的 `levelsOf` 返回 null ⇒ 面板退回通用提示。
+ *
+ * 修法：① 匹配式与 ZCode **逐字同式**（锚定 + i）；② 枚举面补上个人通道模型。
+ * 两处都只影响**探测/校验**；实际注入始终由 ZCode 自己按同一套声明解释。 */
 function builtinModelRules() {
   try {
     const j = JSON.parse(readFileSync(BUILTIN, 'utf8'));
@@ -195,21 +211,52 @@ function builtinModelRules() {
   }
 }
 const MODEL_RULES = builtinModelRules();
-/** 某模型 id 的合法思考强度取值（按序 overlay；读不到返回 null = 不校验，交给 ZCode fail-fast）。 */
+
+/** 与 ZCode 自身的 modelMatch 匹配**逐字同式**：`new RegExp('^(?:'+match+')$','i')`。
+ *  证据：zcode.cjs 的 `function vWt(e,t,n=!1){return new RegExp(`^(?:${e})$`, n?"i":void 0).test(t)}`，
+ *  调用点 `vWt(s.modelMatch, t.modelId, !0)`（ModelConfigRules.resolve 的 overlay 主循环）。 */
+function zcodeModelMatch(matchRe, modelId) {
+  try {
+    return new RegExp(`^(?:${matchRe})$`, 'i').test(modelId);
+  } catch {
+    return false; // 坏正则：跳过（与 ZCode 的 refine 拒绝无效正则同向）
+  }
+}
+
+/** 某模型 id 的合法思考强度取值（按序 overlay，后者覆盖前者；读不到返回 null = 不校验，交给 ZCode fail-fast）。 */
 function reasoningLevelsFor(modelId) {
   if (!modelId || MODEL_RULES.length === 0) return null;
   let levels = null;
   for (const r of MODEL_RULES) {
     const re = r?.modelMatch;
     if (typeof re !== 'string') continue;
-    try {
-      if (new RegExp(re).test(modelId)) {
-        const lv = r?.config?.optionSpecs?.reasoningLevel?.values;
-        if (Array.isArray(lv) && lv.length) levels = lv.map(String); // 后者覆盖前者（与 ZCode overlay 同序）
-      }
-    } catch { /* 坏正则跳过 */ }
+    if (zcodeModelMatch(re, modelId)) {
+      const lv = r?.config?.optionSpecs?.reasoningLevel?.values;
+      if (Array.isArray(lv) && lv.length) levels = lv.map(String); // 后者覆盖前者（与 ZCode overlay 同序）
+    }
   }
   return levels;
+}
+
+/** 个人通道配置的实际路径（`--personal-config` 覆盖，否则默认）。**在 listProviders 之前声明**：
+ *  `--list-providers` 会经 personalModelIds() 读它（声明在下方会造成 TDZ）。 */
+const personalPath = opt.personalConfig ? resolve(opt.personalConfig) : PERSONAL_DEFAULT;
+
+/** 个人通道的模型 id（ZB-31：`deepseek-flash` 这类模型只在这里出现，不在 config.json 里）。
+ *  尊重 `--personal-config` 覆盖（与派发路径同一个文件）；读不到 ⇒ 空数组（不猜）。 */
+function personalModelIds() {
+  try {
+    const j = JSON.parse(readFileSync(personalPath, 'utf8'));
+    const rules = j?.config?.providerConfigRules?.providerRules ?? [];
+    const out = new Set();
+    for (const r of rules) {
+      for (const m of r?.config?.personalModelIds ?? []) if (m) out.add(String(m));
+      for (const m of r?.config?.modelOrder ?? []) if (m) out.add(String(m));
+    }
+    return [...out];
+  } catch {
+    return [];
+  }
 }
 
 const listProviders = () => {
@@ -225,11 +272,14 @@ const listProviders = () => {
       `${id.padEnd(34)}${String(!!p?.enabled).padEnd(10)}${p?.options?.baseURL ?? '-'} | ${models}${reason}`,
     );
   }
-  /* ZB-29：每个模型的思考强度合法取值（面板下拉的数据源；随模型声明不同）。 */
+  /* ZB-29：每个模型的思考强度合法取值（面板下拉的数据源；随模型声明不同）。
+   * ZB-31：枚举面 = 桌面端 config.json 的 models 并集 **∪ 个人通道的 personalModelIds/modelOrder**
+   * —— 后者是 `deepseek-flash` 这类模型的唯一出处（原先漏了 ⇒ 个人通道面板没有档位选项）。 */
   const allModels = new Set();
   for (const p of Object.values(appProviders)) {
     for (const m of Object.keys(p?.models ?? {})) allModels.add(m);
   }
+  for (const m of personalModelIds()) allModels.add(m);
   for (const m of [...allModels].sort()) {
     const lv = reasoningLevelsFor(m);
     if (lv) console.log(`[zcode-run] reasoning-levels ${m}=${lv.join(',')}`);
@@ -245,7 +295,6 @@ if (opt.listProviders) {
 const problems = [];
 if (!existsSync(CLI)) problems.push(`找不到 ZCode CLI: ${CLI}（可用 ZCODE_CLI 覆盖）`);
 if (!existsSync(BUILTIN)) problems.push(`找不到内置 provider 配置: ${BUILTIN}`);
-const personalPath = opt.personalConfig ? resolve(opt.personalConfig) : PERSONAL_DEFAULT;
 if (opt.provider === 'personal' && !existsSync(personalPath)) {
   problems.push(`找不到个人 provider 配置: ${personalPath}`);
 }

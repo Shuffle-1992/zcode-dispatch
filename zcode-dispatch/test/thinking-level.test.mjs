@@ -114,7 +114,12 @@ test('listChannels：通道带 thinkingLevels（plan 别名继承选中 provider
   for (const k of ['thinkDisabled', 'thinkEnabled', 'thinkLow', 'thinkHigh', 'thinkMax']) {
     assert.ok(zh.ui[k] && en.ui[k], `locale 中英都有档位标签 ${k}（zh=${zh.ui[k]}）`);
   }
-  assert.equal(r.channels.find((c) => c.id === 'personal').thinkingLevels, undefined, 'personal 无探测数据 ⇒ 不猜');
+  /* ZB-31：personal 通道现在也接同一份探测表 —— 该 fixture 里没有 deepseek-flash 的探测行
+   * ⇒ levelsOf 返回 null（= 声明缺失，不猜）。语义与旧的「字段缺席」一致：
+   * 面板的 `Array.isArray(sel?.thinkingLevels)` 对 undefined 与 null 同样走"无档位"分支。 */
+  const personalLevels = r.channels.find((c) => c.id === 'personal').thinkingLevels;
+  assert.ok(personalLevels == null, 'personal 无探测数据 ⇒ 不猜（null/undefined 等价，面板按数组消费）');
+  assert.ok(!Array.isArray(personalLevels), '★ 无探测数据时绝不是数组（不得凭空造档位）');
 });
 
 /* ---------- C/D. core 透传 + 字段 + wire 映射 + validateSpec ---------- */

@@ -1549,7 +1549,21 @@ export function createDispatcher(options = {}) {
       ...(Object.keys(modelLevels).length ? { thinkingLevels: pick ? levelsOf(pick.models) : null } : {}),
       ...(pick ? { aliasOf: pick.id } : {}),
     };
-    return { channels: [planAlias, readPersonalChannel(warnings), ...channels], warnings };
+    /* ZB-31（用户报「deepseek-flash 没有低/高/最高」）：个人通道的档位同样从**同一份探测表**取 ——
+     * runner 现已把个人通道模型也纳入 `reasoning-levels` 输出（ZB-31 runner 侧修），
+     * 这里只需把它接上（原先 personal 通道根本没有 thinkingLevels 字段 ⇒ 面板退回通用提示）。 */
+    const personal = readPersonalChannel(warnings);
+    return {
+      channels: [
+        planAlias,
+        {
+          ...personal,
+          ...(Object.keys(modelLevels).length ? { thinkingLevels: levelsOf(personal.models) } : {}),
+        },
+        ...channels,
+      ],
+      warnings,
+    };
   }
 
   /** 按 tag 回读台账最后一条匹配记录（已知 sessionId 时优先精确匹配），只补 job 缺失的字段。 */
