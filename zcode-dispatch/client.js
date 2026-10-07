@@ -188,6 +188,9 @@ window.__ModuleLoader__.load({
       '.zcd-job{display:flex;flex-direction:column;gap:8px;border:1px solid ' + T.border + ';border-radius:6px;padding:7px 9px;}',
       '.zcd-job-head{display:flex;flex-direction:column;align-items:stretch;gap:2px;min-height:24px;}',
       '.zcd-job-line{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap;}',
+      /* ZB-29b（用户要求）：进程名左对齐（margin-right:auto 把右侧徽标群推到行尾）；下行整体右对齐。 */
+      '.zcd-job-line .zcd-job-tag{margin-right:auto;}',
+      '.zcd-job-line2{justify-content:flex-end;}',
       '.zcd-job-tag{font-weight:600;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
       '.zcd-dim{color:' + T.text3 + ';white-space:nowrap;font-size:10px;line-height:15px;}',
       '.zcd-spring{flex:1;}',
@@ -2241,7 +2244,7 @@ window.__ModuleLoader__.load({
               }, lk.label);
             })(),
           ),
-          h('div', { className: 'zcd-job-line' },
+          h('div', { className: 'zcd-job-line zcd-job-line2' },
             h('span', { className: 'zcd-dim' }, fmtSec(job.elapsedSec)),
             h('span', { className: 'zcd-dim', title: `${job.contextUsed ?? '—'} / ${job.contextWindow ?? '—'} tokens` }, ctxLabel(job)),
             job.exitCode != null ? h('span', { className: 'zcd-dim' }, `${t('exit')} ${job.exitCode}`) : null,
