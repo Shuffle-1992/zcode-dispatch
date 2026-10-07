@@ -1685,6 +1685,14 @@ window.__ModuleLoader__.load({
       parts.push(lw.estWaitSec != null ? `预计 ≤ ${fmtSec(lw.estWaitSec)}` : '预计等待未知');
       return parts.join(' · ');
     };
+    /* ZB-29：思考强度的**显示值** —— 实际生效档优先（runner 确认注入；「Agent决定」档经
+     * runner 按模型声明最后一档解析，因此有具体值）；其次请求的具体档位；
+     * 'agent' 且无注入确认（旧 runner / --resume / 模型未声明）⇒ null = 不显示，不伪造。 */
+    const thinkingShown = (job) => {
+      if (job.reasoningLevelApplied) return job.reasoningLevelApplied;
+      const rl = job.spec ? job.spec.reasoningLevel : null;
+      return rl && rl !== 'agent' ? rl : null;
+    };
     /* ZB-02：「关闭」（= 从列表移除 + 落盘 dismissed.json）允许的状态集合，
      * 与宿主 wire.host.mjs 的 DISMISSABLE 逐一对应（paused / 各终态）。
      * 原先 UI 只在 paused 时渲染关闭按钮 → done/failed/killed/interrupted 的 job
@@ -2204,11 +2212,14 @@ window.__ModuleLoader__.load({
             h(StatusDot, { state: job.state }),
             h('span', { className: 'zcd-job-tag', title: job.id }, job.tag ?? shortId(job.id)),
             h('span', { className: 'zcd-badge' }, job.model ?? '—'),
-            /* ZB-29：思考强度徽标紧跟模型——'agent'=Agent决定；具体档位原样显示；
-             * 旧任务（无该字段）不显示，不伪造。 */
-            spec.reasoningLevel ? h('span', {
-              className: 'zcd-badge', title: t('thinkingHint'),
-            }, spec.reasoningLevel === 'agent' ? t('thinkingAgentShort') : spec.reasoningLevel) : null,
+            /* ZB-29：思考强度徽标紧跟模型——显示**实际生效档位**（含 Agent决定档的解析结果）；
+             * 无法确定（旧 runner / --resume / 模型未声明）时隐藏，不伪造。 */
+            (() => {
+              const shown = thinkingShown(job);
+              return shown ? h('span', {
+                className: 'zcd-badge', title: t('thinkingHint'),
+              }, shown) : null;
+            })(),
             paused ? h('span', { className: 'zcd-badge s-paused', title: job.pauseDetail ?? '' }, `${t('paused')}：${pauseLabel(job.pauseReason)}`) : null,
             job.parentJobId ? h('span', { className: 'zcd-badge', title: job.parentJobId }, `${t('parentFrom')} ${shortId(job.parentJobId)}`) : null,
             (job.hopCount ?? 0) > 0 ? h('span', { className: 'zcd-badge' }, `${job.hopCount} ${t('hop')}`) : null,
@@ -2289,8 +2300,8 @@ window.__ModuleLoader__.load({
             detailBody != null && detailBody !== '' ? h('div', { className: 'zcd-mono' }, clampText(detailBody, 1200)) : null,
             kvRow(t('provider'), spec.provider ?? job.provider),
             kvRow(t('model'), spec.model ?? job.model),
-            /* ZB-29：思考强度紧跟「模型」显示（用户要求）——'agent'=Agent决定；具体档位严格生效（新建会话）。 */
-            spec.reasoningLevel ? kvRow(t('thinking'), spec.reasoningLevel === 'agent' ? t('thinkingAgent') : spec.reasoningLevel) : null,
+            /* ZB-29：思考强度紧跟「模型」——显示**实际生效档位**（确定不了时隐藏）。 */
+            thinkingShown(job) ? kvRow(t('thinking'), thinkingShown(job)) : null,
             kvRow(t('mode'), spec.mode),
             kvRow(t('cwd'), spec.cwd),
             spec.timeoutMin != null ? kvRow(t('timeout'), String(spec.timeoutMin)) : null,

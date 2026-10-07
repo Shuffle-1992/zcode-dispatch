@@ -126,9 +126,11 @@ test('★ core：具体档位 → runner 参数 --reasoning-level；agent/未指
   const j2 = d.dispatch({ kind: 'prompt', prompt: 'y', tag: 't2', reasoningLevel: 'agent' });
   const done2 = await waitTerminal(d, j2.id);
   const argv2 = readArgvOf(argvDir2);
-  assert.ok(!argv2.includes('--reasoning-level'), "★ 'agent'（Agent决定）不透传 = 不覆盖");
+  const i2 = argv2.indexOf('--reasoning-level');
+  assert.ok(i2 >= 0, "★ 'agent'（Agent决定）**也透传** —— runner 按 ZCode 默认规则解析成实际档位");
+  assert.equal(argv2[i2 + 1], 'agent', 'core 原样传 agent（解析在 runner，读得到模型声明）');
   assert.equal(done2.reasoningLevel, 'agent');
-  assert.equal(done2.reasoningLevelApplied, undefined, '未注入 ⇒ 无 Applied 确认');
+  assert.equal(done2.reasoningLevelApplied, 'agent', '假 runner 原样回显 ⇒ Applied=agent（真实 runner 会解析成声明档位最后一档）');
   delete process.env.FAKE_ARGV_FILE;
 
   const j3 = d.dispatch({ kind: 'prompt', prompt: 'z', tag: 't3' });
@@ -183,11 +185,11 @@ test('★ runner：--reasoning-level 写入临时 provider 配置的 defaultMode
     schemaVersion: 1,
     config: { modelConfigRules: { modelRules: [{ modelMatch: '.*test-model.*', config: { optionSpecs: { reasoningLevel: { values: ['disabled', 'enabled'], map: '{}' } } } }] } },
   }));
-  /* 个人 provider：prov-x / test-model */
+  /* 个人 provider：prov-x / test-model（有声明）与 plain-model（无声明，测 Agent决定无法解析的分支） */
   writeFileSync(personal, JSON.stringify({
     schemaVersion: 1,
     config: {
-      providerConfigRules: { providerRules: [{ providerId: 'prov-x', providerName: 'X', config: { group: 'standard-personal', access: { type: 'api-key', apiKey: 'k' }, api: { type: 'openai-chat-completions', baseUrl: 'http://127.0.0.1:9' }, personalModelIds: ['test-model'], modelOrder: ['test-model'] } }] },
+      providerConfigRules: { providerRules: [{ providerId: 'prov-x', providerName: 'X', config: { group: 'standard-personal', access: { type: 'api-key', apiKey: 'k' }, api: { type: 'openai-chat-completions', baseUrl: 'http://127.0.0.1:9' }, personalModelIds: ['test-model', 'plain-model'], modelOrder: ['test-model', 'plain-model'] } }] },
       modelConfigRules: { providerModelRules: [], manualProviderModelRules: [] },
     },
   }));
@@ -217,6 +219,20 @@ test('★ runner：--reasoning-level 写入临时 provider 配置的 defaultMode
   const r3 = run(['--reasoning-level', 'high']);
   assert.equal(r3.status, 1, '非法档位 fail-fast');
   assert.match(r3.stderr, /disabled\|enabled/, '报错列出可用档位');
+
+  /* ★「Agent决定」档：runner 按 ZCode 自身默认规则解析（声明档位的**最后一档**，= QKe/v3i 的 values.at(-1)）*/
+  const r5 = run(['--reasoning-level', 'agent']);
+  assert.equal(r5.status, 0, `agent 档干跑应成功（stderr: ${r5.stderr}）`);
+  assert.match(r5.stdout, /reasoning-level=enabled/, '解析成声明档位最后一档（disabled|enabled → enabled）并打印确认行');
+  const sel5 = JSON.parse(readFileSync(argvOut, 'utf8'));
+  assert.deepEqual(sel5, { providerId: 'prov-x', modelId: 'test-model', options: { reasoningLevel: 'enabled' } },
+    '★ agent 档注入的实际档位 = enabled（与 ZCode 未显式选择时的行为一致）');
+
+  /* 模型未声明档位 ⇒ 无法解析 Agent决定 → 不注入 + 警告（交给 ZCode 默认，不猜） */
+  const r6 = run(['--model', 'plain-model', '--reasoning-level', 'agent']);
+  assert.equal(r6.status, 0, `未声明模型不失败（stderr: ${r6.stderr}）`);
+  assert.match(r6.stderr, /未声明思考强度档位/, '警告：无法解析 Agent决定');
+  assert.equal(readFileSync(argvOut, 'utf8'), 'null', '未声明 ⇒ 未注入');
 
   const r4 = run(['--resume', 'sess_x', '--reasoning-level', 'enabled']);
   assert.equal(r4.status, 0, `resume 场景不注入也不报错（stderr: ${r4.stderr}）`);

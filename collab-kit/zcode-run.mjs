@@ -591,7 +591,7 @@ let tempDir = '';
  * modelId = 显式 --model，或通道默认（plan=选中 provider 的第一个模型；personal=源配置缺省选择/第一个）。 */
 function resolveReasoningTarget() {
   if (!opt.reasoningLevel) return null;
-  const level = String(opt.reasoningLevel).trim();
+  let level = String(opt.reasoningLevel).trim();
   if (!level) return null;
   if (opt.resume) {
     console.warn('[zcode-run] --reasoning-level 对 --resume 不生效（ZCode 沿用原会话档位）；已忽略');
@@ -618,7 +618,18 @@ function resolveReasoningTarget() {
     return null;
   }
   const declared = reasoningLevelsFor(modelId);
-  if (declared && !declared.includes(level)) {
+  if (level === 'agent') {
+    /* 「Agent决定」档（ZB-29 用户要求）：解析成**实际生效的具体档位**并注入 ——
+     * 规则与 ZCode 自身的 registry-fallback 完全一致（optionSpecs.reasoningLevel.values 的
+     * **最后一个**，见 zcode.cjs QKe/v3i 的 values.at(-1)）；行为与不注入时相同，
+     * 但档位显式化、进程上可显示实际值（而非「Agent决定」字样）。
+     * 模型未声明档位（declared=null）时无法解析 → 不注入 + 警告（交给 ZCode 默认）。 */
+    if (!declared || declared.length === 0) {
+      console.warn(`[zcode-run] --reasoning-level agent：模型 ${modelId} 未声明思考强度档位，无法解析，未注入（走 ZCode 默认）`);
+      return null;
+    }
+    level = declared.at(-1);
+  } else if (declared && !declared.includes(level)) {
     console.error(`[zcode-run] --reasoning-level ${level} 不在模型 ${modelId} 声明的取值里（${declared.join('|')}），拒绝派发（防静默按默认档跑）`);
     process.exit(1);
   }

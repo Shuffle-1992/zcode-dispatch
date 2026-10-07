@@ -1030,9 +1030,12 @@ export function createDispatcher(options = {}) {
     if (spec.model) args.push('--model', spec.model);
     if (spec.provider) args.push('--provider', spec.provider);
     if (spec.mode) args.push('--mode', spec.mode);
-    /* ZB-29：思考强度 —— 'agent'（Agent决定）不透传 = 不覆盖（ZCode 按模型默认档）；
-     * 具体档位经 runner 写入临时 provider 配置的 defaultModelSelection（仅新建会话生效）。 */
-    if (spec.reasoningLevel && spec.reasoningLevel !== 'agent') args.push('--reasoning-level', spec.reasoningLevel);
+    /* ZB-29：思考强度——具体档位严格生效；'agent'（Agent决定）**也透传**：
+     * runner 按 ZCode 自身的默认规则（模型声明档位的最后一档，与 headless registry-fallback
+     * 的 values.at(-1) 同语义）解析成实际档位并注入，回显 reasoning-level=<实际档> ⇒
+     * job.reasoningLevelApplied 有值，进程上显示实际档位而非「Agent决定」字样。
+     * 仅新建会话生效（resume 由 runner 警告并忽略）。 */
+    if (spec.reasoningLevel) args.push('--reasoning-level', spec.reasoningLevel);
     if (spec.tag) args.push('--tag', spec.tag);
     if (spec.timeoutMin != null) args.push('--timeout-min', String(spec.timeoutMin));
     if (spec.cwd) args.push('--cwd', spec.cwd);

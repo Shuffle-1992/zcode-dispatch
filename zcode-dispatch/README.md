@@ -428,7 +428,7 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 
 | 取值 | 行为 |
 |---|---|
-| `agent`（**默认**，Agent决定） | core **不透传** runner 参数 ⇒ 不覆盖，ZCode 按模型默认档。工具说明要求调用方 Agent：判断任务后**改传具体档位**（查询/机械任务 → 低档；复杂推理/架构 → 高档），别把 agent 原样传下去 |
+| `agent`（**默认**，Agent决定） | 由调用方 Agent 按任务判断并**改传具体档位**（判断准则已写进工具说明：查询/机械 ⇒ 低档；复杂推理/架构 ⇒ 高档）。未改传时 runner 按 **ZCode 自身默认规则**解析——该模型声明档位的**最后一档**（GLM-5.3 ⇒ `enabled`、deepseek-v4 系 ⇒ `max`；= headless 未显式选择时 `QKe`/`v3i` 的 `values.at(-1)` registry-fallback 行为）——并**显式注入** ⇒ 进程上显示实际生效档位，而非「Agent决定」字样。模型未声明档位 ⇒ 不注入 + 警告 |
 | 具体档位（如 `enabled`） | 严格生效：runner 写入临时 provider 配置的 `defaultModelSelection.options.reasoningLevel`（ZCode headless 启动读取它作为**会话初始模型选择**）；面板/人工派发同理 |
 
 规则与边界：
@@ -440,8 +440,9 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 - **fail-fast 不静默**：runner 校验（模型声明了档位集合而请求值不在其中 ⇒ 拒绝派发并列出可用值）；
   ZCode 会话创建也会校验（defaultModelSelection 非法 ⇒ 会话创建失败）。
 - **仅新建会话生效**：`--resume` 沿用原会话档位（ZCode 语义；core 对 resume 不透传，runner 警告）。
-- **可观测**：job 带 `reasoningLevel`（请求档）与 `reasoningLevelApplied`/`reasoningTarget`
-  （runner 确认已注入 + 注入目标）；面板详情行显示档位。
+- **可观测**：job 带 `reasoningLevel`（请求档：agent/具体档）与 `reasoningLevelApplied`/`reasoningTarget`
+  （实际生效档 + 注入目标）；**进程行模型徽标后显示实际生效档位**（Agent决定档解析出的具体档），
+  详情行同步；无法确定（旧 runner / --resume / 模型未声明）时隐藏，不伪造。
 - 面板派发栏有「思考强度」下拉（Agent决定 + 该通道档位集）；`--list-providers` 无档位数据
   （旧 runner）时下拉只剩 Agent决定 —— 不猜。
 

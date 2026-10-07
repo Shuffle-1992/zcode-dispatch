@@ -1,5 +1,18 @@
 # ZB-29 交付：派发台思考强度（thinking / reasoningLevel）+「Agent决定」档
 
+> **ZB-29 追加（同日，用户反馈二则）**：
+> ① 进程行**模型徽标后显示实际生效思考强度**（不再显示「Agent决定」字样）——runner 对 agent 档按
+> ZCode 自身默认规则解析（`optionSpecs.reasoningLevel.values` 的**最后一档**，与 headless 未显式
+> 选择时 `QKe`/`v3i` 的 `values.at(-1)` registry-fallback 完全同语义）并**显式注入**，回显
+> `reasoning-level=<实际档>` ⇒ `job.reasoningLevelApplied`；core 对 agent 档也透传（由 runner 解析）；
+> 面板徽标/详情改显示实际档位（无法确定时隐藏，不伪造）。README/index.js 描述同步更新。
+> ② 进程行改**两行布局**：上行=状态灯+进程名+模型+思考强度+徽标+文件锁；下行=时间+上下文+退出
+> （`.zcd-job-head` 纵向 + `.zcd-job-line` 横行，整行仍一键开合）。
+> 测试同步：agent 档断言改为「透传 + 解析成声明最后一档」；新增「未声明模型不注入+警告」分支；
+> argv 捕获改独立目录（修 pid 字典序偶发读错）。全量 24 文件 144 PASS / 0 FAIL。
+
+---
+
 > 用户需求：① 派发台可设置模型思考强度；② 新增一档「Agent决定」——选它时由**派发的 Agent**
 > 根据派发任务自己设置思考强度，不是该档时遵循设置的档位；③ 在工具使用说明/相关提示词里写清该
 > 设定，让 Agent 明白怎么用。本轮编号 ZB-29（接 ZB-28b）。

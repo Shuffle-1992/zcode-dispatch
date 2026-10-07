@@ -306,7 +306,7 @@ const TOOL_PARAMETERS = {
   mode: { type: 'string', enum: ['build', 'edit', 'plan', 'yolo'], description: 'dispatch：ZCode 运行模式，默认 edit' },
   /* ZB-29：思考强度。不用 enum —— 合法档位随模型声明不同（GLM-5 系 disabled|enabled，
    * deepseek-v4 系 disabled|low|high|max），以 channels[].thinkingLevels 为准；语义详述在描述正文。 */
-  thinking: { type: 'string', description: 'dispatch：思考强度（Thought Level）。`agent`=Agent决定（默认，可省略）：由你根据任务改传具体档位；档位集合以 action=channels 返回的 thinkingLevels 为准（如 disabled|enabled）。仅对新建会话生效' },
+  thinking: { type: 'string', description: 'dispatch：思考强度（Thought Level）。`agent`=Agent决定（默认，可省略）：由你根据任务改传具体档位；不改传时按 ZCode 默认规则取该模型档位集最后一档并显式注入（进程显示实际档位）。档位集合见 action=channels 返回的 thinkingLevels。仅对新建会话生效' },
   timeoutMin: { type: 'number', description: 'dispatch：超时分钟（必须 > 0，无上限；runner 生效下限 1 分钟）' },
   memoryBench: { type: 'boolean', description: 'dispatch：附加 --memory-bench（仅 kind=prompt 支持）' },
   tag: { type: 'string', description: 'dispatch：台账 tag（缺省由 runner 生成）' },
@@ -338,8 +338,8 @@ const TOOL_DESCRIPTION_BODY = [
   '- **记忆写入（默认约束）**：派发时**默认注入提示词**，要求子代理不执行 ZCode 记忆写入/自动 Memory 提取（不写 ~/.zcode）。三种 kind 全覆盖：prompt/target 直接拼进内容（job.memoryBanApplied=true）；task 由宿主 runner 经 `--memory-ban` 旗标注入（runner 打印 memory-ban=on 后 job.memoryBanRunner=true = 确认注入；旧版 runner 不认识该旗标会 fail-fast 报"未知参数"，请成对升级 runner）。',
   /* ZB-28：paused 与超时语义（全部触发条件 + 超时终态 + 字段名）。 */
   /* ZB-29：思考强度（Thinking Level / reasoningLevel）。核心是「Agent决定」契约：
-   * agent 档 = 调用方 Agent 自己判断任务并改传具体档位；具体档位 = 严格执行。 */
-  '- **思考强度（thinking，默认 agent=「Agent决定」）**：传 `agent` 时，**由你（调用方）根据本任务自行判断并改传具体档位**——判断准则：探索/查询/机械修改/短问答 ⇒ 低档（`disabled`）；多步实现、架构改动、疑难排查、长链规划 ⇒ 高档（`enabled`，个人通道可到 `high`/`max`）。判断完成后**传具体档位，不要传 agent**；确无把握才保持 agent（= 不覆盖，ZCode 按该模型默认档运行）。规则：① 合法档位**随模型声明不同**（GLM-5.3/Flash：`disabled|enabled`；个人通道 deepseek-v4 系：`disabled|low|high|max`），以 action=channels 返回的 `channels[].thinkingLevels` 为准；② 非法档位会被 runner 按 builtin 声明 fail-fast 拒绝（报错列出可用值），不会静默降级；③ 档位仅对**新建会话**生效，`--resume` 续跑沿用原会话档位（runner 警告并忽略）；④ job 上可核对：`reasoningLevel`（请求档）与 `reasoningLevelApplied`（runner 确认已注入）。',
+   * agent 档 = 调用方 Agent 自己判断任务并改传具体档位；未改传时按 ZCode 默认规则解析成实际档位并显式注入。 */
+  '- **思考强度（thinking，默认 agent=「Agent决定」）**：传 `agent` 时，**由你（调用方）根据本任务自行判断并改传具体档位**——判断准则：探索/查询/机械修改/短问答 ⇒ 低档（`disabled`）；多步实现、架构改动、疑难排查、长链规划 ⇒ 高档（`enabled`，个人通道可到 `high`/`max`）。判断完成后**传具体档位，不要传 agent**；保持 agent 时按 **ZCode 默认规则**执行（= 该模型档位集的最后一档：GLM-5.3 ⇒ `enabled`、deepseek-v4 系 ⇒ `max`），runner 会解析并**显式注入**——进程上显示的就是实际生效档位，而不是「Agent决定」字样。规则：① 合法档位**随模型声明不同**（GLM-5.3/Flash：`disabled|enabled`；个人通道 deepseek-v4 系：`disabled|low|high|max`），以 action=channels 返回的 `channels[].thinkingLevels` 为准；② 非法档位会被 runner 按 builtin 声明 fail-fast 拒绝（报错列出可用值），不会静默降级；③ 档位仅对**新建会话**生效，`--resume` 续跑沿用原会话档位（runner 警告并忽略）；④ job 上可核对：`reasoningLevel`（请求档：agent/具体档）与 `reasoningLevelApplied`（实际生效档）。',
   '- **paused 与超时**：run 非 0 退出（非 kill）且输出命中暂停签名 → paused（签名按优先级：plan-not-entitled → provider-signing → config-error → quota-exhausted；字段 pauseReason/pauseDetail/pausedAt）；未命中保持 failed（pauseReason=unknown 仅作信息）；paused 不占锁不占并发，需人决定 retry 续跑或换通道。timeoutMin 无上限（>0）：**runner 自身超时 → failed**（exit 124，timedOut=true、timedOutBy=runner）；**dispatcher 看门狗在 timeoutMin+120s 宽限后仍未退出 → killed**（timedOutBy=watchdog，watchdogSec=开火秒数）；interrupted 与超时无关（仅 dispatcher 重启时的残留清理）。',
   '- action=wait：等待 job 落到终态或 paused（id 必填，timeoutSec 可选，缺省取该任务 timeoutMin 的秒数）。paused 也返回（不干等，让调用方决定 retry 续跑还是换通道交接）；超时返回 timedOut:true 与当前状态，不谎报完成。**已经 wait 到落地的 job 不再发落地通知**（结果你已拿到）。',
   '- action=list：列出全部 run（running/queued 优先，含状态/锁/用量/上下文占用；不含 tail 内容）。**queued 行带 lockWait（ZB-28 排队可观测）**：position=队列位次、ahead/aheadIds=前方同类任务、blockers=被谁挡住（锁名+持有者+已运行秒+剩余上界）、estWaitSec=预计等待上界（仅当阻塞者都声明 timeoutMin 时可估，否则 null 不猜）——被整仓锁挡住时不再盲等。',
@@ -516,7 +516,7 @@ function makeLogger(ctx) {
 const SYSTEM_PROMPT_SECTION = [
   '【ZCode 派发台】要把一个独立任务交给另一个 agent 去做时（用户说「派发 / 交给 ZCode / 让 ZCode 做 / 用 ZCode 跑 / 在派发台派一个」，或笼统说「派发这个任务」），用工具 zcode_dispatch 的 action=dispatch，**不要**改用 DSH 自带的 subagent / spawn_teammate / subagent_fork / 后台 jobs —— 只有前者会在「ZCode 派发台」面板里生成可监视的 job（独立 ZCode 进程、独立额度与会话）。',
   '派发是 fire-and-forget：**不要**轮询、不要 sleep。job 落地（done / failed / killed / interrupted / paused）时本会话会被自动唤醒并收到一条 zcode-dispatch 通知，届时用 action=tail / action=list 读结果。',
-  '派发参数 thinking（思考强度）默认 agent=由你按任务判断：简单查询/机械修改传 disabled，复杂推理/架构任务传 enabled（档位集合见 action=channels 的 thinkingLevels）——判断后传具体档位，别传 agent。',
+  '派发参数 thinking（思考强度）默认 agent=由你按任务判断：简单查询/机械修改传 disabled，复杂推理/架构任务传 enabled（档位集合见 action=channels 的 thinkingLevels）——判断后传具体档位；不判断则按该模型档位集最后一档执行（进程显示实际档位）。',
   '例外：用户明确要你自己做，或 action=status 显示开关已关闭 / dispatch 返回 ok:false —— 这时按工具说明退回 DSH 自带手段，并说明原因。',
 ].join('\n');
 
