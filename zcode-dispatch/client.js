@@ -407,6 +407,8 @@ window.__ModuleLoader__.load({
         phPrompt: '输入要发给 ZCode 的提示词…', phTask: '任务文件绝对路径…', phTarget: '要达成的目标…',
         model: '模型', provider: '通道', providerPlan: '套餐', providerPersonal: '个人 Key',
         mode: '模式', timeout: '超时(分)', bench: '--memory-bench',
+        thinking: '思考强度', thinkingAgent: 'Agent决定（按任务判断）',
+        thinkingHint: 'Agent决定=由派发方按任务判断并改传具体档位；具体档位严格生效（仅新建会话；--resume 沿用原会话档位）',
         dispatch: '派发', queuedBtn: '排队中…', runningBtn: '执行中…', sending: '提交中…',
         fbQueued: '已排队：', errPrefix: '失败：', errEmpty: '请先填写内容',
         content: '内容', noJobs: '暂无进程记录', exit: '退出', kill: '终止', tail: '输出', tailLoading: '读取中…', tailEmpty: '（无输出）',
@@ -457,6 +459,8 @@ window.__ModuleLoader__.load({
         phPrompt: 'Prompt to send to ZCode…', phTask: 'Absolute path of task file…', phTarget: 'Goal to achieve…',
         model: 'Model', provider: 'Channel', providerPlan: 'Plan', providerPersonal: 'Personal key',
         mode: 'Mode', timeout: 'Timeout (min)', bench: '--memory-bench',
+        thinking: 'Thinking', thinkingAgent: 'Agent decides (per task)',
+        thinkingHint: 'Agent decides = the dispatching agent picks a concrete level per task; a concrete level is enforced (new sessions only; --resume keeps the session level)',
         dispatch: 'Dispatch', queuedBtn: 'Queued…', runningBtn: 'Running…', sending: 'Sending…',
         fbQueued: 'Queued: ', errPrefix: 'Failed: ', errEmpty: 'Content is required',
         content: 'Content', noJobs: 'No process records yet', exit: 'exit', kill: 'Kill', tail: 'Tail', tailLoading: 'Loading…', tailEmpty: '(no output)',
@@ -1931,6 +1935,18 @@ window.__ModuleLoader__.load({
        * memory 锁已按用户要求删除，故此处不再有它的开关。 */
       const [repoLock, setRepoLock] = useState(true);
       const [writeText, setWriteText] = useState('');
+      /* ZB-29：思考强度（thinking）。默认 'agent' =「Agent决定」——由派发方 Agent 按任务改传
+       * 具体档位；面板人工派发选具体档时严格生效。档位集合来自通道的 thinkingLevels
+       * （runner 探测 builtin 模型声明，随模型不同；拿不到时只显示 Agent决定，不猜）。 */
+      const [thinking, setThinking] = useState('agent');
+      const chEntry = (snapshot?.channels ?? []).find((c) => c.id === channel.provider) ?? null;
+      const lvMap = chEntry?.thinkingLevels ?? null;
+      const lvSet = new Set();
+      if (lvMap) {
+        const ids = channel.model ? [channel.model] : Object.keys(lvMap);
+        for (const id of ids) for (const x of (lvMap[id] ?? [])) lvSet.add(x);
+      }
+      const thinkingLevels = [...lvSet];
 
       const lastJob = (snapshot?.jobs ?? []).find((j) => j.id === lastJobId) ?? null;
       const active = lastJob && (lastJob.state === 'queued' || lastJob.state === 'running');
@@ -1946,7 +1962,7 @@ window.__ModuleLoader__.load({
           return;
         }
         // 通道/模型来自顶部通道切换器（唯一出口）；未选模型时交由通道默认值决定
-        const spec = { kind, [kind]: body, provider: channel.provider, mode };
+        const spec = { kind, [kind]: body, provider: channel.provider, mode, thinking };
         if (channel.model) spec.model = channel.model;
         if (timeoutMin !== '' && Number(timeoutMin) > 0) spec.timeoutMin = Number(timeoutMin);
         if (bench) spec.memoryBench = true;
@@ -1972,6 +1988,15 @@ window.__ModuleLoader__.load({
             h('option', { value: 'edit' }, 'edit'),
             h('option', { value: 'plan' }, 'plan'),
             h('option', { value: 'yolo' }, 'yolo')),
+          /* ZB-29：思考强度。'agent' = Agent决定（派发方 Agent 按任务判断并传具体档位）；
+           * 具体档位严格生效（写入临时 provider 配置，仅新建会话；非法档位 fail-fast）。 */
+          h('span', { className: 'zcd-label' }, t('thinking')),
+          h('select', {
+            className: 'zcd-select', value: thinking,
+            onChange: (e) => setThinking(e.target.value), 'aria-label': t('thinking'), title: t('thinkingHint'),
+          },
+            h('option', { value: 'agent' }, t('thinkingAgent')),
+            thinkingLevels.map((lv) => h('option', { key: lv, value: lv }, lv))),
         ),
         h('textarea', { className: 'zcd-ta', value: content, placeholder: ph, onChange: (e) => setContent(e.target.value), 'aria-label': t('content') }),
         /* ZB-16：**锁意图**显式化（用户要求"派发可以明确是否 repo 锁，明确 repo 锁哪些文件"）。
@@ -2253,6 +2278,8 @@ window.__ModuleLoader__.load({
             kvRow(t('model'), spec.model ?? job.model),
             kvRow(t('mode'), spec.mode),
             kvRow(t('cwd'), spec.cwd),
+            /* ZB-29：思考强度 —— 'agent'=Agent决定（未覆盖）；具体档位 = 严格生效（新建会话）。 */
+            spec.reasoningLevel ? kvRow(t('thinking'), spec.reasoningLevel === 'agent' ? t('thinkingAgent') : spec.reasoningLevel) : null,
             spec.timeoutMin != null ? kvRow(t('timeout'), String(spec.timeoutMin)) : null,
             kvRow(t('createdAt'), job.queuedAt ? fmtTime(job.queuedAt) : null),
             kvRow(t('sessionId'), job.sessionId),

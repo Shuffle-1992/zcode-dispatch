@@ -304,6 +304,9 @@ const TOOL_PARAMETERS = {
   model: { type: 'string', enum: ['GLM-5.3', 'GLM-5.3-Flash'], description: 'dispatch：模型（枚举=常用别名；实际可用值以 action=channels 清单为准，其它模型经 action=channel 设默认后使用）' },
   provider: { type: 'string', enum: ['plan', 'personal'], description: 'dispatch：plan=套餐通道 / personal=个人 Key（枚举=常用别名；清单里的其它真实 id 走 action=channel 设默认）' },
   mode: { type: 'string', enum: ['build', 'edit', 'plan', 'yolo'], description: 'dispatch：ZCode 运行模式，默认 edit' },
+  /* ZB-29：思考强度。不用 enum —— 合法档位随模型声明不同（GLM-5 系 disabled|enabled，
+   * deepseek-v4 系 disabled|low|high|max），以 channels[].thinkingLevels 为准；语义详述在描述正文。 */
+  thinking: { type: 'string', description: 'dispatch：思考强度（Thought Level）。`agent`=Agent决定（默认，可省略）：由你根据任务改传具体档位；档位集合以 action=channels 返回的 thinkingLevels 为准（如 disabled|enabled）。仅对新建会话生效' },
   timeoutMin: { type: 'number', description: 'dispatch：超时分钟（必须 > 0，无上限；runner 生效下限 1 分钟）' },
   memoryBench: { type: 'boolean', description: 'dispatch：附加 --memory-bench（仅 kind=prompt 支持）' },
   tag: { type: 'string', description: 'dispatch：台账 tag（缺省由 runner 生成）' },
@@ -324,7 +327,7 @@ const TOOL_PARAMETERS = {
 };
 
 const TOOL_DESCRIPTION_BODY = [
-  '- action=dispatch：派发一个 run。**立即返回**，不等任务跑完（返回时 state 通常是 queued）。拿结果有两条路：等**落地自动唤醒**（见下条，推荐），或主动 action=wait / action=tail。kind 判据：**prompt=完整指令**（一次性问答/明确步骤）；**target=目标描述**（只说"要达成什么"，ZCode 自主规划并自续跑直到达成，适合无人值守委托；与 prompt/task 互斥是 CLI 限制）；**task=任务包文件绝对路径**（含交付物/验收标准的正式任务，由 runner 读文件内联）。必须带对应内容字段 prompt|task|target。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、timeoutMin（正数分钟，无上限；runner 生效下限 1 分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|none，默认 repo）、**write（本任务要写的文件列表 —— 锁的粒度就是它）**、cwd、resume。总开关关闭时被拒绝（返回 ok:false + switch 状态），不创建 job。',
+  '- action=dispatch：派发一个 run。**立即返回**，不等任务跑完（返回时 state 通常是 queued）。拿结果有两条路：等**落地自动唤醒**（见下条，推荐），或主动 action=wait / action=tail。kind 判据：**prompt=完整指令**（一次性问答/明确步骤）；**target=目标描述**（只说"要达成什么"，ZCode 自主规划并自续跑直到达成，适合无人值守委托；与 prompt/task 互斥是 CLI 限制）；**task=任务包文件绝对路径**（含交付物/验收标准的正式任务，由 runner 读文件内联）。必须带对应内容字段 prompt|task|target。可选：model（GLM-5.3 / GLM-5.3-Flash）、provider（plan=套餐通道 / personal=个人 Key）、mode（build|edit|plan|yolo，默认 edit）、**thinking（思考强度，见下方专条）**、timeoutMin（正数分钟，无上限；runner 生效下限 1 分钟）、memoryBench（true 附加 --memory-bench，仅 kind=prompt）、tag、lock（repo|none，默认 repo）、**write（本任务要写的文件列表 —— 锁的粒度就是它）**、cwd、resume。总开关关闭时被拒绝（返回 ok:false + switch 状态），不创建 job。',
   /* ZB-22：落地自动唤醒 —— 这是「派发台能不能像 DSH 后台任务一样用」的关键。
    * 现场症状：派发后会话不等待、直接往下走/结束，任务跑完没人叫醒它，用户得自己再发一句。 */
   '- **落地自动唤醒（默认开）**：dispatch/retry 建出的 job 一旦落地（done / failed / killed / interrupted / **paused**），**发起它的会话会被自动唤醒**并收到一条通知——会话空闲就开新一轮，会话正忙就插进下一步（与 DSH 后台任务同款）。因此派发之后**不要轮询、不要 sleep**：继续做别的独立步骤，或直接结束本轮即可；收到「zcode-dispatch」通知后再用 action=tail / action=list 读结果。你自己 action=kill 掉的、或自己 action=wait 已经读到的 job 不会再发通知（避免自己叫醒自己）。配置 notifyOnSettle=false 可关掉唤醒。',
@@ -334,6 +337,9 @@ const TOOL_DESCRIPTION_BODY = [
   '- **锁与并发**：并发数 = min(配置 maxConcurrent, 锁闸)。锁闸按**文件集**判定：**声明 write 的任务只锁它要写的文件** —— 不同文件集可并发，写同一文件（或与"整仓库锁"重叠）才排队。**不声明 write ⇒ 锁整个仓库**，与其它任务互斥。想让多个任务真正并发，就为每个任务声明它要写的文件。lock=none 表示明确不取锁（确认无竞写关系时用）。',
   '- **记忆写入（默认约束）**：派发时**默认注入提示词**，要求子代理不执行 ZCode 记忆写入/自动 Memory 提取（不写 ~/.zcode）。三种 kind 全覆盖：prompt/target 直接拼进内容（job.memoryBanApplied=true）；task 由宿主 runner 经 `--memory-ban` 旗标注入（runner 打印 memory-ban=on 后 job.memoryBanRunner=true = 确认注入；旧版 runner 不认识该旗标会 fail-fast 报"未知参数"，请成对升级 runner）。',
   /* ZB-28：paused 与超时语义（全部触发条件 + 超时终态 + 字段名）。 */
+  /* ZB-29：思考强度（Thinking Level / reasoningLevel）。核心是「Agent决定」契约：
+   * agent 档 = 调用方 Agent 自己判断任务并改传具体档位；具体档位 = 严格执行。 */
+  '- **思考强度（thinking，默认 agent=「Agent决定」）**：传 `agent` 时，**由你（调用方）根据本任务自行判断并改传具体档位**——判断准则：探索/查询/机械修改/短问答 ⇒ 低档（`disabled`）；多步实现、架构改动、疑难排查、长链规划 ⇒ 高档（`enabled`，个人通道可到 `high`/`max`）。判断完成后**传具体档位，不要传 agent**；确无把握才保持 agent（= 不覆盖，ZCode 按该模型默认档运行）。规则：① 合法档位**随模型声明不同**（GLM-5.3/Flash：`disabled|enabled`；个人通道 deepseek-v4 系：`disabled|low|high|max`），以 action=channels 返回的 `channels[].thinkingLevels` 为准；② 非法档位会被 runner 按 builtin 声明 fail-fast 拒绝（报错列出可用值），不会静默降级；③ 档位仅对**新建会话**生效，`--resume` 续跑沿用原会话档位（runner 警告并忽略）；④ job 上可核对：`reasoningLevel`（请求档）与 `reasoningLevelApplied`（runner 确认已注入）。',
   '- **paused 与超时**：run 非 0 退出（非 kill）且输出命中暂停签名 → paused（签名按优先级：plan-not-entitled → provider-signing → config-error → quota-exhausted；字段 pauseReason/pauseDetail/pausedAt）；未命中保持 failed（pauseReason=unknown 仅作信息）；paused 不占锁不占并发，需人决定 retry 续跑或换通道。timeoutMin 无上限（>0）：**runner 自身超时 → failed**（exit 124，timedOut=true、timedOutBy=runner）；**dispatcher 看门狗在 timeoutMin+120s 宽限后仍未退出 → killed**（timedOutBy=watchdog，watchdogSec=开火秒数）；interrupted 与超时无关（仅 dispatcher 重启时的残留清理）。',
   '- action=wait：等待 job 落到终态或 paused（id 必填，timeoutSec 可选，缺省取该任务 timeoutMin 的秒数）。paused 也返回（不干等，让调用方决定 retry 续跑还是换通道交接）；超时返回 timedOut:true 与当前状态，不谎报完成。**已经 wait 到落地的 job 不再发落地通知**（结果你已拿到）。',
   '- action=list：列出全部 run（running/queued 优先，含状态/锁/用量/上下文占用；不含 tail 内容）。**queued 行带 lockWait（ZB-28 排队可观测）**：position=队列位次、ahead/aheadIds=前方同类任务、blockers=被谁挡住（锁名+持有者+已运行秒+剩余上界）、estWaitSec=预计等待上界（仅当阻塞者都声明 timeoutMin 时可估，否则 null 不猜）——被整仓锁挡住时不再盲等。',
@@ -343,7 +349,7 @@ const TOOL_DESCRIPTION_BODY = [
   '- action=quota：台账用量聚合（5 小时滚动 / 本周 / 今日）+ 引擎本周已用（app-server usage/stats；limit/remaining/resetAt 不在该 RPC 面）。',
   '- action=status：读 ZCode 派发总开关状态（返回 switch={enabled, updatedAt, updatedBy, note, source}；文件缺失/损坏=开启）。',
   '- action=switch：切换派发总开关（enabled 必填布尔；by=操作者、note=原因可选）。原子写真值文件（与 CLI zcode-switch.mjs 同一格式）；关闭后所有派发入口（zcode-run.mjs / 本工具 dispatch|retry / 面板 / bridge.mjs）一律拒绝。任何会话都可通过 status 查到最新状态。',
-  '- action=channels：通道清单（含 enabled/原因/端点/模型；解析失败返回空数组+warnings，不猜）。**这份实时清单是通道可用性与真实 id 的唯一权威**。',
+  '- action=channels：通道清单（含 enabled/原因/端点/模型；解析失败返回空数组+warnings，不猜）。**这份实时清单是通道可用性与真实 id 的唯一权威**；每个通道附 `thinkingLevels`（该通道各模型的思考强度合法档位，随模型声明不同；缺失 = 旧 runner 未探测，档位传 agent 即可）。',
   '- action=channel：读默认通道（无参）或设置（provider 必带，**接受 channels 清单里的任意 id**，model 可选）——之后未显式指定通道的 dispatch 都用它。要派发到清单里**枚举之外**的通道（如 `builtin:…` 真实 id），走这里设默认通道，再不带 provider/model 派发即可。',
   '- action=retry：续跑/交接已落地的 job（**选择判据：job 还在派发台里 → 用 retry；手里只有裸 sessionId（job 已不在或来自派发台之外）→ 用 dispatch + resume**）。retry 内部自动判定：同通道且有 sessionId → --resume 续跑（不要传 retryModel：--resume 带 --model 必失败）；换通道（或无 sessionId）→ 交接重跑（新会话+交接提示词），新 job 带 parentJobId/attempts/hopCount。可用 provider / retryModel（或 model）。总开关关闭时同样被拒绝。',
   '- action=fallback：读降级链（无参）或设置 chain（通道 id 数组，空数组=关闭）。开启后额度耗尽/未开通/需签名会自动交接重跑到链上下一个可用通道（会消耗下游通道额度）。',
@@ -510,6 +516,7 @@ function makeLogger(ctx) {
 const SYSTEM_PROMPT_SECTION = [
   '【ZCode 派发台】要把一个独立任务交给另一个 agent 去做时（用户说「派发 / 交给 ZCode / 让 ZCode 做 / 用 ZCode 跑 / 在派发台派一个」，或笼统说「派发这个任务」），用工具 zcode_dispatch 的 action=dispatch，**不要**改用 DSH 自带的 subagent / spawn_teammate / subagent_fork / 后台 jobs —— 只有前者会在「ZCode 派发台」面板里生成可监视的 job（独立 ZCode 进程、独立额度与会话）。',
   '派发是 fire-and-forget：**不要**轮询、不要 sleep。job 落地（done / failed / killed / interrupted / paused）时本会话会被自动唤醒并收到一条 zcode-dispatch 通知，届时用 action=tail / action=list 读结果。',
+  '派发参数 thinking（思考强度）默认 agent=由你按任务判断：简单查询/机械修改传 disabled，复杂推理/架构任务传 enabled（档位集合见 action=channels 的 thinkingLevels）——判断后传具体档位，别传 agent。',
   '例外：用户明确要你自己做，或 action=status 显示开关已关闭 / dispatch 返回 ok:false —— 这时按工具说明退回 DSH 自带手段，并说明原因。',
 ].join('\n');
 

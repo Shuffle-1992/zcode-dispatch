@@ -31,6 +31,12 @@
  *   --attach <file>      附加文件（可重复）
  *   --tag <name>         日志/结果文件标签（默认时间戳）
  *   --timeout-min <n>    超时分钟（默认 45）
+ *   --reasoning-level <v>  思考强度（ZCode Thought Level；写入临时 provider 配置的
+ *                        defaultModelSelection.options.reasoningLevel，仅对**新建会话**生效，
+ *                        --resume 沿用原会话档位。合法取值随模型声明不同：GLM-5 系为
+ *                        disabled|enabled，deepseek-flash 为 disabled|low|high|max；
+ *                        `--list-providers` 会输出每个模型 reasoningLevels=。非法档位由
+ *                        ZCode 会话创建 fail-fast（不静默降级）。
  *   --no-ledger          不写 <project>/collab/logs/zcode-runs.jsonl 用量台账
  *   --memory-bench       配合 --prompt：开启自动 Memory 提取并等待完成后再退出（需 Memory 已开启）
  *   --memory-ban         在组装出的 prompt 末尾追加「不写 ZCode 记忆库」禁令（ZB-28，派发台默认带）：
@@ -142,6 +148,7 @@ for (let i = 0; i < argv.length; i += 1) {
   else if (a === '--provider') opt.provider = next();
   else if (a === '--personal-config') opt.personalConfig = next();
   else if (a === '--timeout-min') opt.timeoutMin = Number(next());
+  else if (a === '--reasoning-level') opt.reasoningLevel = next();
   else if (a === '--attach') opt.attach.push(next());
   else if (a === '--no-ledger') opt.ledger = false;
   else if (a === '--memory-bench') opt.memoryBench = true;
@@ -173,6 +180,38 @@ const appProviders = appCfg?.provider ?? {};
 const isPlanKey = (k) => /coding-plan|start-plan/.test(k);
 const planCandidates = () => Object.entries(appProviders).filter(([k]) => isPlanKey(k));
 
+/* ---------- 思考强度（ZB-29：ZCode Thought Level / reasoningLevel） ----------
+ * 取值**随模型声明不同**（内置配置 modelRules 按序 overlay，后者覆盖前者）：
+ * GLM-5 系为 disabled|enabled；deepseek-flash 为 disabled|low|high|max（1M 上下文模型）。
+ * 注入点 = 临时 provider 配置顶层的 defaultModelSelection（headless 启动读取它作为会话
+ * 初始模型选择；--resume 由 ZCode 明确跳过 —— 沿用原会话档位）。
+ * 在此只做**探测**（供 --list-providers 与校验提示），不写死枚举。 */
+function builtinModelRules() {
+  try {
+    const j = JSON.parse(readFileSync(BUILTIN, 'utf8'));
+    return Array.isArray(j?.config?.modelConfigRules?.modelRules) ? j.config.modelConfigRules.modelRules : [];
+  } catch {
+    return [];
+  }
+}
+const MODEL_RULES = builtinModelRules();
+/** 某模型 id 的合法思考强度取值（按序 overlay；读不到返回 null = 不校验，交给 ZCode fail-fast）。 */
+function reasoningLevelsFor(modelId) {
+  if (!modelId || MODEL_RULES.length === 0) return null;
+  let levels = null;
+  for (const r of MODEL_RULES) {
+    const re = r?.modelMatch;
+    if (typeof re !== 'string') continue;
+    try {
+      if (new RegExp(re).test(modelId)) {
+        const lv = r?.config?.optionSpecs?.reasoningLevel?.values;
+        if (Array.isArray(lv) && lv.length) levels = lv.map(String); // 后者覆盖前者（与 ZCode overlay 同序）
+      }
+    } catch { /* 坏正则跳过 */ }
+  }
+  return levels;
+}
+
 const listProviders = () => {
   if (!appCfg) {
     console.error(`[zcode-run] 读不到 ${APP_CONFIG}`);
@@ -185,6 +224,15 @@ const listProviders = () => {
     console.log(
       `${id.padEnd(34)}${String(!!p?.enabled).padEnd(10)}${p?.options?.baseURL ?? '-'} | ${models}${reason}`,
     );
+  }
+  /* ZB-29：每个模型的思考强度合法取值（面板下拉的数据源；随模型声明不同）。 */
+  const allModels = new Set();
+  for (const p of Object.values(appProviders)) {
+    for (const m of Object.keys(p?.models ?? {})) allModels.add(m);
+  }
+  for (const m of [...allModels].sort()) {
+    const lv = reasoningLevelsFor(m);
+    if (lv) console.log(`[zcode-run] reasoning-levels ${m}=${lv.join(',')}`);
   }
   console.log('\n提示：默认 --provider plan 会选第一个启用的 *coding-plan，其次 *start-plan。');
 };
@@ -537,7 +585,47 @@ const resultFile = `${base}.result.json`;
 /* ---------- 生成临时个人 provider 配置（套餐注入 / --model 改写；原配置不动，副本跑完即删） ---------- */
 let modelPath = personalPath;
 let tempDir = '';
-const needTempConfig = !!providerRule || !!opt.model;
+/* ZB-29：思考强度的落点。defaultModelSelection 需要**真实 providerId**：
+ *  · plan 通道 = runner 选中的 builtin key（providerId 变量，如 builtin:bigmodel-coding-plan）；
+ *  · personal 通道 = 个人配置里实际 provider 规则的 id（从源配置读，读不到就放弃注入并警告）。
+ * modelId = 显式 --model，或通道默认（plan=选中 provider 的第一个模型；personal=源配置缺省选择/第一个）。 */
+function resolveReasoningTarget() {
+  if (!opt.reasoningLevel) return null;
+  const level = String(opt.reasoningLevel).trim();
+  if (!level) return null;
+  if (opt.resume) {
+    console.warn('[zcode-run] --reasoning-level 对 --resume 不生效（ZCode 沿用原会话档位）；已忽略');
+    return null;
+  }
+  let effProviderId = null;
+  let modelId = opt.model ?? null;
+  if (providerRule) {
+    effProviderId = providerId ?? null; // plan 通道：provider 选择段记录的 builtin key
+    if (!modelId) modelId = providerModels[0]?.id ?? null;
+  } else {
+    try {
+      const src = JSON.parse(readFileSync(personalPath, 'utf8'));
+      const rule = (src?.config?.providerConfigRules?.providerRules ?? []).find((r) => r?.config?.access?.apiKey);
+      effProviderId = rule?.providerId ?? null;
+      if (!modelId) {
+        const pids = rule?.config?.personalModelIds ?? [];
+        modelId = pids[0] ?? rule?.config?.modelOrder?.[0] ?? null;
+      }
+    } catch { /* 读不到就放弃注入 */ }
+  }
+  if (!effProviderId || !modelId) {
+    console.warn('[zcode-run] --reasoning-level 无法确定 provider/model，未注入（走 ZCode 默认档）');
+    return null;
+  }
+  const declared = reasoningLevelsFor(modelId);
+  if (declared && !declared.includes(level)) {
+    console.error(`[zcode-run] --reasoning-level ${level} 不在模型 ${modelId} 声明的取值里（${declared.join('|')}），拒绝派发（防静默按默认档跑）`);
+    process.exit(1);
+  }
+  return { providerId: effProviderId, modelId, reasoningLevel: level };
+}
+const reasoningTarget = resolveReasoningTarget();
+const needTempConfig = !!providerRule || !!opt.model || !!reasoningTarget;
 if (needTempConfig) {
   try {
     let cfg;
@@ -561,6 +649,9 @@ if (needTempConfig) {
             }),
             manualProviderModelRules: [],
           },
+          /* ZB-29：思考强度 —— headless 启动读 defaultModelSelection 作为会话初始模型选择
+           * （--resume 由 ZCode 跳过，见 resolveReasoningTarget 的警告）。 */
+          ...(reasoningTarget ? { defaultModelSelection: { providerId: reasoningTarget.providerId, modelId: reasoningTarget.modelId, options: { reasoningLevel: reasoningTarget.reasoningLevel } } } : {}),
         },
       };
     } else {
@@ -580,10 +671,24 @@ if (needTempConfig) {
         return o;
       };
       cfg = rewrite(src);
+      if (reasoningTarget) {
+        /* ZB-29：personal 通道同样注入 defaultModelSelection（schema：Pu 可选字段，strict）。 */
+        cfg.config = {
+          ...cfg.config,
+          defaultModelSelection: {
+            providerId: reasoningTarget.providerId,
+            modelId: reasoningTarget.modelId,
+            options: { reasoningLevel: reasoningTarget.reasoningLevel },
+          },
+        };
+      }
       if (!hits) {
         console.error('[zcode-run] --model 未命中任何 modelId/personalModelIds/modelOrder 字段，拒绝继续（防静默用错模型）');
         process.exit(1);
       }
+    }
+    if (reasoningTarget) {
+      console.log(`[zcode-run] reasoning-level=${reasoningTarget.reasoningLevel} target=${reasoningTarget.providerId}/${reasoningTarget.modelId}`);
     }
     tempDir = join(tmpdir(), `zcode-cfg-${process.pid}-${Date.now()}`);
     mkdirSync(tempDir, { recursive: true });

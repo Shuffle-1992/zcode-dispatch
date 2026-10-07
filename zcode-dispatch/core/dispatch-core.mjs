@@ -88,6 +88,12 @@ const RES = {
 
 const num = (s) => (s == null || s === '-' ? null : Number(s));
 
+/* ZB-29：思考强度 —— runner `--list-providers` 的 `[zcode-run] reasoning-levels <model>=<a,b,c>` 行。
+ * 取值随模型声明不同（GLM-5 系 disabled|enabled；deepseek-v4 系 disabled|low|high|max），不写死枚举。 */
+const REASONING_LEVELS_RE = /^\[zcode-run\] reasoning-levels (\S+?)=(\S+)\s*$/;
+/* ZB-29：运行注入确认行（`reasoning-level=<档位> target=<providerId>/<modelId>`，派发时打印一次）。 */
+const REASONING_APPLIED_RE = /^\[zcode-run\] reasoning-level=(\S+) target=(\S+)\/(\S+)\s*$/;
+
 /* ---------------- 暂停原因识别（Z6；签名为 DSH 实测的错误输出关键词） ----------------
  * 顺序即优先级：entitlement / signing / config 属精确原因，先于较宽的 quota 组，
  * 防止 quota 组里的宽词（如 balance / 429）抢先用附带提及的行定性。 */
@@ -125,15 +131,22 @@ export function classifyPause(lines) {
  * 绝不猜测。 */
 const LIST_ROW_RE = /^(.+?)(true|false)\s+(\S+)\s+\|\s+(.+)$/;
 
-/** 解析 --list-providers 输出 → {rows:[{id,enabled,reason,endpoint,models}], warnings}。 */
+/** 解析 `--list-providers` 输出 → {rows:[{id,enabled,reason,endpoint,models}], modelLevels:{modelId:[levels]}, warnings}。 */
 export function parseProviderTable(text) {
   const warnings = [];
   const rows = [];
+  const modelLevels = {};
   if (text == null || !String(text).trim()) {
-    return { rows, warnings: ['list-providers 输出为空'] };
+    return { rows, modelLevels, warnings: ['list-providers 输出为空'] };
   }
   for (const raw of String(text).split('\n')) {
     const line = raw.replace(/\r$/, '');
+    /* ZB-29：思考强度档位行（runner 探测内置配置 modelRules 得出，随模型声明不同）。 */
+    const lvl = REASONING_LEVELS_RE.exec(line);
+    if (lvl) {
+      modelLevels[lvl[1]] = lvl[2].split(',').map((s) => s.trim()).filter(Boolean);
+      continue;
+    }
     const m = LIST_ROW_RE.exec(line);
     if (!m) continue;
     const id = m[1].trim();
@@ -154,7 +167,7 @@ export function parseProviderTable(text) {
     });
   }
   if (rows.length === 0) warnings.push('list-providers 输出里没有可识别的 provider 行');
-  return { rows, warnings };
+  return { rows, modelLevels, warnings };
 }
 
 /** 解析单行，返回字段更新对象；带 [zcode-run] 前缀但识别失败返回 null（调用方记 warning），普通行返回 {}。 */
@@ -183,6 +196,10 @@ export function parseRunnerLine(line) {
   if ((m = RES.start.exec(line))) return { runnerTag: m[1], runnerMode: m[2], runnerCwd: m[3] };
   if ((m = RES.resume.exec(line))) return { resume: m[1] };
   if ((m = RES.memoryBan.exec(line))) return { memoryBanSeen: true }; // ZB-28：runner 确认禁令已注入
+  if ((m = REASONING_APPLIED_RE.exec(line))) {
+    // ZB-29：确认思考强度已写入临时 provider 配置（job 上可观测Applied 值与目标）
+    return { reasoningLevelApplied: m[1], reasoningTarget: `${m[2]}/${m[3]}` };
+  }
   if (/^\[zcode-run\] cli=(?:.+)$/.test(line) || /^\[zcode-run\] task=(?:.+)$/.test(line)) return {}; // 已知信息行，无需入库
   if ((m = RES.outCombined.exec(line))) return { runnerOut: m[1], runnerErr: m[2], runnerResult: m[3] };
   if ((m = RES.out.exec(line))) return { runnerOut: m[1] };
@@ -1013,6 +1030,9 @@ export function createDispatcher(options = {}) {
     if (spec.model) args.push('--model', spec.model);
     if (spec.provider) args.push('--provider', spec.provider);
     if (spec.mode) args.push('--mode', spec.mode);
+    /* ZB-29：思考强度 —— 'agent'（Agent决定）不透传 = 不覆盖（ZCode 按模型默认档）；
+     * 具体档位经 runner 写入临时 provider 配置的 defaultModelSelection（仅新建会话生效）。 */
+    if (spec.reasoningLevel && spec.reasoningLevel !== 'agent') args.push('--reasoning-level', spec.reasoningLevel);
     if (spec.tag) args.push('--tag', spec.tag);
     if (spec.timeoutMin != null) args.push('--timeout-min', String(spec.timeoutMin));
     if (spec.cwd) args.push('--cwd', spec.cwd);
@@ -1156,6 +1176,11 @@ export function createDispatcher(options = {}) {
      *   （task 类型的禁令在 runner 侧拼装，见 collab-kit/zcode-run.mjs ZB-28 注释）。 */
     if (parsed.timedOut) { job.timedOut = true; if (job.timedOutBy == null) job.timedOutBy = 'runner'; }
     if (parsed.memoryBanSeen) job.memoryBanRunner = true;
+    /* ZB-29：runner 确认思考强度已注入（defaultModelSelection 写入临时 provider 配置）。 */
+    if (parsed.reasoningLevelApplied != null) {
+      job.reasoningLevelApplied = parsed.reasoningLevelApplied;
+      job.reasoningTarget = parsed.reasoningTarget;
+    }
     if (parsed.endpoint) job.endpoint = parsed.endpoint;
     if (parsed.usage) {
       job.usage = { ...job.usage, ...Object.fromEntries(Object.entries(parsed.usage).filter(([, v]) => v != null)) };
@@ -1396,6 +1421,19 @@ export function createDispatcher(options = {}) {
     }
     const names = readConfigNames();
     const cache = readPlanCache(warnings);
+    /* ZB-29：每个模型的思考强度档位（runner 探测输出；无该行 = 旧 runner，字段留空不猜）。 */
+    const modelLevels = parsed.modelLevels ?? {};
+    const levelsOf = (modelIds) => {
+      const set = new Set();
+      let seen = false;
+      for (const id of modelIds ?? []) {
+        const lv = modelLevels[id];
+        if (!lv) continue;
+        seen = true;
+        for (const x of lv) set.add(x);
+      }
+      return seen ? [...set] : null; // null = 声明缺失（不猜，UI 退回通用提示）
+    };
     const channels = parsed.rows.map((r) => ({
       id: r.id,
       name: names[r.id] ?? r.id,
@@ -1403,6 +1441,7 @@ export function createDispatcher(options = {}) {
       reason: r.reason ?? (cache[r.id]?.status === 'unavailable' ? cache[r.id]?.reason ?? null : null),
       endpoint: r.endpoint,
       models: r.models,
+      ...(Object.keys(modelLevels).length ? { thinkingLevels: levelsOf(r.models) } : {}),
       ...(cache[r.id]?.status ? { cacheStatus: cache[r.id].status } : {}),
     }));
     // plan 别名：runner 文档化行为「选第一个启用的 *coding-plan，其次 *start-plan」
@@ -1417,6 +1456,7 @@ export function createDispatcher(options = {}) {
       reason: pick ? null : '没有已启用的套餐 provider',
       endpoint: pick?.endpoint ?? null,
       models: pick ? [...pick.models] : [],
+      ...(Object.keys(modelLevels).length ? { thinkingLevels: pick ? levelsOf(pick.models) : null } : {}),
       ...(pick ? { aliasOf: pick.id } : {}),
     };
     return { channels: [planAlias, readPersonalChannel(warnings), ...channels], warnings };
@@ -1488,6 +1528,14 @@ export function createDispatcher(options = {}) {
     }
     if (spec.memoryBench && spec.kind !== 'prompt') throw new TypeError('dispatch(spec): memoryBench 仅支持 kind=prompt（runner 限制）');
     if (spec.timeoutMin != null && !(Number(spec.timeoutMin) > 0)) throw new TypeError('dispatch(spec): timeoutMin 必须为正数');
+    /* ZB-29：思考强度。'agent'（Agent决定，默认）在 core 层就不透传（= 不覆盖，ZCode 按模型默认档）；
+     * 具体档位随模型声明不同（GLM-5 系 disabled|enabled、deepseek-v4 系 disabled|low|high|max），
+     * core 不写死枚举 —— runner 按 builtin 声明校验，非法档位 fail-fast（不静默降级）。 */
+    if (spec.reasoningLevel != null) {
+      if (typeof spec.reasoningLevel !== 'string' || !spec.reasoningLevel.trim()) {
+        throw new TypeError('dispatch(spec): reasoningLevel 必须是非空字符串（或 "agent" = Agent决定）');
+      }
+    }
   }
 
   /** 原始派发：spec 已是完全确定的形式（retry 内部走这里，保证 --resume 时不被注入 --model）。
@@ -1512,6 +1560,7 @@ export function createDispatcher(options = {}) {
       provider: null,
       endpoint: null,
       model: spec.model ?? null,
+      reasoningLevel: spec.reasoningLevel ?? null, // ZB-29：思考强度请求（'agent'=Agent决定：不覆盖，ZCode 按模型默认档；具体档位见 channels[].thinkingLevels）
       usage: { requests: null, inputTokens: null, outputTokens: null, cacheReadTokens: null },
       contextUsed: null,
       contextWindow: null,
@@ -1683,6 +1732,8 @@ export function createDispatcher(options = {}) {
       ...(job.spec.lock ? { lock: job.spec.lock } : {}),
       ...(job.spec.cwd ? { cwd: job.spec.cwd } : {}),
       ...(job.spec.timeoutMin != null ? { timeoutMin: job.spec.timeoutMin } : {}),
+      /* ZB-29：交接重跑是新会话，沿用原任务的思考强度档位（'agent' 照传 = 继续不覆盖）。 */
+      ...(job.spec.reasoningLevel ? { reasoningLevel: job.spec.reasoningLevel } : {}),
       ...(job.tag ? { tag: `${job.tag}-h${prevAttempts.length + 1}` } : {}),
     };
     const nj = dispatchRaw(spec, { raw: true }); // 簿记必须写在存储态真实对象上（get() 返回克隆，写它会丢）

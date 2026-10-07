@@ -144,6 +144,7 @@ return Array.isArray(body?.data) && body.data.length > 0;
   ZCode 自主规划并自续跑直到达成，适合无人值守委托；与 prompt/task 互斥是 CLI 限制）；
   `task`=任务包文件绝对路径（含交付物/验收标准的正式任务，由 runner 读文件内联）。
   可选 `model(GLM-5.3|GLM-5.3-Flash)`、`provider(plan|personal)`、`mode(build|edit|plan|yolo，默认 edit)`、
+  **`thinking(思考强度，默认 agent=Agent决定，见「思考强度（thinking）」小节)`**、
   `timeoutMin(>0，无上限；runner 生效下限 1 分钟)`、`memoryBench(仅 kind=prompt)`、`tag`、
   `lock(repo|none，**默认 repo**；none=明确不取锁)`、`write(预计写入的文件列表)`、`cwd`、`resume`。
 - `list` / `kill(id)` / `dismiss(id)` / `tail(id, n=30)` / `quota`（本地台账 5h 滚动 / 本周 / 今日聚合 +
@@ -420,6 +421,33 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 | 手里只有**裸 sessionId**（job 已不在派发台，或 run 来自派发台之外） | `action=dispatch, resume: <sessionId>`（+ 同通道） | 新建 job 续接该会话；core 不会注入通道默认 model（F2：`--resume` 带 `--model` 必失败） |
 | 想在同一会话里发**新指令** | `dispatch(resume)` 带新 prompt（面板「续接」按钮同款） | 同上 |
 
+## 思考强度（thinking / reasoningLevel，ZB-29）
+
+**用户可见语义（一句话）**：派发时可指定 ZCode 的思考强度（Thought Level）；默认档
+**「Agent决定」**= 由派发方 Agent 按任务自行判断并改传具体档位；传了具体档位则严格执行。
+
+| 取值 | 行为 |
+|---|---|
+| `agent`（**默认**，Agent决定） | core **不透传** runner 参数 ⇒ 不覆盖，ZCode 按模型默认档。工具说明要求调用方 Agent：判断任务后**改传具体档位**（查询/机械任务 → 低档；复杂推理/架构 → 高档），别把 agent 原样传下去 |
+| 具体档位（如 `enabled`） | 严格生效：runner 写入临时 provider 配置的 `defaultModelSelection.options.reasoningLevel`（ZCode headless 启动读取它作为**会话初始模型选择**）；面板/人工派发同理 |
+
+规则与边界：
+
+- **档位集合随模型声明不同，不写死枚举**：runner 探测 builtin 配置 `modelRules`（按序 overlay），
+  经 `--list-providers` 输出 `[zcode-run] reasoning-levels <model>=<a,b>`，core 解析为
+  `channels[].thinkingLevels` 供面板下拉与 Agent 查询。当前实测：GLM-5.3/Flash = `disabled|enabled`；
+  deepseek-v4 系 = `disabled|low|high|max`。
+- **fail-fast 不静默**：runner 校验（模型声明了档位集合而请求值不在其中 ⇒ 拒绝派发并列出可用值）；
+  ZCode 会话创建也会校验（defaultModelSelection 非法 ⇒ 会话创建失败）。
+- **仅新建会话生效**：`--resume` 沿用原会话档位（ZCode 语义；core 对 resume 不透传，runner 警告）。
+- **可观测**：job 带 `reasoningLevel`（请求档）与 `reasoningLevelApplied`/`reasoningTarget`
+  （runner 确认已注入 + 注入目标）；面板详情行显示档位。
+- 面板派发栏有「思考强度」下拉（Agent决定 + 该通道档位集）；`--list-providers` 无档位数据
+  （旧 runner）时下拉只剩 Agent决定 —— 不猜。
+
+证据：`test/thinking-level.test.mjs`（7 项：解析/通道透出/core 透传与字段/wire 映射/validateSpec/
+交接沿用/runner 注入 hermetic 干跑 + fail-fast + resume 跳过）。
+
 ## 枚举与 channels 清单，以谁为准（ZB-28）
 
 **一句话：通道可用性与真实 id，一律以 `action=channels` 的实时清单为唯一权威。**
@@ -506,6 +534,7 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 | `node test/lock-badge.test.mjs` | 34 | 进程行锁徽标（ZB-18：区分整仓库锁 / 文件锁 N / 不取锁 / 旧版记录）+ **全仓防复发扫描**（ZB-19） |
 | `node test/lock-queue-visibility.test.mjs` | 6 | 锁排队可观测（ZB-28：lockWait 的 blockers 指认持有者、ahead 同类计数、estWaitSec 上界/不猜、跨层级 cross 条目、wire 透传） |
 | `node test/pause-timeout.test.mjs` | 5 | paused 与超时（ZB-28：`(超时)` 标记 → failed+timedOutBy=runner、看门狗 → killed、pausedAt 落字段、unknown 分支、timeoutMin 校验） |
+| `node test/thinking-level.test.mjs` | 7 | 思考强度（ZB-29：`thinking` 参数与 'agent'=Agent决定不透传、档位透传 `--reasoning-level`、channels[].thinkingLevels、validateSpec、交接沿用、runner 注入 hermetic 干跑 + fail-fast + resume 跳过） |
 | `node test/memory-ban.test.mjs` | 6 | 记忆禁令注入（ZB-20/28：prompt/target 拼进内容；**task 经 runner `--memory-ban` 旗标**，memoryBanRunner=runner 确认位） |
 | `node test/panel-style.test.mjs` | 24 | 样式注入与作用域（ZB-21/27：样式只注入 head 一次、重渲染不触碰；border-box 限定 .zcd-menu 子树） |
 | `node test/notify.test.mjs` | 21 | 落地自动唤醒（ZB-22：空闲 followup / 忙碌 inject、幂等、自己 kill/wait 的抑制、唤醒预算、卸载退订、工具层译码） |

@@ -49,6 +49,11 @@ if (env.FAKE_PAUSE_TEXT) {
 }
 
 if (env.FAKE_MEMORY_BAN_LINE) console.log('[zcode-run] memory-ban=on（已在提示词末尾注入记忆禁令）');
+/* ZB-29：回显收到的 --reasoning-level（模拟真实 runner 的注入确认行，供 core 解析成 job.reasoningLevelApplied）。 */
+const rlIdx = process.argv.indexOf('--reasoning-level');
+if (rlIdx >= 0 && process.argv[rlIdx + 1]) {
+  console.log(`[zcode-run] reasoning-level=${process.argv[rlIdx + 1]} target=fake-plan/fake-model`);
+}
 
 if (!skip.has('done')) {
   /* ZB-28：FAKE_TIMEOUT_DONE=1 时模仿真实 runner 的自身超时形态（exit=124 + `(超时)` 标记）。 */

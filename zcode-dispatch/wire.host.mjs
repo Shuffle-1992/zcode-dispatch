@@ -202,6 +202,8 @@ export function slimJob(job) {
        * 导致未显式传 lock 的 job 在快照里仍显示 'both'（与实际生效的 repo 锁不符）。 */
       lock: spec?.lock ?? 'repo',
       timeoutMin: spec?.timeoutMin ?? null,
+      /* ZB-29：思考强度（'agent'=Agent决定；null=未指定，等价 agent 语义）。 */
+      reasoningLevel: spec?.reasoningLevel ?? null,
       memoryBench: Boolean(spec?.memoryBench),
       tag: spec?.tag ?? null,
       /* ZB-08：声明的写入集（细粒度文件锁）。null/[] = 未声明 ⇒ 锁整个仓库。 */
@@ -272,6 +274,10 @@ export function createActionHandler(dispatcher, config = {}) {
            * 不声明（null/空数组）⇒ core 回退到 repo/memory 粗粒度锁，安全语义不变。 */
           if (Array.isArray(p.write) && p.write.length > 0) spec.write = p.write.filter((x) => typeof x === 'string' && x.trim());
           if (p.lock != null && p.lock !== '') spec.lock = p.lock;
+          /* ZB-29：思考强度（thinking）→ spec.reasoningLevel。'agent'（Agent决定，默认）原样进 spec
+           * —— core 层不透传给 runner = 不覆盖（ZCode 按模型默认档）；具体档位由 runner 按
+           * builtin 声明校验（非法 fail-fast，不静默降级）。 */
+          if (p.thinking != null && String(p.thinking).trim() !== '') spec.reasoningLevel = String(p.thinking).trim();
           if (p.timeoutMin != null && p.timeoutMin !== '') spec.timeoutMin = Number(p.timeoutMin);
           if (p.memoryBench != null) spec.memoryBench = Boolean(p.memoryBench);
           const job = dispatcher.dispatch(spec); // 参数不合法时 core 抛 TypeError，走 catch 返回 error
