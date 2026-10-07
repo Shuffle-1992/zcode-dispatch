@@ -186,7 +186,8 @@ window.__ModuleLoader__.load({
       '.zcd-empty{color:' + T.text3 + ';}',
       /* ZB-16：行内也走容器 gap（原先靠各块自带 marginTop，头与反馈行之间是贴着的） */
       '.zcd-job{display:flex;flex-direction:column;gap:8px;border:1px solid ' + T.border + ';border-radius:6px;padding:7px 9px;}',
-      '.zcd-job-head{display:flex;align-items:center;gap:8px;min-height:24px;flex-wrap:wrap;}',
+      '.zcd-job-head{display:flex;flex-direction:column;align-items:stretch;gap:2px;min-height:24px;}',
+      '.zcd-job-line{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap;}',
       '.zcd-job-tag{font-weight:600;max-width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
       '.zcd-dim{color:' + T.text3 + ';white-space:nowrap;font-size:10px;line-height:15px;}',
       '.zcd-spring{flex:1;}',
@@ -2196,30 +2197,37 @@ window.__ModuleLoader__.load({
             setOpen(!open);
           },
         },
-          h(StatusDot, { state: job.state }),
-          h('span', { className: 'zcd-job-tag', title: job.id }, job.tag ?? shortId(job.id)),
-          h('span', { className: 'zcd-badge' }, job.model ?? '—'),
-          /* ZB-29：思考强度徽标紧跟模型（用户要求）——'agent'=Agent决定；具体档位原样显示；
-           * 旧任务（无该字段）不显示，不伪造。 */
-          spec.reasoningLevel ? h('span', {
-            className: 'zcd-badge', title: t('thinkingHint'),
-          }, spec.reasoningLevel === 'agent' ? t('thinkingAgentShort') : spec.reasoningLevel) : null,
-          paused ? h('span', { className: 'zcd-badge s-paused', title: job.pauseDetail ?? '' }, `${t('paused')}：${pauseLabel(job.pauseReason)}`) : null,
-          job.parentJobId ? h('span', { className: 'zcd-badge', title: job.parentJobId }, `${t('parentFrom')} ${shortId(job.parentJobId)}`) : null,
-          (job.hopCount ?? 0) > 0 ? h('span', { className: 'zcd-badge' }, `${job.hopCount} ${t('hop')}`) : null,
-          h('span', { className: 'zcd-dim' }, fmtSec(job.elapsedSec)),
-          h('span', { className: 'zcd-dim', title: `${job.contextUsed ?? '—'} / ${job.contextWindow ?? '—'} tokens` }, ctxLabel(job)),
-          job.exitCode != null ? h('span', { className: 'zcd-dim' }, `${t('exit')} ${job.exitCode}`) : null,
-          /* ZB-18：锁徽标区分「整仓库锁」/「文件锁 N」/「不取锁」；tooltip 给出细节与文件列表。
-           * 旧版本记录（含 memory）如实显示为旧形态，不伪装成新模型。 */
-          (() => {
-            const lk = lockKindOf(job);
-            if (lk.kind === 'none') return null;
-            return h('span', {
-              className: `zcd-badge zcd-lock-${lk.kind}`,
-              title: lk.detail || t('lockHeld'),
-            }, lk.label);
-          })(),
+          /* ZB-29b（用户要求）：行头改**两行布局** ——
+           * 上行 = 状态灯 + 进程名 + 模型 + 思考强度 + （paused/接续/跳数徽标）+ 文件锁；
+           * 下行 = 时间 + 上下文 + 退出。两行各自 flex、可换行，行头整体仍是一键开合（role=button 不变）。 */
+          h('div', { className: 'zcd-job-line' },
+            h(StatusDot, { state: job.state }),
+            h('span', { className: 'zcd-job-tag', title: job.id }, job.tag ?? shortId(job.id)),
+            h('span', { className: 'zcd-badge' }, job.model ?? '—'),
+            /* ZB-29：思考强度徽标紧跟模型——'agent'=Agent决定；具体档位原样显示；
+             * 旧任务（无该字段）不显示，不伪造。 */
+            spec.reasoningLevel ? h('span', {
+              className: 'zcd-badge', title: t('thinkingHint'),
+            }, spec.reasoningLevel === 'agent' ? t('thinkingAgentShort') : spec.reasoningLevel) : null,
+            paused ? h('span', { className: 'zcd-badge s-paused', title: job.pauseDetail ?? '' }, `${t('paused')}：${pauseLabel(job.pauseReason)}`) : null,
+            job.parentJobId ? h('span', { className: 'zcd-badge', title: job.parentJobId }, `${t('parentFrom')} ${shortId(job.parentJobId)}`) : null,
+            (job.hopCount ?? 0) > 0 ? h('span', { className: 'zcd-badge' }, `${job.hopCount} ${t('hop')}`) : null,
+            /* ZB-18：锁徽标区分「整仓库锁」/「文件锁 N」/「不取锁」；tooltip 给出细节与文件列表。
+             * 旧版本记录（含 memory）如实显示为旧形态，不伪装成新模型。 */
+            (() => {
+              const lk = lockKindOf(job);
+              if (lk.kind === 'none') return null;
+              return h('span', {
+                className: `zcd-badge zcd-lock-${lk.kind}`,
+                title: lk.detail || t('lockHeld'),
+              }, lk.label);
+            })(),
+          ),
+          h('div', { className: 'zcd-job-line' },
+            h('span', { className: 'zcd-dim' }, fmtSec(job.elapsedSec)),
+            h('span', { className: 'zcd-dim', title: `${job.contextUsed ?? '—'} / ${job.contextWindow ?? '—'} tokens` }, ctxLabel(job)),
+            job.exitCode != null ? h('span', { className: 'zcd-dim' }, `${t('exit')} ${job.exitCode}`) : null,
+          ),
         ),
         /* 反馈行移到动作区之外：关闭按钮现在在行头，终态行没有动作区，失败反馈仍需可见。 */
         retryFb ? h('div', { className: 'zcd-note', role: 'status' }, retryFb) : null,
