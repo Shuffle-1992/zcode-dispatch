@@ -39,6 +39,7 @@
     "bench": "--memory-bench",
     "thinking": "思考强度",
     "thinkingAgent": "Agent决定（按任务判断）",
+    "thinkingAgentShort": "Agent决定",
     "thinkingHint": "Agent决定=由派发方按任务判断并改传具体档位；具体档位严格生效（仅新建会话；--resume 沿用原会话档位）",
     "content": "内容",
     "dispatch": "派发",

@@ -39,6 +39,7 @@
     "bench": "--memory-bench",
     "thinking": "Thinking",
     "thinkingAgent": "Agent decides (per task)",
+    "thinkingAgentShort": "Agent decides",
     "thinkingHint": "Agent decides = the dispatching agent picks a concrete level per task; a concrete level is enforced (new sessions only; --resume keeps the session level)",
     "content": "Content",
     "dispatch": "Dispatch",

@@ -407,7 +407,7 @@ window.__ModuleLoader__.load({
         phPrompt: '输入要发给 ZCode 的提示词…', phTask: '任务文件绝对路径…', phTarget: '要达成的目标…',
         model: '模型', provider: '通道', providerPlan: '套餐', providerPersonal: '个人 Key',
         mode: '模式', timeout: '超时(分)', bench: '--memory-bench',
-        thinking: '思考强度', thinkingAgent: 'Agent决定（按任务判断）',
+        thinking: '思考强度', thinkingAgent: 'Agent决定（按任务判断）', thinkingAgentShort: 'Agent决定',
         thinkingHint: 'Agent决定=由派发方按任务判断并改传具体档位；具体档位严格生效（仅新建会话；--resume 沿用原会话档位）',
         dispatch: '派发', queuedBtn: '排队中…', runningBtn: '执行中…', sending: '提交中…',
         fbQueued: '已排队：', errPrefix: '失败：', errEmpty: '请先填写内容',
@@ -459,7 +459,7 @@ window.__ModuleLoader__.load({
         phPrompt: 'Prompt to send to ZCode…', phTask: 'Absolute path of task file…', phTarget: 'Goal to achieve…',
         model: 'Model', provider: 'Channel', providerPlan: 'Plan', providerPersonal: 'Personal key',
         mode: 'Mode', timeout: 'Timeout (min)', bench: '--memory-bench',
-        thinking: 'Thinking', thinkingAgent: 'Agent decides (per task)',
+        thinking: 'Thinking', thinkingAgent: 'Agent decides (per task)', thinkingAgentShort: 'Agent decides',
         thinkingHint: 'Agent decides = the dispatching agent picks a concrete level per task; a concrete level is enforced (new sessions only; --resume keeps the session level)',
         dispatch: 'Dispatch', queuedBtn: 'Queued…', runningBtn: 'Running…', sending: 'Sending…',
         fbQueued: 'Queued: ', errPrefix: 'Failed: ', errEmpty: 'Content is required',
@@ -2199,6 +2199,11 @@ window.__ModuleLoader__.load({
           h(StatusDot, { state: job.state }),
           h('span', { className: 'zcd-job-tag', title: job.id }, job.tag ?? shortId(job.id)),
           h('span', { className: 'zcd-badge' }, job.model ?? '—'),
+          /* ZB-29：思考强度徽标紧跟模型（用户要求）——'agent'=Agent决定；具体档位原样显示；
+           * 旧任务（无该字段）不显示，不伪造。 */
+          spec.reasoningLevel ? h('span', {
+            className: 'zcd-badge', title: t('thinkingHint'),
+          }, spec.reasoningLevel === 'agent' ? t('thinkingAgentShort') : spec.reasoningLevel) : null,
           paused ? h('span', { className: 'zcd-badge s-paused', title: job.pauseDetail ?? '' }, `${t('paused')}：${pauseLabel(job.pauseReason)}`) : null,
           job.parentJobId ? h('span', { className: 'zcd-badge', title: job.parentJobId }, `${t('parentFrom')} ${shortId(job.parentJobId)}`) : null,
           (job.hopCount ?? 0) > 0 ? h('span', { className: 'zcd-badge' }, `${job.hopCount} ${t('hop')}`) : null,
@@ -2276,10 +2281,10 @@ window.__ModuleLoader__.load({
             detailBody != null && detailBody !== '' ? h('div', { className: 'zcd-mono' }, clampText(detailBody, 1200)) : null,
             kvRow(t('provider'), spec.provider ?? job.provider),
             kvRow(t('model'), spec.model ?? job.model),
+            /* ZB-29：思考强度紧跟「模型」显示（用户要求）——'agent'=Agent决定；具体档位严格生效（新建会话）。 */
+            spec.reasoningLevel ? kvRow(t('thinking'), spec.reasoningLevel === 'agent' ? t('thinkingAgent') : spec.reasoningLevel) : null,
             kvRow(t('mode'), spec.mode),
             kvRow(t('cwd'), spec.cwd),
-            /* ZB-29：思考强度 —— 'agent'=Agent决定（未覆盖）；具体档位 = 严格生效（新建会话）。 */
-            spec.reasoningLevel ? kvRow(t('thinking'), spec.reasoningLevel === 'agent' ? t('thinkingAgent') : spec.reasoningLevel) : null,
             spec.timeoutMin != null ? kvRow(t('timeout'), String(spec.timeoutMin)) : null,
             kvRow(t('createdAt'), job.queuedAt ? fmtTime(job.queuedAt) : null),
             kvRow(t('sessionId'), job.sessionId),

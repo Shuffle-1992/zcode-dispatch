@@ -101,18 +101,19 @@ test('listChannels：通道带 thinkingLevels（plan 别名继承选中 provider
 /* ---------- C/D. core 透传 + 字段 + wire 映射 + validateSpec ---------- */
 test('★ core：具体档位 → runner 参数 --reasoning-level；agent/未指定 → 不透传', async () => {
   const workRoot = newDir('zcd-think-');
-  const argvDir = newDir('zcd-argv-');
-  process.env.FAKE_ARGV_FILE = join(argvDir, 'argv');
   const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot, maxConcurrent: 1 });
+  /* 每次派发独立 argv 目录（文件名带 fake runner 子进程 pid，同目录多文件会有字典序歧义）。 */
+  const readArgvOf = (argvDir) => {
+    const files = readdirSync(argvDir).filter((f) => f.endsWith('.json'));
+    assert.equal(files.length, 1, `该目录应恰有一份 argv（实际 ${files.length}）`);
+    return JSON.parse(readFileSync(join(argvDir, files[0]), 'utf8'));
+  };
 
+  const argvDir1 = newDir('zcd-argv1-');
+  process.env.FAKE_ARGV_FILE = join(argvDir1, 'argv');
   const j1 = d.dispatch({ kind: 'prompt', prompt: 'x', tag: 't1', reasoningLevel: 'enabled' });
   const done1 = await waitTerminal(d, j1.id);
-  /* argv 文件名带 fake runner 子进程 pid（未知）⇒ 读目录最新文件（memory-ban 测试同款）。 */
-  const readLatestArgv = () => {
-    const files = readdirSync(argvDir).filter((f) => f.endsWith('.json')).sort();
-    return JSON.parse(readFileSync(join(argvDir, files.at(-1)), 'utf8'));
-  };
-  const argv1 = readLatestArgv();
+  const argv1 = readArgvOf(argvDir1);
   const i1 = argv1.indexOf('--reasoning-level');
   assert.ok(i1 >= 0, '具体档位应透传 --reasoning-level');
   assert.equal(argv1[i1 + 1], 'enabled');
@@ -120,12 +121,15 @@ test('★ core：具体档位 → runner 参数 --reasoning-level；agent/未指
   assert.equal(done1.reasoningLevelApplied, 'enabled', '假 runner 回显 ⇒ Applied 确认位');
   assert.equal(done1.reasoningTarget, 'fake-plan/fake-model');
 
+  const argvDir2 = newDir('zcd-argv2-');
+  process.env.FAKE_ARGV_FILE = join(argvDir2, 'argv');
   const j2 = d.dispatch({ kind: 'prompt', prompt: 'y', tag: 't2', reasoningLevel: 'agent' });
   const done2 = await waitTerminal(d, j2.id);
-  const argv2 = readLatestArgv();
+  const argv2 = readArgvOf(argvDir2);
   assert.ok(!argv2.includes('--reasoning-level'), "★ 'agent'（Agent决定）不透传 = 不覆盖");
   assert.equal(done2.reasoningLevel, 'agent');
   assert.equal(done2.reasoningLevelApplied, undefined, '未注入 ⇒ 无 Applied 确认');
+  delete process.env.FAKE_ARGV_FILE;
 
   const j3 = d.dispatch({ kind: 'prompt', prompt: 'z', tag: 't3' });
   const done3 = await waitTerminal(d, j3.id);
