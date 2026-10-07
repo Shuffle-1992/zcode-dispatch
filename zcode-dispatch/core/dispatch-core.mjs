@@ -455,7 +455,7 @@ export function createDispatcher(options = {}) {
   // Z6：默认通道与自动降级链（持久化于 workRoot/state，绝不写 $DSH_HOME）
   const channelFile = join(dirState, 'channel.json');
   const fallbackFile = join(dirState, 'fallback.json');
-  let channel = { provider: 'plan', model: null };
+  let channel = { provider: 'plan', model: null, reasoningLevel: 'agent' }; // ZB-29d：通道默认思考强度（'agent'=Agent决定，给派发 Agent 的规定）
   let fallbackChain = [];
 
   const isTerminal = (job) => TERMINAL_STATES.has(job.state);
@@ -1286,17 +1286,30 @@ export function createDispatcher(options = {}) {
     })();
   }
 
-  /** 当前默认通道（dispatch 未显式指定 provider/model 时采用）。 */
+  /** 当前默认通道（dispatch 未显式指定 provider/model 时采用；reasoningLevel=通道默认思考强度）。 */
   function getChannel() {
     return { ...channel };
   }
 
-  /** 设默认通道并持久化到 <workRoot>/state/channel.json（不校验可用性——可用性看 listChannels，不猜）。 */
+  /* ZB-29d：思考强度归一（'agent'=Agent决定 或 具体档位；非法/空 → 回退 fallback，不猜）。 */
+  const normReasoning = (v, fallback) => {
+    if (v == null) return fallback;
+    const s = String(v).trim();
+    if (!s) return fallback;
+    return s === 'agent' || /^[A-Za-z0-9_-]{1,32}$/.test(s) ? s : fallback;
+  };
+
+  /** 设默认通道并持久化到 <workRoot>/state/channel.json（不校验可用性——可用性看 listChannels，不猜）。
+   *  ZB-29d：reasoningLevel = 通道默认思考强度（'agent'=Agent决定 / 具体档位）；缺省沿用原值。 */
   function setChannel(next = {}) {
     const provider = next.provider == null ? channel.provider : String(next.provider);
     const model = next.model == null || next.model === '' ? null : String(next.model);
     if (!provider) throw new TypeError('setChannel: provider 不能为空');
-    channel = { provider, model };
+    channel = {
+      provider,
+      model,
+      reasoningLevel: normReasoning(next.reasoningLevel, channel.reasoningLevel ?? 'agent'),
+    };
     atomicWrite(channelFile, `${JSON.stringify({ version: 1, ...channel, updatedAt: new Date(nowMs()).toISOString() }, null, 2)}\n`);
     return getChannel();
   }
@@ -1305,7 +1318,11 @@ export function createDispatcher(options = {}) {
     try {
       const data = JSON.parse(readFileSync(channelFile, 'utf8'));
       if (data && typeof data.provider === 'string' && data.provider) {
-        channel = { provider: data.provider, model: typeof data.model === 'string' && data.model ? data.model : null };
+        channel = {
+          provider: data.provider,
+          model: typeof data.model === 'string' && data.model ? data.model : null,
+          reasoningLevel: normReasoning(data.reasoningLevel, 'agent'),
+        };
       }
     } catch { /* 无文件/损坏：用默认通道 */ }
   }
@@ -1611,11 +1628,15 @@ export function createDispatcher(options = {}) {
     return raw ? job : get(id);
   }
 
-  /** 公共派发入口：未显式指定 provider/model 时采用默认通道（getChannel）。 */
+  /** 公共派发入口：未显式指定 provider/model 时采用默认通道（getChannel）。
+   *  ZB-29d：未显式指定 reasoningLevel 时按**通道默认思考强度**执行——通道设置就是给派发
+   *  Agent 的规定（'agent'=Agent决定：runner 按 ZCode 默认规则 values.at(-1) 解析成实际档；
+   *  具体档位=硬性规定）。放在 core 层 ⇒ 工具/CLI/面板三条入口统一生效。 */
   function dispatch(spec) {
     validateSpec(spec);
     const effSpec = { ...spec };
     if (effSpec.provider == null && channel.provider) effSpec.provider = channel.provider;
+    if (effSpec.reasoningLevel == null && channel.reasoningLevel) effSpec.reasoningLevel = channel.reasoningLevel;
     /* F2（机制事实，2026-09-30 现场复现）：`--resume` 带 `--model` 必失败
      * （runner 侧报 `Error: Model creation failed`，exit=1，resultFile 不产出）。
      * 故**续接时绝不注入通道默认 model** —— 与 retry 里的 `delete spec.model`（:1101）同一条纪律。

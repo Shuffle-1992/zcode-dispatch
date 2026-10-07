@@ -274,9 +274,11 @@ export function createActionHandler(dispatcher, config = {}) {
            * 不声明（null/空数组）⇒ core 回退到 repo/memory 粗粒度锁，安全语义不变。 */
           if (Array.isArray(p.write) && p.write.length > 0) spec.write = p.write.filter((x) => typeof x === 'string' && x.trim());
           if (p.lock != null && p.lock !== '') spec.lock = p.lock;
-          /* ZB-29：思考强度（thinking）→ spec.reasoningLevel。'agent'（Agent决定，默认）原样进 spec
-           * —— core 层不透传给 runner = 不覆盖（ZCode 按模型默认档）；具体档位由 runner 按
-           * builtin 声明校验（非法 fail-fast，不静默降级）。 */
+          /* ZB-29：思考强度（thinking）→ spec.reasoningLevel。'agent'（Agent决定）原样进 spec
+           * —— runner 按 ZCode 默认规则（模型声明档位的最后一档）解析成实际档并注入；
+           * 具体档位由 runner 按 builtin 声明校验（非法 fail-fast，不静默降级）。
+           * ZB-29d：不传 thinking ⇒ 按通道默认思考强度（回退在 core dispatch() 统一实现，
+           * 工具/CLI/面板三条入口一致）。 */
           if (p.thinking != null && String(p.thinking).trim() !== '') spec.reasoningLevel = String(p.thinking).trim();
           if (p.timeoutMin != null && p.timeoutMin !== '') spec.timeoutMin = Number(p.timeoutMin);
           if (p.memoryBench != null) spec.memoryBench = Boolean(p.memoryBench);
@@ -378,7 +380,12 @@ export function createActionHandler(dispatcher, config = {}) {
         }
         case 'channel': {
           if (p.provider != null && p.provider !== '') {
-            const channel = dispatcher.setChannel({ provider: p.provider, model: p.model ?? null });
+            /* ZB-29d：通道默认思考强度（reasoningLevel/thinking 二名均可；缺省沿用原值不重置）。 */
+            const channel = dispatcher.setChannel({
+              provider: p.provider,
+              model: p.model ?? null,
+              reasoningLevel: p.reasoningLevel ?? p.thinking ?? null,
+            });
             return { ok: true, channel };
           }
           return { ok: true, channel: dispatcher.getChannel() };

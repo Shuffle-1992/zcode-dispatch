@@ -135,12 +135,12 @@ test('★ core：具体档位 → runner 参数 --reasoning-level；agent/未指
 
   const j3 = d.dispatch({ kind: 'prompt', prompt: 'z', tag: 't3' });
   const done3 = await waitTerminal(d, j3.id);
-  assert.equal(done3.reasoningLevel, null, '未指定 ⇒ job.reasoningLevel=null');
+  assert.equal(done3.reasoningLevel, 'agent', '未指定 ⇒ 通道默认思考强度（新通道未设置即 agent=Agent决定）');
   assert.throws(() => d.dispatch({ kind: 'prompt', prompt: 'x', reasoningLevel: '  ' }), TypeError, '空白档位拒绝');
   assert.throws(() => d.dispatch({ kind: 'prompt', prompt: 'x', reasoningLevel: 3 }), TypeError, '非字符串拒绝');
 });
 
-test('wire：dispatch 的 thinking 参数 → spec.reasoningLevel（工具层映射）', async () => {
+test('wire：dispatch 的 thinking 参数 → spec.reasoningLevel（工具层映射 + 通道默认回退）', async () => {
   const workRoot = newDir('zcd-think-');
   const d = createDispatcher({ runnerPath: FAKE_RUNNER, workRoot, maxConcurrent: 1 });
   const handle = createActionHandler(d, {});
@@ -148,8 +148,14 @@ test('wire：dispatch 的 thinking 参数 → spec.reasoningLevel（工具层映
   assert.equal(r.ok, true);
   assert.equal(r.job.spec.reasoningLevel, 'enabled', '工具参数 thinking 落到 spec.reasoningLevel');
   const r2 = await handle('dispatch', { kind: 'prompt', prompt: 'y' });
-  assert.equal(r2.job.spec.reasoningLevel, null, '不传 = 未指定（等价 agent 语义）');
-  await Promise.all([r.job.id, r2.job.id].map((id) => waitTerminal(d, id)));
+  assert.equal(r2.job.spec.reasoningLevel, 'agent', '不传 thinking ⇒ 通道默认（新通道未设置即 agent）');
+  /* ZB-29d：通道设置即给派发 Agent 的规定——设了具体档位，未显式指定的派发一律按它执行 */
+  await handle('channel', { provider: 'plan', reasoningLevel: 'disabled' });
+  const r3 = await handle('dispatch', { kind: 'prompt', prompt: 'z' });
+  assert.equal(r3.job.spec.reasoningLevel, 'disabled', '★ 通道设置的档位 = 未显式指定派发的硬性规定');
+  const r4 = await handle('dispatch', { kind: 'prompt', prompt: 'w', thinking: 'agent' });
+  assert.equal(r4.job.spec.reasoningLevel, 'agent', '显式 agent 覆盖通道设置（Agent决定）');
+  await Promise.all([r.job.id, r2.job.id, r3.job.id, r4.job.id].map((id) => waitTerminal(d, id)));
 });
 
 test('retry 交接重跑：沿用原任务的思考强度档位', async () => {

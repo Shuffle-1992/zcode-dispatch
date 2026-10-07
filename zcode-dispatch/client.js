@@ -68,7 +68,7 @@ window.__ModuleLoader__.load({
     const SEC = { channel: 'channel', dispatch: 'dispatch', jobs: 'jobs', quota: 'quota', locks: 'locks' };
     const secKey = (id) => `zcode-dispatch:section:${id}`;
     // 默认展开/收起：通道与派发收起（少滚动）；进程与用量展开（主信息）；单写者收起
-    const SEC_DEFAULT_OPEN = { [SEC.channel]: false, [SEC.dispatch]: false, [SEC.jobs]: true, [SEC.quota]: true, [SEC.locks]: false };
+    const SEC_DEFAULT_OPEN = { [SEC.channel]: false, [SEC.jobs]: true, [SEC.quota]: true, [SEC.locks]: false }; // ZB-29c：派发分区已移除
     // z-index 仅约束浮层自身的层级（不写全局样式、不碰宿主 DOM），取固定较大值避免被页面浮层盖住
     const Z_INDEX = 2000000000;
     const WIDTH = { min: 320, max: 600, def: 440 };
@@ -421,6 +421,8 @@ window.__ModuleLoader__.load({
         model: '模型', provider: '通道', providerPlan: '套餐', providerPersonal: '个人 Key',
         mode: '模式', timeout: '超时(分)', bench: '--memory-bench',
         thinking: '思考强度', thinkingAgent: 'Agent决定（按任务判断）', thinkingAgentShort: 'Agent决定',
+        thinkingFollow: '跟随通道', dispatchThinkingHint: '跟随通道=按通道设置的思考强度派发（在「通道」分区设置）；具体档位=本条派发严格生效（仅新建会话）',
+        chanThinkingHint: '通道默认思考强度：Agent决定=由派发方 Agent 按任务自行改传具体档位；具体档位=给派发 Agent 的硬性规定（未显式指定的派发一律按它执行，仅新建会话生效）',
         thinkingHint: 'Agent决定=由派发方按任务判断并改传具体档位；具体档位严格生效（仅新建会话；--resume 沿用原会话档位）',
         dispatch: '派发', queuedBtn: '排队中…', runningBtn: '执行中…', sending: '提交中…',
         fbQueued: '已排队：', errPrefix: '失败：', errEmpty: '请先填写内容',
@@ -473,6 +475,8 @@ window.__ModuleLoader__.load({
         model: 'Model', provider: 'Channel', providerPlan: 'Plan', providerPersonal: 'Personal key',
         mode: 'Mode', timeout: 'Timeout (min)', bench: '--memory-bench',
         thinking: 'Thinking', thinkingAgent: 'Agent decides (per task)', thinkingAgentShort: 'Agent decides',
+        thinkingFollow: 'Follow channel', dispatchThinkingHint: "Follow channel = dispatch with the channel's thinking setting (set in the Channels section); a concrete level is enforced for this dispatch (new sessions only)",
+        chanThinkingHint: 'Channel default thinking: Agent decides = the dispatching agent picks a concrete level per task; a concrete level is a hard rule for dispatched agents (dispatches without an explicit level follow it; new sessions only)',
         thinkingHint: 'Agent decides = the dispatching agent picks a concrete level per task; a concrete level is enforced (new sessions only; --resume keeps the session level)',
         dispatch: 'Dispatch', queuedBtn: 'Queued…', runningBtn: 'Running…', sending: 'Sending…',
         fbQueued: 'Queued: ', errPrefix: 'Failed: ', errEmpty: 'Content is required',
@@ -1922,8 +1926,29 @@ window.__ModuleLoader__.load({
           },
             h('option', { value: '' }, t('chanDefaultModel')),
             modelOptions.map((m) => h('option', { key: m, value: m }, m)))),
+        /* ZB-29d：通道默认思考强度——**这才是给派发 Agent 的规定**：
+         * 'Agent决定'=派发方 Agent 按任务自行改传具体档位；具体档位=未显式指定的派发一律按它执行。 */
+        (() => {
+          const lvMap = sel?.thinkingLevels ?? null;
+          const set = new Set();
+          if (lvMap) {
+            const ids = channel.model ? [channel.model] : Object.keys(lvMap);
+            for (const id of ids) for (const x of (lvMap[id] ?? [])) set.add(x);
+          }
+          const cur = channel.reasoningLevel ?? 'agent';
+          return h('div', { className: 'zcd-field' },
+            h('span', { className: 'zcd-field-k' }, t('thinking')),
+            h('select', {
+              className: 'zcd-select zcd-field-v', value: cur,
+              onChange: (e) => onSwitch({ provider: channel.provider, model: channel.model ?? null, reasoningLevel: e.target.value }),
+              'aria-label': t('thinking'), title: t('chanThinkingHint'),
+              disabled: channels.length === 0 || !sel || !sel.enabled,
+            },
+              h('option', { value: 'agent' }, t('thinkingAgent')),
+              [...set].map((lv) => h('option', { key: lv, value: lv }, lv))));
+        })(),
         h('div', { className: 'zcd-note', role: 'status' },
-          `${t('chanNewTask')}${channel.provider}/${channel.model || t('chanDefaultModel')}`),
+          `${t('chanNewTask')}${channel.provider}/${channel.model || t('chanDefaultModel')} · ${t('thinking')}: ${channel.reasoningLevel === 'agent' ? t('thinkingAgentShort') : (channel.reasoningLevel ?? t('thinkingAgentShort'))}`),
         h('div', { className: 'zcd-row' },
           h('span', { className: 'zcd-label' }, t('fallbackTitle')),
           h('span', { className: 'zcd-badge' }, fallback?.enabled ? t('fallbackStateOn') : t('fallbackStateOff')),
@@ -1944,112 +1969,9 @@ window.__ModuleLoader__.load({
       );
     }
 
-    function DispatchBar({ snapshot, lastJobId, feedback, busy, channel, swBlocked, onSubmit }) {
-      const [kind, setKind] = useState('prompt');
-      const [content, setContent] = useState('');
-      const [mode, setMode] = useState('edit');
-      const [timeoutMin, setTimeoutMin] = useState('15');
-      const [bench, setBench] = useState(false);
-      /* ZB-16（用户要求：派发流程要能明确是否 repo 锁 / 锁哪些文件）：
-       *   · repoLock  —— 是否取仓库锁（取消勾选 = lock:'none'，明确不取锁）
-       *   · writeText —— 仓库锁**锁哪些文件**（逗号/换行/分号分隔；留空 = 锁整个仓库）
-       * memory 锁已按用户要求删除，故此处不再有它的开关。 */
-      const [repoLock, setRepoLock] = useState(true);
-      const [writeText, setWriteText] = useState('');
-      /* ZB-29：思考强度（thinking）。默认 'agent' =「Agent决定」——由派发方 Agent 按任务改传
-       * 具体档位；面板人工派发选具体档时严格生效。档位集合来自通道的 thinkingLevels
-       * （runner 探测 builtin 模型声明，随模型不同；拿不到时只显示 Agent决定，不猜）。 */
-      const [thinking, setThinking] = useState('agent');
-      const chEntry = (snapshot?.channels ?? []).find((c) => c.id === channel.provider) ?? null;
-      const lvMap = chEntry?.thinkingLevels ?? null;
-      const lvSet = new Set();
-      if (lvMap) {
-        const ids = channel.model ? [channel.model] : Object.keys(lvMap);
-        for (const id of ids) for (const x of (lvMap[id] ?? [])) lvSet.add(x);
-      }
-      const thinkingLevels = [...lvSet];
-
-      const lastJob = (snapshot?.jobs ?? []).find((j) => j.id === lastJobId) ?? null;
-      const active = lastJob && (lastJob.state === 'queued' || lastJob.state === 'running');
-      const label = busy ? t('sending') : active ? (lastJob.state === 'queued' ? t('queuedBtn') : t('runningBtn')) : t('dispatch');
-      const ph = kind === 'prompt' ? t('phPrompt') : kind === 'task' ? t('phTask') : t('phTarget');
-      /* 文件列表解析：逗号 / 换行 / 分号都能分隔（用户可能从资源管理器复制多行路径） */
-      const parseFiles = (s) => String(s ?? '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
-
-      const submit = () => {
-        const body = content.trim();
-        if (!body) {
-          onSubmit(null);
-          return;
-        }
-        // 通道/模型来自顶部通道切换器（唯一出口）；未选模型时交由通道默认值决定
-        const spec = { kind, [kind]: body, provider: channel.provider, mode, thinking };
-        if (channel.model) spec.model = channel.model;
-        if (timeoutMin !== '' && Number(timeoutMin) > 0) spec.timeoutMin = Number(timeoutMin);
-        if (bench) spec.memoryBench = true;
-        /* ZB-16：把锁意图明确传下去 —— 不勾仓库锁 ⇒ none；勾了且填了文件 ⇒ 只锁那些文件。 */
-        if (!repoLock) spec.lock = 'none';
-        else {
-          const files = parseFiles(writeText);
-          if (files.length > 0) spec.write = files;
-        }
-        onSubmit(spec);
-      };
-
-      return h('div', { className: 'zcd-dispatch' },
-        h('div', { className: 'zcd-row' },
-          h('span', { className: 'zcd-label' }, t('kind')),
-          h('select', { className: 'zcd-select', value: kind, onChange: (e) => setKind(e.target.value), 'aria-label': t('kind') },
-            h('option', { value: 'prompt' }, t('kindPrompt')),
-            h('option', { value: 'task' }, t('kindTask')),
-            h('option', { value: 'target' }, t('kindTarget'))),
-          h('span', { className: 'zcd-label' }, t('mode')),
-          h('select', { className: 'zcd-select', value: mode, onChange: (e) => setMode(e.target.value), 'aria-label': t('mode') },
-            h('option', { value: 'build' }, 'build'),
-            h('option', { value: 'edit' }, 'edit'),
-            h('option', { value: 'plan' }, 'plan'),
-            h('option', { value: 'yolo' }, 'yolo')),
-          /* ZB-29：思考强度。'agent' = Agent决定（派发方 Agent 按任务判断并传具体档位）；
-           * 具体档位严格生效（写入临时 provider 配置，仅新建会话；非法档位 fail-fast）。 */
-          h('span', { className: 'zcd-label' }, t('thinking')),
-          h('select', {
-            className: 'zcd-select', value: thinking,
-            onChange: (e) => setThinking(e.target.value), 'aria-label': t('thinking'), title: t('thinkingHint'),
-          },
-            h('option', { value: 'agent' }, t('thinkingAgent')),
-            thinkingLevels.map((lv) => h('option', { key: lv, value: lv }, lv))),
-        ),
-        h('textarea', { className: 'zcd-ta', value: content, placeholder: ph, onChange: (e) => setContent(e.target.value), 'aria-label': t('content') }),
-        /* ZB-16：**锁意图**显式化（用户要求"派发可以明确是否 repo 锁，明确 repo 锁哪些文件"）。
-         * 勾选仓库锁 + 填文件 = 只锁这些文件（不同文件集可并发）；勾选但不填 = 锁整个仓库；
-         * 不勾 = lock:'none'（明确不取锁）。memory 锁已删除，故无对应开关。 */
-        h('div', { className: 'zcd-row' },
-          h('label', { className: 'zcd-row', style: { gap: 3 } },
-            h('input', { type: 'checkbox', checked: repoLock, onChange: (e) => setRepoLock(e.target.checked), 'aria-label': t('repoLockCb') }),
-            h('span', { className: 'zcd-label' }, t('repoLockCb'))),
-          repoLock
-            ? h('input', {
-              className: 'zcd-input', type: 'text', value: writeText,
-              placeholder: t('writePh'), title: t('writeHint'),
-              style: { flex: 1, minWidth: 120 }, 'aria-label': t('writeFiles'),
-              onChange: (e) => setWriteText(e.target.value),
-            })
-            : h('span', { className: 'zcd-note' }, t('lockNoneHint')),
-        ),
-        repoLock ? h('div', { className: 'zcd-note' }, t('lockScopeHint')) : null,
-        h('div', { className: 'zcd-row' },
-          h('span', { className: 'zcd-label' }, t('timeout')),
-          h('input', { className: 'zcd-input', type: 'number', min: 1, value: timeoutMin, onChange: (e) => setTimeoutMin(e.target.value), style: { width: 56 }, 'aria-label': t('timeout') }),
-          h('label', { className: 'zcd-row', style: { gap: 3 } },
-            h('input', { type: 'checkbox', checked: bench, onChange: (e) => setBench(e.target.checked) }),
-            h('span', { className: 'zcd-label' }, t('bench'))),
-          h('span', { className: 'zcd-spring' }),
-          h('button', { className: 'zcd-btn', disabled: busy || active || swBlocked, title: swBlocked ? t('switchOffBlocked') : undefined, onClick: submit }, label),
-        ),
-        swBlocked ? h('div', { className: 'zcd-note', role: 'alert' }, t('switchOffBlocked')) : null,
-        feedback ? h('div', { className: `zcd-feedback${feedback.kind === 'err' ? ' zcd-err' : ''}`, role: 'status' }, feedback.text) : null,
-      );
-    }
+    /* ZB-29c（用户要求）：**面板手动派发已移除** —— 无需手动派发，有需要让 Agent 通过
+     * zcode_dispatch 工具代劳（模型/通道/思考强度由 Agent 按工具说明与通道设置决定）。
+     * 「通道」分区仍可设置默认思考强度（这就是给派发 Agent 的规定）；进程/用量/单写者分区照旧。 */
 
     /* ZB-05：tail 输出框的滚动决策（**纯函数**，便于脱离 React 独立测试）。
      *
@@ -2631,9 +2553,9 @@ window.__ModuleLoader__.load({
      * 形态与样式对齐 DSH 自带的 job-list / 子智能体目录（menu 令牌 + 由 .zcd-menu 那条 CSS 负责定位）。
      * ZB-06/07/10/11 的拖拽、缩放、固定位置、位置持久化与最小化胶囊随浮窗一并去掉。 */
     function PanelBody({ menuShift }) {
-      const [lastJobId, setLastJobId] = useState(null);
+      /* ZB-29c：面板手动派发已移除（派发一律由 Agent 经 zcode_dispatch 工具完成）——
+       * lastJobId/busy/onSubmit 等派发表单接线随之删除；feedback 保留（总开关切换错误仍经它显示）。 */
       const [feedback, setFeedback] = useState(null);
-      const [busy, setBusy] = useState(false);
       const {
         conn, snapshot, quota, planQuota, dispatch, kill, dismiss, tail,
         channels, channelGet, channelSet, retry, fallbackGet, fallbackSet,
@@ -2691,32 +2613,10 @@ window.__ModuleLoader__.load({
           if (r && r.ok) setFallbackState({ enabled: !!r.enabled, chain: r.chain ?? [] });
         });
       }, [fallbackSet]);
-      // Z12：派发总开关切换（成功 → 1s 轮询带回新快照、徽标自动翻转；失败 → 错误进派发区反馈行）
+      // Z12：派发总开关切换（成功 → 1s 轮询带回新快照、徽标自动翻转；失败 → 错误进面板反馈行）
       const onSwitchToggle = useCallback((next) => Promise.resolve(switchSet(next)).then((r) => {
         if (!r || !r.ok) setFeedback({ kind: 'err', text: `${t('errPrefix')}${(r && r.error) || 'unknown'}` });
       }), [switchSet]);
-
-      const onSubmit = useCallback(async (spec) => {
-        if (!spec) {
-          setFeedback({ kind: 'err', text: t('errEmpty') });
-          return;
-        }
-        setBusy(true);
-        setFeedback({ kind: 'ok', text: t('sending') });
-        try {
-          const r = await dispatch(spec);
-          if (r && r.ok) {
-            setLastJobId(r.job.id);
-            setFeedback({ kind: 'ok', text: `${t('fbQueued')}${r.job.id}` });
-          } else {
-            setFeedback({ kind: 'err', text: `${t('errPrefix')}${(r && r.error) || 'unknown'}` });
-          }
-        } catch (e) {
-          setFeedback({ kind: 'err', text: `${t('errPrefix')}${(e && e.message) ?? e}` });
-        } finally {
-          setBusy(false);
-        }
-      }, [dispatch]);
 
       const onKill = useCallback((id) => {
         Promise.resolve(kill(id)).catch(() => { /* wire 已兜底返回 {ok:false}，这里只防未捕获 rejection */ });
@@ -2763,14 +2663,14 @@ window.__ModuleLoader__.load({
         /* ZB-01 ③：离线原因放在 body 首行（始终在默认折叠的各分区之外）——
          * 免得排查时还要先展开「通道」分区才看得到。 */
         showOfflineNote ? h('div', { className: 'zcd-note', role: 'status', title: offlineReason }, offlineReason) : null,
+        /* ZB-29c：派发表单移除后，feedback 仍承载总开关切换失败的错误显示（挂在 body 首行）。 */
+        feedback ? h('div', { className: `zcd-feedback${feedback.kind === 'err' ? ' zcd-err' : ''}`, role: 'status' }, feedback.text) : null,
         h('div', { className: 'zcd-body' },
           h(Section, { id: SEC.channel, title: t('secChannel'), collapsible: true },
             /* 离线说明只在 body 首行渲染一处（去重）：这里不再重复同一句话。 */
             h(ChannelSection, { channelsInfo, channel, fallback, onSwitch, onFallbackSet, offline: conn !== 'live', offlineReason })),
-          h(Section, { id: SEC.dispatch, title: t('secDispatch'), collapsible: true },
-            h(DispatchBar, { snapshot, lastJobId, feedback, busy, channel, swBlocked: dispatchSwitch != null && dispatchSwitch.enabled === false, onSubmit })),
-          /* ZB-12（用户要求）：用量移到**派发下面** —— 派发前先看额度/套餐余量是自然顺序。
-           * 当前完整顺序：通道 → 派发 → 用量 → 进程 → 单写者/文件锁。
+          /* ZB-29c（用户要求）：**派发分区已移除**——无需手动派发，有需要让 Agent 通过
+           * zcode_dispatch 工具代劳。当前顺序：通道 → 用量 → 进程 → 单写者/文件锁。
            * 分区 id 不变 ⇒ 各自展开状态与持久化键不受影响。 */
           h(Section, { id: SEC.quota, title: t('secQuota'), collapsible: true },
             h(QuotaCards, { quota, planQuota })),

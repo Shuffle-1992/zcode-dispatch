@@ -1,13 +1,15 @@
-// ZB-16 回归测试（UI 层）：派发区锁控件 + 中文锁名 + 分区改名 + memory 锁删除。
+// ZB-16 回归测试（UI 层）：中文锁名 + 分区改名 + memory 锁删除。
 //
 // 用户要求：
 //   ① repo/memory 改中文名显示，memory 改为「Zcode 记忆锁」；
-//   ② 派发可明确是否 repo 锁、明确 repo 锁哪些文件；
 //   ③ 删除 memory 相关；
-//   ⑤ 分区名改为「文件锁 / 记忆锁」（ZB-17 起改为「仓库文件锁」）。
+//   ⑤ 分区名改为「仓库文件锁」。
 //
-// client.js 无法直接 import（依赖 React / 槽位），故对源码做断言；
-// 纯逻辑（文件列表解析）抽出来单测。
+// ZB-29c（用户要求）：**面板派发表单已整体移除**（无需手动派发，派发一律由 Agent 经
+// zcode_dispatch 工具完成）——原「派发区锁控件」（C 组）与 parseFiles 单测（D 组）随之删除；
+// 锁的意图改由派发方在工具调用里声明（spec.lock / spec.write），core 的校验语义不变。
+//
+// client.js 无法直接 import（依赖 React / 槽位），故对源码做断言。
 import { readFileSync } from 'node:fs';
 import { strict as assert } from 'node:assert';
 
@@ -36,38 +38,14 @@ console.log('\n③ memory 锁已删除（用户要求 ③）');
 ok(!/lock: 'both'/.test(src), "B3 派发侧不再产生 lock:'both'");
 ok(!/lock: 'memory'/.test(src), "B4 派发侧不再产生 lock:'memory'");
 
-console.log('\n② 派发区锁控件（是否 repo 锁 + 锁哪些文件）');
-ok(/const \[repoLock, setRepoLock\] = useState\(true\)/.test(src), 'C1 有「仓库文件锁」开关状态（默认开）');
-ok(/const \[writeText, setWriteText\] = useState\(''\)/.test(src), 'C2 有「要写的文件」输入状态');
-ok(/if \(!repoLock\) spec\.lock = 'none'/.test(src), "C3 不勾 ⇒ 明确传 lock:'none'（不是静默不传）");
-ok(/const files = parseFiles\(writeText\);[\s\S]{0,80}if \(files\.length > 0\) spec\.write = files;/.test(src),
-  'C4 填了文件 ⇒ 传 write（只锁这些文件）');
-ok(/const parseFiles = \(s\) => String\(s \?\? ''\)\.split\(\/\[\\n,;\]\+\//.test(src),
-  'C5 文件列表支持逗号/换行/分号分隔（便于粘贴多行路径）');
-ok(/repoLockCb: '仓库文件锁'/.test(src), 'C6 复选框文案 = 「仓库文件锁」');
-ok(/writePh:/.test(src) && /留空=锁整个仓库/.test(src), 'C7 输入框 placeholder 说明了「留空=锁整个仓库」');
-ok(/lockNoneHint:/.test(src) && /lockScopeHint:/.test(src), 'C8 有"不取锁"与"作用域"两条提示');
-
-console.log('\n文件列表解析（纯逻辑，从源码抽 parseFiles）');
+console.log('\n② 派发表单已移除（ZB-29c：派发一律由 Agent 经工具完成）');
+ok(!/repoLock, setRepoLock/.test(src), '★ C1 派发表单锁控件（仓库文件锁勾选）已随表单移除（文案键保留无渲染）');
+ok(!/parseFiles/.test(src), '★ C2 parseFiles 仅服务于派发表单，随之移除');
+/* 锁意图契约在 core（工具调用方经 spec.lock / spec.write 声明，core 校验与加锁语义不变）。 */
 {
-  /* 用"从 const parseFiles 起到行尾"截取，不假设行尾是 \n（本仓库是 CRLF，上一版正则因此假失败）。 */
-  const i = src.indexOf('const parseFiles');
-  assert.ok(i >= 0, '未能定位 parseFiles');
-  const lineEnd = src.indexOf('\n', i);
-  const expr = src.slice(i, lineEnd).replace(/^const parseFiles = /, '').replace(/;\s*$/, '');
-  /* 注意：`new Function('return (expr)')` 求值得到**箭头函数本身**，还要再调用一次。
-   * 上一版写成 new Function('s', 'return (expr)') 后直接当函数用 ⇒ 断言拿到 [Function]。 */
-  const parseFiles = new Function(`return (${expr})`)();
-  assert.deepEqual(parseFiles('a.ts'), ['a.ts'], 'D1 单个');
-  assert.deepEqual(parseFiles('a.ts,b.ts'), ['a.ts', 'b.ts'], 'D2 逗号');
-  assert.deepEqual(parseFiles('a.ts\nb.ts'), ['a.ts', 'b.ts'], 'D3 换行');
-  assert.deepEqual(parseFiles('a.ts;b.ts'), ['a.ts', 'b.ts'], 'D4 分号');
-  assert.deepEqual(parseFiles('  a.ts  ,  b.ts  '), ['a.ts', 'b.ts'], 'D5 去空白');
-  assert.deepEqual(parseFiles('a.ts,,b.ts'), ['a.ts', 'b.ts'], 'D6 跳过空项');
-  assert.deepEqual(parseFiles(''), [], 'D7 空串 ⇒ 空数组（调用方据此不传 write）');
-  assert.deepEqual(parseFiles(null), [], 'D8 null ⇒ 空数组');
-  pass += 1;
-  console.log('  ✓ D1-D8 parseFiles 八种输入全部正确');
+  const coreSrc = readFileSync('F:\\My Code\\zcode-dispatch\\zcode-dispatch\\core\\dispatch-core.mjs', 'utf8');
+  ok(/spec\.lock 必须是 repo\|none/.test(coreSrc) && /spec\.write/.test(coreSrc),
+    'C3 锁意图契约仍在 core：spec.lock / spec.write 校验与加锁（工具调用方声明）');
 }
 
 console.log('\nlocale 中英对称');
@@ -76,7 +54,7 @@ console.log('\nlocale 中英对称');
   const en = JSON.parse(readFileSync('F:\\My Code\\zcode-dispatch\\zcode-dispatch\\locale\\en.json', 'utf8'));
   const zu = zh.ui ?? zh, eu = en.ui ?? en;
   ok(Object.keys(zu).length === Object.keys(eu).length, `E1 中英 key 数一致（${Object.keys(zu).length}）`);
-  for (const k of ['repoLockCb', 'writePh', 'writeHint', 'writeFiles', 'lockNoneHint', 'lockScopeHint']) {
+  for (const k of ['secLocks', 'noFileLocks', 'lockHeld']) {
     ok(zu[k] !== undefined && eu[k] !== undefined, `E2 locale 含 ${k}`);
   }
   ok(zu.secLocks === '仓库文件锁', 'E3 locale 的分区名同步为「仓库文件锁」');

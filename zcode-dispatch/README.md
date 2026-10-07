@@ -169,8 +169,8 @@ return Array.isArray(body?.data) && body.data.length > 0;
 | 不声明 `write`（默认 `lock=repo`） | 锁**整个仓库** ⇒ 与任何任务互斥（单写者纪律本义） |
 | `lock='none'` | 明确不取锁（确认无竞写关系时用） |
 
-> **怎么让多个任务真正并发**：给每个任务声明它**要写的文件**（`write`）。
-> 派发面板上就是「仓库文件锁」勾选 + 「要写的文件」输入框（逗号/换行分隔，留空=锁整个仓库）。
+> **怎么让多个任务真正并发**：给每个任务声明它**要写的文件**（`write`）——
+> 由派发方（Agent）在工具调用里声明（面板手动派发已于 ZB-29c 移除，派发一律经 `zcode_dispatch`）。
 > 实测：三个任务分别写 `a.ts`/`b.ts`/`c.ts` ⇒ **三路同时 running**。
 
 > **memory 锁已删除（ZB-16）**：它保护的是 ZCode 自己的记忆库（`~/.zcode`），与仓库写入互不相干。
@@ -443,11 +443,16 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 - **可观测**：job 带 `reasoningLevel`（请求档：agent/具体档）与 `reasoningLevelApplied`/`reasoningTarget`
   （实际生效档 + 注入目标）；**进程行模型徽标后显示实际生效档位**（Agent决定档解析出的具体档），
   详情行同步；无法确定（旧 runner / --resume / 模型未声明）时隐藏，不伪造。
-- 面板派发栏有「思考强度」下拉（Agent决定 + 该通道档位集）；`--list-providers` 无档位数据
-  （旧 runner）时下拉只剩 Agent决定 —— 不猜。
+- **通道默认思考强度（ZB-29d）**：面板「通道」分区可设（`action=channel` 带 thinking：
+  `Agent决定` 或具体档位）——**这就是给派发 Agent 的规定**：设具体档位时，未显式传 thinking 的
+  派发一律按它执行；设 `Agent决定` 时派发 Agent 按任务自行改传具体档位。回退在 core `dispatch()`
+  统一实现 ⇒ 工具/CLI/面板三条入口一致。面板**手动派发表单已移除**（ZB-29c：无需手动派发，
+  有需要让 Agent 代劳）。
+- `--list-providers` 探测各模型档位集（`reasoning-levels` 行）；无档位数据（旧 runner）时
+  通道下拉只剩 Agent决定 —— 不猜。
 
-证据：`test/thinking-level.test.mjs`（7 项：解析/通道透出/core 透传与字段/wire 映射/validateSpec/
-交接沿用/runner 注入 hermetic 干跑 + fail-fast + resume 跳过）。
+证据：`test/thinking-level.test.mjs`（7 项：解析/通道透出/core 透传与字段（含**通道默认回退与
+覆盖**）/wire 映射/validateSpec/交接沿用/runner 注入 hermetic 干跑 + fail-fast + resume 跳过）。
 
 ## 枚举与 channels 清单，以谁为准（ZB-28）
 
@@ -504,8 +509,8 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 ## 验证步骤（creator 会话，安装后）
 
 1. `cordis_inspect_query`：确认新行已挂（`Config.listConfigs` 过滤本包名 → 查 `entry`；插槽注册）。
-2. 会话标题行出现「ZCode 派发台」入口（排在「N 个子智能体」之后）：**悬浮 150ms 展开**面板、**离开 120ms 收起**，Esc / 点外部也可关闭；有任务时入口显示状态点、进行中为脉动（同官方入口做法）；五个分区
-   （通道 / 派发栏 / 进程列表 / 用量卡片 / 单写者状态）可折叠（通道/派发/单写者默认收起）；浅色/深色主题各看一眼。
+2. 会话标题行出现「ZCode 派发台」入口（排在「N 个子智能体」之后）：**悬浮 150ms 展开**面板、**离开 120ms 收起**，Esc / 点外部也可关闭；有任务时入口显示状态点、进行中为脉动（同官方入口做法）；四个分区
+   （通道 / 用量卡片 / 进程列表 / 单写者状态）可折叠（通道/单写者默认收起，ZB-29c 起**无手动派发表单**——派发一律由 Agent 经工具完成）；浅色/深色主题各看一眼。
 3. 双调用方一致性：agent 跑工具 `zcode_dispatch` `action: list`，与 UI 列表一致；
    `action: quota` 的三窗口数字与 `node bin/zcd.mjs quota` 一致。
 4. 端到端：`action: dispatch`（`kind: prompt`、`model: GLM-5.3-Flash`、内容 `只回答 OK`）→
