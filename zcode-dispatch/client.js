@@ -375,6 +375,13 @@ window.__ModuleLoader__.load({
             styleEl = s;
           }
         }
+        /* ★ ZB-29c：**内容漂移自愈** —— 样式表元素可能由旧一轮模块求值注入（DSH 对插件更新
+         * 走模块重求值/热替换而非整页刷新），旧 CSS 会原样留在 head 里，新 JSX 拿不到新规则
+         * （现场：进程行两行布局渲染出来了，.zcd-job-line 的 flex+gap 却没生效 ⇒ 时间/上下文/
+         * 退出挤成一团）。幂等复用元素的同时，内容变了就整体替换 textContent——廉价且原子。 */
+        try {
+          if (styleEl && styleEl.textContent !== CSS) styleEl.textContent = CSS;
+        } catch { /* 更新失败等同注入失败，不阻塞渲染 */ }
       } catch { /* 注入失败不阻塞渲染（面板仍可用，只是样式可能不完整） */ }
       return () => {
         STYLE_REFS = Math.max(0, STYLE_REFS - 1);
