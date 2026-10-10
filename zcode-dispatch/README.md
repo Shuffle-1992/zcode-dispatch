@@ -649,6 +649,30 @@ zcd dispatch --kind task --task <任务包> --provider start-plan --mode yolo
   见其 README 的「免费额度通道目前缺失的功能速查」）。
   ⇒ **要让 agent 自主用工具干活 ⇒ 用派发台（本文这条通道）；要 DSH 自己的工具链做交互式对话 ⇒ 用 provider 通道。**
 
+### 工具执行能力：与付费套餐派发**实测等同**（ZB-34）
+
+派发出去的 agent 就是**同一个 `zcode.cjs`**（同一套原生工具 + MCP + 子代理），差别只在"谁托管进程"
+（本通道注入账户托管 app-server；付费套餐是 print 模式一次一进程）。真机实测（2026-10-11，全部经
+`zcode_dispatch` 派发 + 读落盘产物交叉验证）：
+
+| 能力 | 结果 | 证据 |
+|---|---|---|
+| Write / Edit 工具 | ✅（`yolo` 与 `edit` 都通过） | 文件字节级核对，内容精确匹配 |
+| Bash 工具 | ✅ | `echo … > zb34-bash-proof.txt` 落盘；`toolNames=["Bash"]` |
+| MCP 本地服务 | ✅ | `mcp__node_repl__js` 执行 `1+1` 返回 `=> 2` |
+| MCP 远程/内置服务 | ✅ | `mcp__web_reader__webReader` 抓 example.com 返回 `Example Domain` |
+| 无人值守（权限） | ✅ 默认放行（仅 `plan` 模式拒绝） | 见下「已修缺陷」 |
+
+> **已修缺陷（ZB-34）**：权限应答原写成「**仅 yolo 放行**」，导致 `--mode edit`（runner 默认模式）下
+> agent 的 Write 被拒（回复「Write 工具调用被拒绝了，文件未创建」）。派发是**无人值守**语义（print 模式
+> 无人可批、桥接用 `allow-all`），现已改为**默认放行**，仅 `plan` 模式拒绝。同轮把工具事件匹配从猜的三个
+> 名字改为 `tool.*` 前缀，并在 `result.json` 里带出 `toolNames` / `eventTypes`（此前 `toolEventCount` 恒为 0）。
+> 完整矩阵与复跑方法见 [`tasks/ZB-34-gift-tool-parity.md`](../tasks/ZB-34-gift-tool-parity.md)。
+
+**仍不等同的（工具层以外，如实列出）**：`--resume` 续跑 / `--target` 目标自续跑 / `--memory-bench`
+**不支持**（都是 print 模式 CLI 的能力，本通道每次新建会话）；`--attach` 被忽略（但 agent 有自己的 Read
+工具，可直接读工作目录 —— 实测文件读写正常）。
+
 ### 额度条与「Agent 知道自己还有多少额度」（ZB-33）
 
 - **面板**：选中免费额度通道时，「通道」分区多一行**额度条**——

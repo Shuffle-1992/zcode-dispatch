@@ -91,6 +91,8 @@ export async function runGiftJob(input) {
     usageBasis: result.usage?.usageBasis ?? null,
     serverRequests: result.serverRequests ?? null,
     toolEventCount: result.toolEvents ?? null,
+    toolNames: result.toolNames ?? [], // ZB-34：本次用过的工具名（空 = 没调工具）
+    eventTypes: result.eventTypes ?? [], // ZB-34：见过的事件类型（对齐真实词汇表）
     reasoningChars: result.reasoningChars ?? null,
   };
   writeFileSync(input.outLog, `${result.response ?? ''}\n\n--- gift-result-json ---\n${JSON.stringify(resultShape, null, 2)}\n`);

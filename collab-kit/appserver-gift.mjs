@@ -410,6 +410,7 @@ export async function runGiftTurn(opts) {
   let text = '';
   let reasoningChars = 0;
   const toolEvents = [];
+  const seenEventTypes = new Set(); // 首次出现的 event 类型打一行诊断（对齐真实事件词汇表）
   let finished;
   let channel;
   let turnUsage;
@@ -446,7 +447,19 @@ export async function runGiftTurn(opts) {
         return true;
       }
       if (/permission|approval/i.test(String(msg.method))) {
-        write({ id: msg.id, result: { decision: opts.mode === 'yolo' ? 'allow' : 'deny' } });
+        /* 权限：派发是**无人值守**语义 —— 与 print 模式（headless、无人可批）以及姊妹项目
+         * dsh-connect-zcode 桥接的 `appServerToolPolicy: allow-all` 保持一致：**默认放行**；
+         * 唯一例外是 `plan` 模式（该模式契约就是"只规划不执行"）。
+         *
+         * ⚠️ 2026-10-11 真机实测（ZB-34）：本行原为「仅 yolo 放行」，导致 `--mode edit`
+         * （runner 的默认派发模式）下 agent 的 Write 被拒 —— 它回复「Write 工具调用被拒绝了，
+         * 文件未创建」，**与付费套餐 print 模式不等价**。故修正为默认放行。 */
+        const allow = opts.mode !== 'plan';
+        logger.info?.(
+          `[gift] 权限请求 ${msg.method} → ${allow ? 'allow' : 'deny'}（mode=${opts.mode ?? 'edit'}）` +
+            `${JSON.stringify(msg.params ?? {}).slice(0, 200)}`,
+        );
+        write({ id: msg.id, result: { decision: allow ? 'allow' : 'deny' } });
         return true;
       }
       return false;
@@ -489,8 +502,22 @@ export async function runGiftTurn(opts) {
           };
           opts.onEvent?.('turn', finished);
           break;
-        default:
+        default: {
+          /* 诊断 + 工具计数：
+           * ① 每个**首次出现**的 event 类型打一行 `[gift] event=<type>`（不带 [zcode-run] 前缀，
+           *    不会污染派发台的输出行解析）—— 便于对齐 ZCode 的真实事件词汇表，别再靠猜；
+           * ② `tool*` 类型一律计入工具事件（此前只列了三个猜出来的名字，实测 toolEventCount 恒为 0）。 */
+          if (typeof type === 'string' && type !== '' && !seenEventTypes.has(type)) {
+            seenEventTypes.add(type);
+            logger.info?.(`[gift] event=${type}`);
+          }
+          if (typeof type === 'string' && /^tool[.\-_]/i.test(type)) {
+            const name = payload?.name ?? payload?.toolName ?? payload?.tool ?? '(unnamed)';
+            toolEvents.push({ type, name });
+            opts.onEvent?.('tool', { type, name });
+          }
           break;
+        }
       }
     },
   });
@@ -591,6 +618,10 @@ export async function runGiftTurn(opts) {
     textChars: response.length,
     reasoningChars,
     toolEvents: toolEvents.length,
+    /* 可观测性（ZB-34）：产物里带上**用过的工具名**与**见过的事件类型** ——
+     * 否则"这次派发到底用没用工具、用了哪些"只能靠读 agent 的自我报告。 */
+    toolNames: [...new Set(toolEvents.map((t) => t.name).filter((n) => n && n !== '(unnamed)'))],
+    eventTypes: [...seenEventTypes].sort(),
     usage: { ...usage, modelRequestCount: turnUsage?.modelRequestCount ?? null, usageBasis: basis },
     projection: {
       contextUsed: projection.contextUsed ?? null,
