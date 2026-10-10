@@ -148,6 +148,7 @@ setModel : ok（account:bigmodel-start-plan / GLM-5.3-Flash / reasoningLevel=max
 | 本仓库测试套件 | **27/27 通过**（runner 改动未破坏既有行为） |
 | **插件路径端到端**（`zcd dispatch --provider account:bigmodel-start-plan`） | `state=done exit=0 elapsed=10.9s`、`billing=zcode-plan-gift`、`usage requests=1 in=18208 out=105`、`responseChars=7`（正好 7 个汉字）✓ |
 | `zcd channels` | 免费额度通道在列：`account:bigmodel-start-plan  true  https://zcode.z.ai/… | GLM-5.3, GLM-5.3-Flash (免费额度 Start Plan；--provider start-plan)`（面板/`action=channels` 同源） |
+| **真实任务包**（`--kind task`，5 次模型调用 / 130.1s） | `state=done exit=0`；agent 在指定工作目录**写出** `zb33-e2e-proof.md`（3 行、UTF-8 校验通过）—— 任务包内联 + 落盘全链路成立 ✓ |
 
 ### 7.3 实现中**新踩到**的坑（比探索阶段更多）
 
@@ -155,6 +156,16 @@ setModel : ok（account:bigmodel-start-plan / GLM-5.3-Flash / reasoningLevel=max
 插件默认传 `agent`（=「Agent决定/不覆盖」），我第一版直接转给 `session/setModel` ⇒
 `-32603 Reasoning effort "agent" is not supported by account:…/GLM-5.3-Flash`，job 4.9s 失败。
 ⇒ 在 gift 路径把 `agent`（含空串）视为"未指定"，回落到官方 `defaultVariant` 链。
+
+**6. 台账归属跟着 `--cwd`/`--runner-cwd` 走**（真实任务包那次暴露）：runner 的台账固定在
+`<PROJECT>/collab/logs/zcode-runs.jsonl`（`--project` 缺省 = runner 自身 cwd），而派发台聚合
+读的是插件 config 的 `ledgerPath`。两者指到**不同项目**时：job 能跑通，但面板/job 行显示
+`billing=-`、用量统计看不到这一单（本次用 `%TEMP%` 当 cwd 就复现了）。
+⇒ **部署约定**：`--cwd` / `--runner-cwd` 必须落在宿主项目内（与 `ledgerPath` 同项目）。
+
+**usage 口径（本次定型）**：多调用回合 `input` 取**按次上下文**（CLI 聚合是 N 次之和，直接记会
+虚高 N 倍，见 dsh-connect-zcode §2.10），`output` 取**回合累计**（生成总量本来就是各次之和，
+记 0 会丢信息）；台账同时带 `usageBasis` 与 `requests` 说明口径。
 
 1. **`session/setModel` 强制要求思考档**：不传报 `-32603 Reasoning level is required for
    account:bigmodel-start-plan/GLM-5.3-Flash`。桥接总是传，所以没暴露。

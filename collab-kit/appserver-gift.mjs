@@ -559,10 +559,17 @@ export async function runGiftTurn(opts) {
         usage = turnUsage;
         basis = 'cli-single';
       } else if (Number.isFinite(projection.contextUsed) && projection.contextUsed > 0) {
-        usage = { ...turnUsage, inputTokens: projection.contextUsed, outputTokens: 0 };
+        /* 多调用回合：**input 用按次上下文口径**（CLI 的聚合是 N 次之和，直接记会虚高 N 倍），
+         * **output 仍取回合累计** —— 生成总量本来就是各次之和，取 0 会丢掉真实信息。
+         * 两者口径不同，`usageBasis` + `modelRequestCount` 就是给读表人的说明。 */
+        usage = { ...turnUsage, inputTokens: projection.contextUsed, outputTokens: turnUsage.outputTokens ?? 0 };
         basis = 'context-used';
       } else {
-        usage = { ...turnUsage, inputTokens: Math.round((turnUsage.inputTokens ?? 0) / calls), outputTokens: Math.round((turnUsage.outputTokens ?? 0) / calls) };
+        usage = {
+          ...turnUsage,
+          inputTokens: Math.round((turnUsage.inputTokens ?? 0) / calls),
+          outputTokens: turnUsage.outputTokens ?? 0, // 同上：总量照记
+        };
         basis = 'divided';
       }
     }
