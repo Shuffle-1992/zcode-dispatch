@@ -1932,6 +1932,26 @@ window.__ModuleLoader__.load({
         ? models
         : (modelValue ? [modelValue] : []); // 通道没给模型表时至少显示当前值
 
+      /* ── ZB-33b（用户要求）：**通道下拉只列可用通道**（「自动降级」目标下拉同样） ──
+       * 例外：**当前选中值**若已掉线（历史存值指向一个不可用通道），仍把它单独列在最前并标注
+       * 「不可用：原因」—— 否则 `<select value>` 匹配不到 option，浏览器会显示首项，
+       * 与真实存值不符（与 ZB-31 的"失效档位要显式列出"同一个坑）。 */
+      const usableChannels = channels.filter((c) => c.enabled);
+      const channelOptionsFor = (current) => {
+        const list = usableChannels.some((c) => c.id === current)
+          ? usableChannels
+          : [
+            ...(current
+              ? [{ id: current, name: current, enabled: false, reason: channels.find((c) => c.id === current)?.reason ?? '-' }]
+              : []),
+            ...usableChannels,
+          ];
+        return list.map((c) =>
+          h('option', { key: c.id, value: c.id, ...(c.enabled ? {} : { disabled: true }) },
+            `${c.name ?? c.id}${c.enabled ? '' : `（${t('chanDisabled')}：${c.reason ?? '-'}）`}`),
+        );
+      };
+
       /* 降级目标（单目标；core 仍支持多目标列表供 CLI 使用）。targets[0] 为准，旧 chain 兜底。 */
       const fbEnabled = !!fallback?.enabled;
       const fbTarget = fallback?.target ?? null;
@@ -2014,9 +2034,7 @@ window.__ModuleLoader__.load({
             disabled: channels.length === 0,
             title: offline ? (offlineReason || t('chanOfflineHint')) : undefined,
           },
-            channels.length === 0 ? h('option', { value: channel.provider }, channel.provider) : null,
-            channels.map((c) => h('option', { key: c.id, value: c.id, disabled: !c.enabled },
-              `${c.name ?? c.id}${c.enabled ? '' : `（${t('chanDisabled')}：${c.reason ?? '-'}）`}`)))),
+            channelOptionsFor(channel.provider))),
         h('div', { className: 'zcd-field' },
           h('span', { className: 'zcd-field-k' }, t('model')),
           h('select', {
@@ -2099,9 +2117,7 @@ window.__ModuleLoader__.load({
               onChange: (e) => fbSwitchProvider(e.target.value), 'aria-label': `${t('fallbackTitle')}-${t('provider')}`,
               disabled: busy || channels.length === 0,
             },
-              fbUnknown ? h('option', { value: fbProvider }, fbProvider) : null,
-              channels.map((c) => h('option', { key: c.id, value: c.id, disabled: !c.enabled },
-                `${c.name ?? c.id}${c.enabled ? '' : `（${t('chanDisabled')}：${c.reason ?? '-'}）`}`)))),
+              channelOptionsFor(fbProvider))),
           h('div', { className: 'zcd-field' },
             h('span', { className: 'zcd-field-k' }, t('model')),
             h('select', {

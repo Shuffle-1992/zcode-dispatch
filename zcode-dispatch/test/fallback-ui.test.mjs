@@ -44,6 +44,9 @@ const fallbackCalls = [];
 const CHANNELS = [
   { id: 'plan', name: '默认套餐', enabled: true, reason: null, models: ['GLM-5.3', 'GLM-5.3-Flash'], thinkingLevels: ['disabled', 'enabled'] },
   { id: 'personal', name: '个人 API', enabled: true, reason: null, models: ['deepseek-flash'], thinkingLevels: ['disabled', 'low', 'high', 'max'] },
+  /* ZB-33b：**不可用通道**（真实形状：runner 会给出 enabled=false + reason）——
+   * 用于断言"下拉里不再列出不可用项"。 */
+  { id: 'builtin:zai-coding-plan', name: 'Z.ai - Coding Plan', enabled: false, reason: 'oauth_provider_inactive', models: ['GLM-5.3'], thinkingLevels: ['low', 'high', 'max'] },
 ];
 const EXT = {
   getSnapshot: () => ({ generatedAt: 'x', counts: { running: 0, queued: 0 }, jobs: [], locks: {}, queue: [] }),
@@ -230,6 +233,30 @@ ok(/let demoTargets = \[\];/.test(src) && !/let demoChain/.test(src), '⑤ 旧�
     '★ saveTarget 的 base 不读存值（否则「显示 Agent决定、实存 null」两回事）');
   ok(/reasoningLevel: fbThinking \|\| 'agent'/.test(src),
     '★ saveTarget 的 base 用下拉显示值，未设时落 agent');
+}
+
+/* ---------- ⑦ ZB-33b（用户要求）：「不可用通道不再显示」 ----------
+ * 场景：CHANNELS 里有一条 enabled=false 的真实形状通道（Z.ai - Coding Plan / oauth_provider_inactive）。
+ * 断言：通道下拉与降级目标下拉**都不列出它**（既不在 label，也不在 value）；可用项仍在。
+ * 例外（源码形态）：当前选中值若掉线，仍需单独补一条并标注「不可用：原因」，
+ * 否则 <select value> 匹配不到 option 会显示首项（与真实存值不符，ZB-31 同类坑）。 */
+{
+  const allProvLabels = selects.flatMap(optLabels);
+  ok(!allProvLabels.some((l) => l.includes('Z.ai - Coding Plan')),
+    '⑦ 不可用通道不出现在任何下拉的 label 里');
+  /* 主通道下拉（当前渲染）与降级目标下拉（③ 段捕获的快照，那时降级是开启态）——
+   * 本段跑到这里时降级已被 ④ 关掉，故降级侧用快照。 */
+  const providerSels = [selects[0], fbSelects[0]].filter(Boolean);
+  ok(providerSels.length === 2, `⑦ 主通道 + 降级目标两个 provider 下拉都被检查（实际 ${providerSels.length}）`);
+  for (const s of providerSels) {
+    const vals = (s.children ?? []).filter((c) => c && c.type === 'option').map((c) => c.props.value);
+    ok(!vals.includes('builtin:zai-coding-plan'), '⑦ 不可用通道不在 option value 里');
+    ok(vals.includes('plan') && vals.includes('personal'), '⑦ 可用通道仍在（plan / personal）');
+  }
+  ok(/enabled: false, reason: channels\.find/.test(src),
+    '⑦ 源码形态：当前值掉线时会单独补一条（标注不可用），不静默显示首项');
+  ok(/const usableChannels = channels\.filter\(\(c\) => c\.enabled\)/.test(src) && /channelOptionsFor/.test(src),
+    '⑦ 源码形态：两个下拉共用同一份"只列可用"的过滤（单一源 channelOptionsFor）');
 }
 
 console.log(`\n===== ZB-30 UI 渲染：${pass} PASS / 0 FAIL =====`);
