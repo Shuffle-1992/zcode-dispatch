@@ -107,6 +107,8 @@
     "chanNewTask": "新任务将使用：",
     "chanDisabled": "不可用",
     "chanLoadFail": "通道清单加载失败",
+    "giftQuota": "免费额度剩余",
+    "giftQuotaUnavailable": "免费额度余量不可用",
     "chanOfflineHint": "未连接宿主：通道/模型来自宿主远端面，连接后这两个下拉才可选",
     "chanDefaultModel": "（通道默认模型）",
     "paused": "已暂停",

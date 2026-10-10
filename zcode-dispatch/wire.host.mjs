@@ -40,6 +40,7 @@ import { dirname, join } from 'node:path';
  * 各自字面量复制一份同样的集合，已构成重复定义。 */
 import { SETTLED_STATES, TERMINAL_STATES } from './core/dispatch-core.mjs';
 import { aggregate, fetchPlanQuota } from './core/quota.mjs';
+import { GIFT_CHANNEL_RE, formatGiftQuota, readGiftQuota } from './core/gift-quota.mjs';
 
 /* ─────────────── Z12：ZCode 派发总开关（跨进程唯一真值，契约：宿主仓库 collab/PROTOCOL.md §7）───────────────
  * 语义：enabled:false = 拒绝对 ZCode 的任何派发；文件缺失/损坏 = 开启（不误锁，与 CLI 同）。
@@ -250,6 +251,31 @@ export function quotaWindows(ledgerPath) {
  * @param {object} config 插件 config（需要 ledgerPath 供 quota 动作使用）
  * @returns {(action: string, params?: object) => Promise<{ok: boolean, error?: string, [k: string]: unknown}>}
  */
+/* ── ZB-33：免费额度（Start Plan）余量 —— **面板与 agent 工具共用同一份计算**（单一源） ──
+ * 纪律：只读 ZCode 客户端日志（零网络请求、零额度消耗）；只有 start-plan 通道才挂 quota。
+ * 工具路径（switch 的 channels/quota 分支）与 RemoteFace 路径（impl.*）都走这两个函数，
+ * 避免"面板看得到、工具看不到"这类漂移。 */
+export function attachGiftQuota(channels) {
+  const quota = readGiftQuota();
+  const text = formatGiftQuota(quota);
+  return {
+    channels: (Array.isArray(channels) ? channels : []).map((ch) =>
+      GIFT_CHANNEL_RE.test(ch?.id ?? '')
+        ? { ...ch, ...(text ? { quota, quotaText: text } : { giftQuotaUnavailable: quota.reason ?? 'unavailable' }) }
+        : ch,
+    ),
+    giftQuota: quota,
+    ...(text ? { giftQuotaText: text } : {}),
+  };
+}
+
+/** 只取额度字段（`action=quota` 用）。 */
+export function giftQuotaFields() {
+  const quota = readGiftQuota();
+  const text = formatGiftQuota(quota);
+  return { giftQuota: quota, ...(text ? { giftQuotaText: text } : {}) };
+}
+
 export function createActionHandler(dispatcher, config = {}) {
   return async function handleAction(action, params = {}) {
     try {
@@ -371,12 +397,13 @@ export function createActionHandler(dispatcher, config = {}) {
           } catch (e) {
             planQuota = { available: false, reason: e?.message ?? String(e) };
           }
-          return { ok: true, quota, planQuota };
+          /* ZB-33：附带免费额度（Start Plan）余量 —— 只读 ZCode 客户端日志，零网络请求。 */
+          return { ok: true, quota, planQuota, ...giftQuotaFields() };
         }
         /* ---- Z6 增量动作：通道 / 续跑 / 降级链（既有动作语义不变） ---- */
         case 'channels': {
           const r = await dispatcher.listChannels();
-          return { ok: true, channels: r.channels, warnings: r.warnings ?? [] };
+          return { ok: true, ...attachGiftQuota(r.channels ?? []), warnings: r.warnings ?? [] };
         }
         case 'channel': {
           if (p.provider != null && p.provider !== '') {
@@ -484,19 +511,21 @@ export function createRemoteFace(dispatcher, config = {}) {
       return { ...snap, jobs: snap.jobs.map(slimJob).filter(withoutDismissed(dispatcher)), channels, switch: readSwitch(switchFileOf(config)) };
     },
     async quota() {
-      return { quota: quotaWindows(config.ledgerPath) };
+      return { quota: quotaWindows(config.ledgerPath), ...giftQuotaFields() };
     },
     async quotaPlan() {
       try {
-        return { planQuota: await fetchPlanQuota() };
+        return { planQuota: await fetchPlanQuota(), ...giftQuotaFields() };
       } catch (e) {
-        return { planQuota: { available: false, reason: e?.message ?? String(e) } };
+        return { planQuota: { available: false, reason: e?.message ?? String(e) }, ...giftQuotaFields() };
       }
     },
     async channels() {
       if (!dispatcher) return { channels: [], warnings: [NOT_READY] };
       const c = await channelsCached();
-      return { channels: c.channels, warnings: c.warnings };
+      /* ZB-33：免费额度通道带**剩余额度**（只读 ZCode 日志，零网络请求）。
+       * 面板据此画额度条；agent 工具 `action=channels` 也返回同一份（同一函数）。 */
+      return { ...attachGiftQuota(c.channels), warnings: c.warnings };
     },
     async channel() {
       if (!dispatcher) throw new Error(NOT_READY);

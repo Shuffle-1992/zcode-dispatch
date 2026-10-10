@@ -173,6 +173,10 @@ zcd dispatch --kind task   --task <任务包> --provider account:bigmodel-start-
 
 限制与验收记录见 [`zcode-dispatch/README.md` 的「免费额度（Start Plan）通道」一节](zcode-dispatch/README.md#免费额度start-plan通道zb-33)
 与 [`tasks/ZB-33-gift-channel-exploration.md`](tasks/ZB-33-gift-channel-exploration.md)。
+**额度可见性（ZB-33）**：选中该通道时面板显示**额度条**（剩余 / 百分比 / 窗口 / 剩余时长）；
+同一份数据也通过 `action=channels`（`channels[].quota`/`quotaText`）与 `action=quota`（`giftQuota`）
+暴露给 agent —— **派发前就能知道还剩多少额度、窗口还剩多久**，工具描述里还写了据此拆任务/换通道的
+决策指引。数据只读 ZCode 客户端日志（零网络请求、零额度消耗），新鲜度以 `observedAt` 如实标注。
 要点：不支持 `--resume`/`--target`/`--memory-bench`；官方 MCP 在托管进程里不可用；
 免费额度是**时间窗口**型（窗口外以 `paused/quota-exhausted` 停下）；`--cwd` 需落在宿主项目内
 （与 `ledgerPath` 同项目，否则用量聚合看不到该单）。

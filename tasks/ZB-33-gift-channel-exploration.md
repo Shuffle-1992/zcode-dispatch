@@ -188,3 +188,54 @@ setModel : ok（account:bigmodel-start-plan / GLM-5.3-Flash / reasoningLevel=max
 - 面板尚未加"免费额度"专属展示（通道已能在 `action=channels` 里选到，`billing` 也已分账；
   面板文案/额度进度条留待下一步）。
 - 并发未限流：一个 job 一个 app-server 进程，建议先由派发台 `maxConcurrent` 限 1–2。
+
+---
+
+## 8. 额度可见性（2026-10-11 追加）
+
+用户要求：「切换到免费额度模型时，面板增加额度条显示，并且这个额度暴露在工具的相关决策卡或提示词，
+让 Agent 在派发任务时，可以知道还有多少额度。」
+
+### 8.1 实现
+
+| 文件 | 内容 |
+|---|---|
+| `zcode-dispatch/core/gift-quota.mjs` | **新增**（与 `dsh-connect-zcode` 的 `lib/plan-quota.js` 同源）：尾部倒读 ZCode 客户端日志里最后一条 `billing/balance 请求完成`，归一成 `{state,totalUnits,usedUnits,remainingUnits,startsAt,endsAt,observedAt}`；`formatGiftQuota()` 出中文摘要。**零网络请求、零额度消耗**；纯函数便于自检 |
+| `zcode-dispatch/wire.host.mjs` | 共享辅助 `attachGiftQuota()` / `giftQuotaFields()`：**工具路径（switch 的 `channels`/`quota` 分支）与 RemoteFace 路径（`impl.*`）共用同一实现** |
+| `zcode-dispatch/index.js` | 工具描述补 `quota`/`quotaText`/`giftQuota` 说明 + 新增**「派发前的额度决策」**指引（active 且充足⇒正常派；剩余少/临近窗口结束⇒拆小任务；pending/expired⇒换通道） |
+| `zcode-dispatch/client.js` | 选中 start-plan 通道时，「通道」分区多一行**额度条**（剩余/百分比/窗口/时长；≤15% 警示色；内联样式 + 主题令牌） |
+| `locale/{zh,en}.json` + client.js 内嵌 `STRINGS` | 新增 `giftQuota` / `giftQuotaUnavailable`（**两处都要加**） |
+| `test/gift-quota.test.mjs` | **新增 8 项**：尾读跨块、解析、active/pending（**不拿 grant 冒充剩余**）/expired/no-start-plan、摘要文案、假 fsImpl 端到端、通道形态 |
+
+### 8.2 真机验证
+
+```
+① 读额度（只读日志，零网络）
+   ok=true state=active 计划=zcode-v3-start-plan-1010「ZCode Weekend Build」模型=GLM-5.3-Flash
+   总量 300,000,000 ｜ 已用 20,097,715 ｜ 剩余 279,902,285
+   窗口 2026/10/10 20:12:09 → 2026/10/12 09:00:00 ｜ 数据时间 2026-10-10T16:39:17.700Z
+   摘要：剩余 279.9M / 300.0M（93%） · 窗口 10-10 20:12 → 10-12 09:00 · 剩 30.3 小时
+② 动作层 channels()（假 dispatcher，不启 DSH）
+   顶层 giftQuotaText = 同上；channels[account:bigmodel-start-plan].quota = {ok:true,state:active,…}
+   ✅ agent 通过 action=channels 即可看到剩余额度
+```
+
+验证：`tools/verify-plugin.mjs` 23/23；插件测试套件 **28/28**。
+
+### 8.3 坑（本轮新增）
+
+**7. 同一能力有两套路径**：工具走 `createActionHandler` 的 `switch(action)`，面板走同一函数里的
+`impl.*` 方法表 —— 只改 `impl.channels()` 时**工具侧看不到**（第一版就踩到，假 dispatcher 一验即现）。
+⇒ 抽共享辅助函数给两条路调用。
+
+**8. 文案有两份**：`locale/*.json` **和** `client.js` 内嵌 `STRINGS`，`single-source.test.mjs`
+逐键逐值比对 —— 只加 JSON 会让测试炸。⇒ 两处同时加。
+
+**9. 索引.js 里插中文说明要留意引号**：`state='active'` 这种单引号会把单引号字符串打断
+（`node --check` 立刻报错）⇒ 改用 `state=active` 或反引号。
+
+### 8.4 未做（可选）
+
+- 面板「用量」区也展示免费额度（现只在「通道」分区；用量区的 `套餐剩余额度：未接入` 说的是
+  **Coding Plan**，与 Start Plan 是不同体系）。
+- 额度低于阈值时的**主动提醒**（面板徽标 / 工具返回值加提示语）。

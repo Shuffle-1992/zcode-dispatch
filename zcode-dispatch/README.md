@@ -370,6 +370,9 @@ CLI 硬限制：`--resume` + `--model` 必失败（ZCode 机制实测 F2），�
   **绝不猜测可用性**）；不可用项置灰并显示原因（如 `未开通：coding_plan_not_entitled`）；
   切换后显示「新任务将使用：<通道>/<模型>」。个人通道的模型列表以个人配置
   （`provider_config.json` 的 `personalModelIds`）实际声明为准。
+  **ZB-33**：选中**免费额度（Start Plan）**通道时，多一行**额度条**（剩余 / 百分比 / 窗口 /
+  剩余时长；来源 = ZCode 客户端日志，零网络请求）——同一份数据也暴露给 agent 工具，见
+  「免费额度（Start Plan）通道」一节。
 - **暂停态**：run 非 0 退出且输出命中暂停签名 → `paused` + 原因徽章（`额度耗尽` / `未开通` /
   `需签名` / `配置错误`）。paused **不占锁、不占并发、不自动重试**，队列继续跑其他任务；
   未命中签名保持 `failed`（Z1 语义不变），仅记 `pauseReason: unknown` 作信息字段。
@@ -637,6 +640,21 @@ zcd dispatch --kind task --task <任务包> --provider start-plan --mode yolo
   台账 `billing` 记为 **`zcode-plan-gift`**（与付费套餐分账）。
 - 需要新增配置：**无**（`runnerPath` 指向的 runner 已含该 transport）。
 
+### 额度条与「Agent 知道自己还有多少额度」（ZB-33）
+
+- **面板**：选中免费额度通道时，「通道」分区多一行**额度条**——
+  `剩余 279.9M / 300.0M（93%）· 窗口 10-10 20:12 → 10-12 09:00 · 剩 30.3 小时`，
+  条形按剩余百分比填充（≤15% 转警示色，主题令牌取值，无字面色值）。
+- **agent 工具侧（派发决策用）**：同一份数据出现在
+  · `action=channels` → `channels[].quota` + `channels[].quotaText`（仅 start-plan 通道）与顶层 `giftQuotaText`；
+  · `action=quota` → `giftQuota`（含 `state`/`totalUnits`/`remainingUnits`/`startsAt`/`endsAt`/`observedAt`）。
+  工具描述里还写了一条**派发前额度决策指引**：active 且充足 ⇒ 正常派；剩余少或临近窗口结束 ⇒ 拆小任务；
+  pending/expired/ok:false ⇒ 换通道。**派发前后都可查**，据此决定是否再派下一单。
+- **数据来源与新鲜度**：只读 ZCode 桌面端自己写在 `~/.zcode/v2/logs/<date>.log` 里的
+  `billing/balance 请求完成` 响应（**零网络请求、零额度消耗**，避开上游对直连 plan 端点的风控）。
+  因此新鲜度取决于桌面端是否在运行/轮询 —— 状态里带 `observedAt`（日志行时刻）供判断，
+  旧到一定程度面板会照实显示旧值而不是猜。
+
 **限制（照实说）**
 
 1. **不支持** `--resume` / `--target` / `--memory-bench`（都是 print 模式 CLI 的能力；该后端每次新建
@@ -659,12 +677,16 @@ zcd dispatch --kind task --task <任务包> --provider start-plan --mode yolo
 
 ## 已知限制
 
-1. **套餐剩余额度未接入**：用量区拆成两段展示——「本地用量（可核对）」= 台账聚合（5h 滚动 /
+1. **套餐（Coding Plan）剩余额度未接入**：用量区拆成两段展示——「本地用量（可核对）」= 台账聚合（5h 滚动 /
    本周 / 今日）+ 引擎本周已用（`core/quota.mjs` 的 `fetchPlanQuota()` 经 ZCode app-server
    `usage/stats`，Z3 实装；语义是引擎本地库「已用」合计）；「套餐剩余额度：未接入」明示
    limit/remaining/resetAt 不在 CLI RPC 面（方法表全枚举 + 候选方法实测 -32601；桌面端走签名
    HTTP，裸 Key/OAuth 均 401），以 ZCode 客户端显示为准。三类证据见 `tasks/Z3-delivery.md` §四。
    引擎本地用量**不得**呈现为「套餐已用」。
+   **例外（ZB-33）**：**免费额度（Start Plan）的剩余量已接入** —— 走 `core/gift-quota.mjs`
+   读 ZCode 客户端日志里的 `billing/balance` 响应（零网络请求），面板额度条 / `action=channels`
+   / `action=quota` 三处同源；新鲜度取决于桌面端轮询，状态带 `observedAt` 如实标注。
+   两者是**不同额度体系**，不要混为一谈。
 2. **标准模式不可安装**：无 `plugin_manager`，也不写 `$DSH_HOME`（`C:\Users\Administrator\.dsh`）。
 3. **远端面接通但未见真数据的场景**：Z8 已全接线（宿主 face 注册 + 客户端 `$mount` 自挂），
    但若宿主侧 `ctx.provide` 缺席或 typert-loader 未注册本包 TYPERT，客户端会安静降级到

@@ -453,6 +453,7 @@ window.__ModuleLoader__.load({
         writeFiles: '要写入的文件列表', lockNoneHint: '不取锁（确认无竞写关系时才用）',
         lockScopeHint: '只锁上面列出的文件；留空则锁整个仓库（与其它任务互斥）',
         secChannel: '通道', chanNewTask: '新任务将使用：', chanDisabled: '不可用', chanLoadFail: '通道清单加载失败',
+        giftQuota: '免费额度剩余', giftQuotaUnavailable: '免费额度余量不可用',
         chanOfflineHint: '未连接宿主：通道/模型来自宿主远端面，连接后这两个下拉才可选',
         chanDefaultModel: '（通道默认模型）',
         paused: '已暂停', pQuota: '额度耗尽', pEntitled: '未开通', pSigning: '需签名', pConfig: '配置错误', pUnknown: '未知原因',
@@ -510,6 +511,7 @@ window.__ModuleLoader__.load({
         writeFiles: 'files to write', lockNoneHint: 'no lock (only when no write conflict is possible)',
         lockScopeHint: 'locks only the files listed above; empty locks the whole repo (exclusive)',
         secChannel: 'Channels', chanNewTask: 'New tasks will use: ', chanDisabled: 'unavailable', chanLoadFail: 'Failed to load channels',
+        giftQuota: 'Free quota left', giftQuotaUnavailable: 'Free-quota balance unavailable',
         chanOfflineHint: 'Host not connected: channel/model come from the host Remote face and unlock once connected',
         chanDefaultModel: '(channel default model)',
         paused: 'Paused', pQuota: 'Quota exhausted', pEntitled: 'Not entitled', pSigning: 'Signing required', pConfig: 'Config error', pUnknown: 'Unknown',
@@ -1907,6 +1909,17 @@ window.__ModuleLoader__.load({
       const sel = channels.find((c) => c.id === channel.provider) ?? null;
       const models = sel && Array.isArray(sel.models) ? sel.models : [];
       const modelValue = channel.model ?? '';
+      /* ── ZB-33：免费额度（Start Plan）通道的**额度条** ──
+       * 数据来自宿主 `action=channels` 的 `channels[].quota`（只读 ZCode 客户端日志，
+       * 零网络请求；同一份数据也暴露给 agent 工具，见 index.js 的工具描述）。
+       * 只在**选中该通道**时出现（用户要求：切到免费额度模型才显示）。 */
+      const giftSel = sel && /^account:[a-z]+-start-plan$/.test(sel.id ?? '') ? sel : null;
+      const giftQuota = giftSel?.quota ?? null;
+      const giftRemain = giftQuota ? (Number.isFinite(giftQuota.remainingUnits) ? giftQuota.remainingUnits : giftQuota.availableUnits) : null;
+      const giftPct = giftQuota && Number.isFinite(giftRemain) && Number.isFinite(giftQuota.totalUnits) && giftQuota.totalUnits > 0
+        ? Math.max(0, Math.min(100, Math.round((giftRemain / giftQuota.totalUnits) * 100)))
+        : null;
+      const giftText = giftSel ? (giftSel.quotaText ?? (giftSel.giftQuotaUnavailable ? `${t('giftQuotaUnavailable')}（${giftSel.giftQuotaUnavailable}）` : null)) : null;
 
       const switchProvider = (id) => {
         const c = channels.find((x) => x.id === id);
@@ -2041,6 +2054,25 @@ window.__ModuleLoader__.load({
         })(),
         h('div', { className: 'zcd-note', role: 'status' },
           `${t('chanNewTask')}${channel.provider}/${channel.model || t('chanDefaultModel')} · ${t('thinking')}: ${channel.reasoningLevel === 'agent' || !channel.reasoningLevel ? t('thinkingAgentShort') : thinkingLabel(channel.reasoningLevel)}`),
+        /* ── ZB-33：免费额度通道的额度条（仅选中该通道时显示） ── */
+        giftSel && giftText
+          ? h('div', { className: 'zcd-field' },
+            h('span', { className: 'zcd-field-k' }, t('giftQuota')),
+            h('span', { className: 'zcd-field-v', style: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: '0' } },
+              giftPct === null
+                ? null
+                : h('span', {
+                  style: { flex: '0 0 64px', height: '6px', borderRadius: '3px', background: T.bgBar, overflow: 'hidden' },
+                  role: 'img', 'aria-label': `${t('giftQuota')} ${giftPct}%`,
+                },
+                  h('span', {
+                    style: {
+                      display: 'block', height: '100%', width: `${giftPct}%`,
+                      background: giftPct <= 15 ? T.danger : T.accent,
+                    },
+                  })),
+              h('span', { className: 'zcd-note', style: { minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis' } }, giftText)))
+          : null,
         /* ── ZB-30：自动降级（开关 + 开启后的目标三下拉） ── */
         h('div', { className: 'zcd-field' },
           h('button', {
