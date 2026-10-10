@@ -1,4 +1,4 @@
-# @local/zcode-dispatch —— ZCode 派发台（cordis bundle）
+# dsh-zcode-dispatch —— ZCode 派发台（cordis bundle）
 
 在 DSH Harness 里派发/监视多个 ZCode 无头进程（`zcode-run.mjs`）：单写者互斥、用量与上下文、套餐通道。
 Host 半边（`index.js` + `wire.host.mjs` + `core/*`）跑进程调度并暴露 agent 工具 `zcode_dispatch`；
@@ -36,12 +36,41 @@ patch 默认指向的 `.data/`（同结构，见 config 说明）都是**运行�
 paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢复显示）。
 `test/` 下的验收输出物（如 `*.output.txt`）同样不入包。
 
-## 安装（创造模式会话执行）
+## 安装
 
-1. `plugin_manager` → `install_bundle`，`target` = `<本仓库>\zcode-dispatch`（绝对路径）。
+### 方式一：从 DSH 插件页 / CLI（推荐，市场同款）
+
+```sh
+dsh plugin --profile web add dsh-zcode-dispatch
+```
+
+或在 DSH 的**插件页**点「添加插件」、填包名 `dsh-zcode-dispatch`。
+
+> ⚠️ **本仓库是 monorepo，插件本体在 `zcode-dispatch/` 子目录**。DSH 实际执行的是
+> `pnpm add <spec>`，而 pnpm 对 git 仓库**默认取仓库根**——根目录没有 `package.json`，
+> 装出来只会得到一个占位包（实测 `{"_pnpmPlaceholder":"...did not contain a package.json."}`），
+> 插件文件全在 `zcode-dispatch/` 子层，DSH 加载会失败。
+> 因此**从本仓库 git 直装时必须带 `#path:` 子目录后缀**：
+
+```sh
+# 直接从 GitHub 装（带子目录定位）
+dsh plugin --profile web add "github:Shuffle-1992/zcode-dispatch#path:zcode-dispatch"
+# 或等价 URL 形式
+dsh plugin --profile web add "https://github.com/Shuffle-1992/zcode-dispatch#path:zcode-dispatch"
+```
+
+已发布到 npm 后，`dsh plugin --profile web add dsh-zcode-dispatch` 这种**裸包名**形式才可用
+（无需 `#path:`，因为 npm 包本身已是插件根）。
+
+### 方式二：本地开发（绝对路径，创造模式会话）
+
+1. `plugin_manager` → `install_bundle`，`target` = `<本仓库>/zcode-dispatch`（绝对路径）。
 2. **读返回的 `application` 与 `warnings`**（不是看日志）：`applied` 才算生效；`restart-required` /
    `failed` / `overridden` 分别处置。若报 pending build scripts，**先问用户**再传 `approvedBuilds`。
 3. 本包无构建步骤、无 npm 依赖；替换已安装包需要重启才加载新 JS（新装 bundle 可走 HMR）。
+
+> 三种入口的取舍：**npm 包名**（最省事，需先发布）→ **git + `#path:`**（当前仓库可直接装）→
+> **本地绝对路径**（改代码即时生效，开发用）。
 
 ## config 说明（cordis.patch.yml 可改；用户 patch 层升级存活）
 
@@ -63,7 +92,7 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 >
 > ```yaml
 > - id: zcode-dispatch
->   name: "@local/zcode-dispatch"
+>   name: "dsh-zcode-dispatch"
 >   config:
 >     runnerPath: '<宿主项目>\scripts\collab\zcode-run.mjs'
 >     ledgerPath: '<宿主项目>\collab\logs\zcode-runs.jsonl'
@@ -583,6 +612,52 @@ paused/pausedAt 与 unknown 分支、timeoutMin 校验）。
 
 > `file-lock` 与 `wait-action` 用 `node:test` 语义（`node --test test/xxx.test.mjs`），
 > 退出码 0 = 全过；其余为自实现的极简断言框架。
+
+## 免费额度（Start Plan）通道（ZB-33）
+
+派发台现在支持 **ZCode Start Plan（活动赠送额度，如 Weekend Build 的免费 GLM-5.3-Flash）**。
+
+**为什么需要专门一条通道**：Start Plan 的端点 `https://zcode.z.ai/api/v1/zcode-plan/anthropic`
+要求**逐请求的官方客户端证明** —— 既有的 plan 路径（把 Key 塞进临时 provider 配置走直连 HTTP）
+在它上面会被判 `405 / code 3012`；而且 `~/.zcode/v2/config.json` 里 `builtin:bigmodel-start-plan`
+通常是 `enabled:false`，`--provider plan` 永远挑到**付费** coding-plan。唯一可行路线是
+**托管官方 agent 本体**（`zcode.cjs app-server`），由它自己签发 —— 也就是姊妹项目
+[`dsh-connect-zcode`](https://github.com/Shuffle-1992/dsh-connect-zcode) 那条 `zcode-appserver`
+通道的同一套协议。
+
+**怎么用**（通道 id 可直接当 `--provider`）：
+
+```bash
+# 面板：通道下拉选「免费额度（Start Plan）」；或命令行：
+zcd dispatch --kind prompt --prompt "只回复 OK" --provider account:bigmodel-start-plan
+zcd dispatch --kind task --task <任务包> --provider start-plan --mode yolo
+```
+
+- 实现：`collab-kit/appserver-gift.mjs`（回合驱动：账户注入 + 鉴权递送 + 事件收集 + usage 折算）
+  ／ `collab-kit/appserver-gift-job.mjs`（产物 / `[zcode-run]` 输出行 / 台账，与 print 模式同形）。
+- **解析、暂停分类、面板、重试/交接、降级链、台账全部复用**，无需改动；
+  台账 `billing` 记为 **`zcode-plan-gift`**（与付费套餐分账）。
+- 需要新增配置：**无**（`runnerPath` 指向的 runner 已含该 transport）。
+
+**限制（照实说）**
+
+1. **不支持** `--resume` / `--target` / `--memory-bench`（都是 print 模式 CLI 的能力；该后端每次新建
+   CLI 会话）；`--attach` 会被忽略（agent 有自己的文件工具，可直接读工作目录）。
+2. 官方 MCP 服务器在托管进程里**连不上**（拿不到桌面端签名头），agent 可能在其上打转 ——
+   靠既有 `timeoutMin` + 暂停分类兜底。
+3. 免费额度是**时间窗口**型：窗口外派发会以 `paused / quota-exhausted` 停下（不静默改烧付费额度）；
+   窗口恢复后 `retry` 续跑。
+4. 并发：一个 job 一个 app-server 进程；建议先由 `maxConcurrent` 限 1–2。
+5. **`--cwd` / `runnerCwd` 必须落在宿主项目内**（与 `ledgerPath` 同项目）：runner 的台账固定在
+   `<PROJECT>/collab/logs/zcode-runs.jsonl`，两者不同项目时 job 能跑通但用量聚合看不到这一单
+   （面板显示 `billing=-`）。
+6. 思考档**必填**：通道的 `session/setModel` 会硬校验；面板传的 `agent`（=「Agent决定」）会被
+   翻译为"未指定"，自动回落到本机 `config.json` 里该模型的官方 `defaultVariant`（GLM-5.3 系 = `max`）。
+
+**验收（2026-10-11 真机，全部通过）**：提示词任务 `done exit=0`；真实任务包（5 次模型调用 / 130s）
+`done exit=0` 且 agent 在工作目录写出交付文件；`zcd channels` 列出该通道且 `enabled=true`；
+`parseRunnerLine` 10 行全识别；暂停三签名命中；台账 `billing=zcode-plan-gift` / `usageBasis=cli-single`；
+本仓库测试套件 **27/27**。完整记录见 [`tasks/ZB-33-gift-channel-exploration.md`](../tasks/ZB-33-gift-channel-exploration.md)。
 
 ## 已知限制
 

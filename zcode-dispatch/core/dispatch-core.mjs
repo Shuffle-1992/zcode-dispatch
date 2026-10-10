@@ -1416,6 +1416,15 @@ export function createDispatcher(options = {}) {
     } catch { /* 无文件/损坏：默认关 */ }
   }
 
+  /**
+   * ZB-33：免费额度（Start Plan）通道的展示名。
+   *
+   * 它是**运行时注入**的 `account:<family>-start-plan`（runner 侧 app-server 托管，
+   * 见 collab-kit/appserver-gift.mjs），config.json 里没有它 ⇒ `readConfigNames()` 取不到名字，
+   * 面板下拉会显示裸 id。这里按 id 形态给一个中文名（只影响展示，不影响可用性判断）。
+   */
+  const GIFT_CHANNEL_RE = /^account:[a-z]+-start-plan$/;
+
   /** 读 config.json 里的 provider 展示名（只读；读不到就用 id，不影响可用性判断）。 */
   function readConfigNames() {
     try {
@@ -1526,7 +1535,7 @@ export function createDispatcher(options = {}) {
     };
     const channels = parsed.rows.map((r) => ({
       id: r.id,
-      name: names[r.id] ?? r.id,
+      name: names[r.id] ?? (GIFT_CHANNEL_RE.test(r.id) ? '免费额度（Start Plan）' : r.id),
       enabled: r.enabled,
       reason: r.reason ?? (cache[r.id]?.status === 'unavailable' ? cache[r.id]?.reason ?? null : null),
       endpoint: r.endpoint,

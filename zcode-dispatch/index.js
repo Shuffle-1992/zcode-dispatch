@@ -1,5 +1,5 @@
 /**
- * @local/zcode-dispatch —— Host 半边（cordis bundle 的 Host 入口）。
+ * dsh-zcode-dispatch —— Host 半边（cordis bundle 的 Host 入口）。
  *
  * 职责：按 config 创建 Z1 派发核心单例（core/dispatch-core.mjs，勿改），注册卸载清理
  * （杀子进程 + 落状态 + 释放 wire），并把「派发台操作」以 agent 工具 `zcode_dispatch`

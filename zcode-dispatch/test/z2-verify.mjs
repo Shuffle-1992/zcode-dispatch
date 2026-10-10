@@ -68,7 +68,7 @@ for (const f of JS_FILES) {
 /* ---------------- 2. JSON / 清单 / locale ---------------- */
 section('2. package.json / locale JSON 解析与关键字段');
 const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
-ok(pkg.name === '@local/zcode-dispatch', 'package.json name');
+ok(pkg.name === 'dsh-zcode-dispatch', 'package.json name');
 ok(pkg.dsh?.bundle?.patch === './cordis.patch.yml', 'package.json dsh.bundle.patch');
 ok(pkg.dsh?.client?.platform === 'web' && pkg.dsh?.client?.immediately === true, 'package.json dsh.client(platform/immediately)');
 ok(Array.isArray(pkg.dsh?.client?.inject) && pkg.dsh.client.inject.includes('@deepseek-ai/dsh-client-ui-conversation'), 'package.json dsh.client.inject（清单契约字段）');
@@ -90,7 +90,7 @@ const yamlText = readFileSync(join(PKG, 'cordis.patch.yml'), 'utf8');
 const yamlChecks = [
   [/^-\s*insert:\s*$/m, '顶层 - insert:'],
   [/^\s+-\s*id:\s*zcode-dispatch\s*$/m, '行 id=zcode-dispatch'],
-  [/^\s+name:\s*'@local\/zcode-dispatch'\s*$/m, "行 name='@local/zcode-dispatch'"],
+  [/^\s+name:\s*'@local\/zcode-dispatch'\s*$/m, "行 name='dsh-zcode-dispatch'"],
   [/^\s+config:\s*$/m, 'config: 块'],
   [/^\s+demo:\s*false\s*$/m, 'config.demo=false'],
   [/^\s+maxConcurrent:\s*1\s*$/m, 'config.maxConcurrent=1'],
@@ -369,7 +369,7 @@ section('7. client.js：ModuleLoader 桩 + 假 ctx + 渲染冒烟');
   globalThis.document = { documentElement: { lang: 'zh-CN' } };
 
   await import(pathToFileURL(join(PKG, 'client.js')).href);
-  ok(loads.length === 1 && loads[0].id === '@local/zcode-dispatch', 'window.__ModuleLoader__.load 被调用且 id 正确');
+  ok(loads.length === 1 && loads[0].id === 'dsh-zcode-dispatch', 'window.__ModuleLoader__.load 被调用且 id 正确');
   const requireStub = (name) => {
     if (name === 'react') return ReactStub;
     throw new Error(`意外 require: ${name}`);

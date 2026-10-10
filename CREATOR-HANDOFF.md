@@ -11,8 +11,8 @@
 | 项 | 值 |
 |---|---|
 | 插件源码 | `F:\My Code\zcode-dispatch\zcode-dispatch\`（独立 git 仓库 `main`；最近提交 `e4cdb4c`） |
-| 安装方式 | GUI 插件页「添加插件」→ 填本地目录路径；profile 里是 **Junction 软链**：`~/.dsh/profiles/desktop/node_modules/@local/zcode-dispatch → F:\My Code\zcode-dispatch\zcode-dispatch` |
-| 启用状态 | ✅ `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` **含** `@local/zcode-dispatch` |
+| 安装方式 | GUI 插件页「添加插件」→ 填本地目录路径；profile 里是 **Junction 软链**：`~/.dsh/profiles/desktop/node_modules/dsh-zcode-dispatch → F:\My Code\zcode-dispatch\zcode-dispatch` |
+| 启用状态 | ✅ `~/.dsh/profiles/desktop/package.json` 的 `dsh.profile.bundles` **含** `dsh-zcode-dispatch` |
 | DSH 启动 | ✅ 14:12:56 重启后**无崩溃报告**（`%APPDATA%\@deepseek-ai\dsh-desktop\logs\crash-*.log` 最新仍是 14:05 的两条旧记录） |
 | **面板** | ✅ **已可见**（2026-09-30 14:2x 用户确认）。根因 = `createWire()` 渲染期抛错且当时无 ErrorBoundary → 整块浮层静默消失；修复见提交 `e4cdb4c`（createWire 兜底 + DEAD_WIRE + PanelBoundary），用户刷新页面后可见 |
 | 面板数据 | ⚠️ 仍是**演示数据**（`conn='demo'`）→ 真数据卡在 **P2（Remote 命名空间）**，是本单主要剩余项 |
@@ -112,7 +112,7 @@
 
 **按序判定**：
 1. `cordis_inspect_query` → **Slots**：确认本版本 `shell.overlay` 的声明（kind/scope/children）与真实名字；确认我们的注册项（id `zcode-dispatch.console`）是否出现。**若没出现** → `ctx.slots.inject` 回调未触发或注册被拒，按注册 API 的真实约束对照我们的调用。
-2. `plugin_manager`（`list_plugins` / bundle 详情）：确认 `@local/zcode-dispatch` **客户端条目**是否 `activated`；pending/failed 的错误是什么。
+2. `plugin_manager`（`list_plugins` / bundle 详情）：确认 `dsh-zcode-dispatch` **客户端条目**是否 `activated`；pending/failed 的错误是什么。
 3. 若已注册但无内容：看渲染是否抛错（刷新后如出现"渲染失败"卡片，把那行消息带回即可精确定位）；必要时把 `client.js` 顶部先换成**极简 `<div>`**（不依赖 wire/CSS）二分定位"槽位→组件"这条路，再逐步加回。
 4. 参考 `refs/SKILL.md`、`refs/references/practices.md`（`wire.view`）、`refs/references/ui-plugin.md`（其中明确：只有需要 overlay 且位置已知时才用 `shell.overlay`）。
 

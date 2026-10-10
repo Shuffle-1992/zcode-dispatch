@@ -5,7 +5,7 @@
 #    `~/.dsh/profiles/<profile>/cordis.patch.yml`：
 #
 #      - id: zcode-dispatch
-#        name: '@local/zcode-dispatch'
+#        name: 'dsh-zcode-dispatch'
 #        config:
 #          runnerPath: '<本仓库>/collab-kit/zcode-run.mjs'（通用工具仓库，非宿主项目）
 #          ledgerPath: '<宿主仓库>\collab\logs\zcode-runs.jsonl'
@@ -16,7 +16,7 @@
 #    workRoot 缺省自动落到 <插件目录>/.data。详见 zcode-dispatch/README.md「配置」一节。
 - insert:
     - id: zcode-dispatch
-      name: '@local/zcode-dispatch'
+      name: 'dsh-zcode-dispatch'
       config:
         demo: false
         maxConcurrent: 1

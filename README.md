@@ -36,6 +36,7 @@ dsh plugin --profile web add github:Shuffle-1992/zcode-dispatch
 | **实时监视** | 每个 job 的状态、耗时、上下文占用、退出码、锁持有者；可拉最近输出（tail） |
 | **续跑 / 重跑** | 同会话 `--resume` 重发原提示词，或在同一会话里发一条新指令 |
 | **通道与降级链** | 切换套餐通道 / 模型；额度耗尽或未开通时按降级链自动交接重跑到下一个可用通道 |
+| **免费额度通道** | 支持 ZCode **Start Plan（活动赠送额度）**：托管官方 agent 走 app-server（端点要求逐请求官方签名），通道 `account:<family>-start-plan`；与付费套餐复用同一条面板 / 台账 / 暂停 / 降级流水线 |
 | **用量聚合** | 本地台账 5 小时滚动 / 本周 / 今日，外加套餐剩余额度（数据源不可用时如实标注 `available:false`，不猜） |
 | **派发总开关** | 一个跨会话真值文件：`false` = 任何会话都不得派发（runner / 插件 / 桥接三处强制生效） |
 | **agent 工具** | 注册 `zcode_dispatch`，与面板同一套动作实现（一操作两调用方） |
@@ -147,6 +148,31 @@ zcode-dispatch/
 
 ---
 
+## 免费额度（Start Plan）通道
+
+派发台支持 **ZCode Start Plan（活动赠送额度）**：通道 id `account:<family>-start-plan`
+（本机实测 `account:bigmodel-start-plan`），面板下拉里显示为「**免费额度（Start Plan）**」，
+也可直接当 `--provider` 用：
+
+```bash
+zcd dispatch --kind prompt --prompt "只回复 OK" --provider start-plan
+zcd dispatch --kind task   --task <任务包> --provider account:bigmodel-start-plan --mode yolo
+```
+
+原理：该端点要求**逐请求的官方客户端证明**（直连 HTTP 会被 `405 / code 3012` 拦），
+所以由 runner 托管 `zcode.cjs app-server`、自己注入套餐账户并把 token 递给它签名。
+实现在 `collab-kit/appserver-gift.mjs`（回合驱动）+ `collab-kit/appserver-gift-job.mjs`
+（产物 / 输出行 / 台账，与既有 print 模式同形）—— 因此**面板、暂停分类、重试/交接、降级链、
+台账聚合全部复用**，台账按 `billing=zcode-plan-gift` 与付费套餐分账。
+
+限制与验收记录见 [`zcode-dispatch/README.md` 的「免费额度（Start Plan）通道」一节](zcode-dispatch/README.md#免费额度start-plan通道zb-33)
+与 [`tasks/ZB-33-gift-channel-exploration.md`](tasks/ZB-33-gift-channel-exploration.md)。
+要点：不支持 `--resume`/`--target`/`--memory-bench`；官方 MCP 在托管进程里不可用；
+免费额度是**时间窗口**型（窗口外以 `paused/quota-exhausted` 停下）；`--cwd` 需落在宿主项目内
+（与 `ledgerPath` 同项目，否则用量聚合看不到该单）。
+
+---
+
 ## agent 工具 `zcode_dispatch`
 
 一个工具 + `action` 参数，与面板上的操作一一对应：
@@ -227,5 +253,4 @@ Z2_HOST_REPO=<宿主项目> node test/z2-verify.mjs   # 端到端验收（不设
 
 ## 许可
 
-本仓库**尚未指定开源许可**（未附 `LICENSE` 文件）。在补上之前，默认保留所有权利；
-第三方材料沿用其各自许可（见上节）。
+MIT（见 [`LICENSE`](LICENSE)）。第三方材料沿用其各自许可（见上节）。

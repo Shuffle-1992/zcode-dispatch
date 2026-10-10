@@ -90,7 +90,7 @@ const JSON_ANY = Object.freeze({ parse: (value) => value });
  * 「JSON 可序列化」（宿主网关 parse 后仍做 JSON 安全断言）。
  */
 export const TYPERT_REMOTE = {
-  package: '@local/zcode-dispatch',
+  package: 'dsh-zcode-dispatch',
   service: FACE_NAME,
   generator: 'hand-written (Z8)：无 typert 生成器与 zod 依赖；strict codec 用透传校验器，字段形态对齐官方产物',
   descriptors: [
@@ -114,7 +114,7 @@ export const TYPERT_REMOTE = {
     ['channel', [], 'channel(): Promise<channel>', [], '当前通道数据对象'],
     ['fallbackChain', [], 'fallbackChain(): Promise<{enabled, chain}>', [], '{enabled, chain}'],
   ].map(([method, parameters, , optionals]) => ({
-    id: `@local/zcode-dispatch#${FACE_NAME}/${method}`,
+    id: `dsh-zcode-dispatch#${FACE_NAME}/${method}`,
     service: FACE_NAME,
     namespace: FACE_NAME,
     method,
@@ -126,13 +126,13 @@ export const TYPERT_REMOTE = {
       ...(optionals.includes(name) ? { acceptsUndefined: true } : {}),
       codec: {
         mode: 'strict',
-        typeSymbol: `@local/zcode-dispatch#${FACE_NAME}/${method}:${name}`,
+        typeSymbol: `dsh-zcode-dispatch#${FACE_NAME}/${method}:${name}`,
         create: () => JSON_ANY,
       },
     })),
     result: {
       mode: 'strict',
-      typeSymbol: `@local/zcode-dispatch#${FACE_NAME}/${method}:result`,
+      typeSymbol: `dsh-zcode-dispatch#${FACE_NAME}/${method}:result`,
       create: () => JSON_ANY,
     },
   })),

@@ -320,7 +320,8 @@ DSH 自带的后台任务完成时会自动把会话拉起来，派发台也应�
   约 2.5 小时后 DSH 插件管理器自动跑 `pnpm install`（日志
   `profiles/desktop/.plugin-manager/logs/operation-*/pnpm.log`），pnpm 以**仍含旧路径的根锁**为准，
   把 `package.json`/两个 lock/junction 全部按旧路径重建 ⇒ junction 悬空 ⇒ 下次启动报
-  `cannot resolve profile bundle "@local/zcode-dispatch"`。
+  `cannot resolve profile bundle "@local/zcode-dispatch"`。（当时的包名 —— ZB-32 起包已改名为
+  `dsh-zcode-dispatch`；此处保留原始报错文本以保持史实准确。）
 - **正确做法**：改 `link:` spec 后**跑一次 profile 的 pnpm install**，让它自己重建 lock + junction；
   若必须手工改，则 `profiles/<p>/pnpm-lock.yaml`（正式）与 `node_modules/.pnpm/lock.yaml`（副本）
   **两个都要改**，并重建 junction，最后**再跑一次 install 复验**。

@@ -632,7 +632,7 @@ const JSON_ANY = Object.freeze({ parse: (value) => value });
 /** strict codec（loader/lib/index.js:206-211 与 registry validateCodec 的必需字段）。 */
 const strictCodec = (method, field) => ({
   mode: 'strict',
-  typeSymbol: `@local/zcode-dispatch#${FACE_NAME}/${method}:${field}`,
+  typeSymbol: `dsh-zcode-dispatch#${FACE_NAME}/${method}:${field}`,
   create: () => JSON_ANY,
 });
 
@@ -645,13 +645,13 @@ const strictCodec = (method, field) => ({
  *    registry/loader 对 JSON 参数均允许该字段）。
  */
 export const TYPERT = {
-  package: '@local/zcode-dispatch',
+  package: 'dsh-zcode-dispatch',
   face: 'host',
   generator: 'hand-written (Z8)：无 typert 生成器与 zod 依赖；strict codec 用透传校验器，字段形态对齐官方产物',
   service: FACE_NAME,
   schemas: [],
   invocations: FACE_METHOD_TABLE.map(([method, parameters, , resultNote, optionals]) => ({
-    id: `@local/zcode-dispatch#${FACE_NAME}/${method}`,
+    id: `dsh-zcode-dispatch#${FACE_NAME}/${method}`,
     service: FACE_NAME,
     namespace: FACE_NAME,
     method,

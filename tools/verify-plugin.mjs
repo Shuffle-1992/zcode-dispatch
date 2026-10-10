@@ -23,7 +23,19 @@ const PROFILE_BEFORE = snapshotProfile();
 
 /* ---------- ① manifest / patch ---------- */
 const pkg = JSON.parse(readFileSync(join(PKG, 'package.json'), 'utf8'));
-check('manifest: name/exports/dsh.bundle.patch', pkg.name === '@local/zcode-dispatch' && pkg.exports?.['.'] === './index.js' && pkg.exports?.['./client'] === './client.js' && pkg.dsh?.bundle?.patch === './cordis.patch.yml', `${pkg.name}`);
+check('manifest: name/exports/dsh.bundle.patch', pkg.name === 'dsh-zcode-dispatch' && pkg.exports?.['.'] === './index.js' && pkg.exports?.['./client'] === './client.js' && pkg.dsh?.bundle?.patch === './cordis.patch.yml', `${pkg.name}`);
+/* ZB-32 市场合规：可发布身份 + 元数据。`private:true` 会挡掉 npm 发布；
+ * typert-loader 硬校验 TYPERT.package === 包名（refs/dsh-typert/loader/lib/index.js:80），
+ * 故 name 与 TYPERT.package 必须**逐字一致**，这里一并钉住。 */
+check('manifest: 可发布身份（name/version/license/repository/keywords/engines/manifestVersion）',
+  !pkg.private && /^[a-z0-9][a-z0-9._~-]*$/.test(pkg.name) && /^\d+\.\d+\.\d+/.test(pkg.version)
+  && !!pkg.license && !!pkg.repository?.url && Array.isArray(pkg.keywords) && pkg.keywords.includes('dsh-plugin')
+  && !!pkg.engines?.node && pkg.dsh?.manifestVersion === 1,
+  `private=${pkg.private} license=${pkg.license} keywords=${pkg.keywords?.length ?? 0} engines=${pkg.engines?.node ?? '-'} manifestVersion=${pkg.dsh?.manifestVersion ?? '-'}`);
+{
+  const typPkg = /package:\s*'([^']+)'/.exec(readFileSync(join(PKG, 'wire.host.mjs'), 'utf8'))?.[1];
+  check('manifest: TYPERT.package ≡ package.json name（loader 硬校验）', typPkg === pkg.name, `TYPERT.package=${typPkg} name=${pkg.name}`);
+}
 check('manifest: dsh.client 平台/立即加载', pkg.dsh?.client?.platform === 'web' && pkg.dsh?.client?.immediately === true, JSON.stringify(pkg.dsh?.client ?? {}));
 check('manifest: meta 标题/描述/图标', !!pkg.meta?.title && !!pkg.meta?.description && pkg.icon === './icon.svg', `${pkg.meta?.title}`);
 /* ZB-22 补：`files` 必须覆盖 host 半边的**相对 import**。install_bundle 按 files 打包，
@@ -37,7 +49,7 @@ check('manifest: meta 标题/描述/图标', !!pkg.meta?.title && !!pkg.meta?.de
   check('manifest: files 覆盖 index.js 的相对 import', missing.length === 0, missing.length ? `缺: ${missing.join(',')}` : `${rel.length} 个相对 import 全覆盖`);
 }
 const patch = readFileSync(join(PKG, 'cordis.patch.yml'), 'utf8');
-check('patch: 插入行 id/name/config', /id:\s*zcode-dispatch/.test(patch) && /name:\s*'@local\/zcode-dispatch'/.test(patch) && /runnerPath:/.test(patch) && /ledgerPath:/.test(patch), patch.split('\n').filter((l) => /runnerPath|ledgerPath|demo|maxConcurrent/.test(l)).join(' | ').slice(0, 140));
+check('patch: 插入行 id/name/config', /id:\s*zcode-dispatch/.test(patch) && /name:\s*'dsh-zcode-dispatch'/.test(patch) && /runnerPath:/.test(patch) && /ledgerPath:/.test(patch), patch.split('\n').filter((l) => /runnerPath|ledgerPath|demo|maxConcurrent/.test(l)).join(' | ').slice(0, 140));
 
 /* ---------- ② 静态纪律 ---------- */
 const jsFiles = readdirSync(PKG, { recursive: true }).filter((f) => /\.(js|mjs)$/.test(f) && !f.includes('work') && !f.includes('test'));
@@ -79,7 +91,7 @@ check('index.js 引用 core dispatcher', /dispatch-core\.mjs/.test(index) && /cr
 let captured = null;
 globalThis.window = { __ModuleLoader__: { load: (o) => { captured = o; } } };
 await import(pathToFileURL(join(PKG, 'client.js')).href);
-check('client.js 通过 __ModuleLoader__.load 注册', !!captured && captured.id === '@local/zcode-dispatch' && typeof captured.factory === 'function', `id=${captured?.id}`);
+check('client.js 通过 __ModuleLoader__.load 注册', !!captured && captured.id === 'dsh-zcode-dispatch' && typeof captured.factory === 'function', `id=${captured?.id}`);
 
 const el = (type, props, ...children) => ({ type, props, children });
 class StubComponent {

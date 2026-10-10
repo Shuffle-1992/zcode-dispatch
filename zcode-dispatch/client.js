@@ -1,5 +1,5 @@
 /**
- * @local/zcode-dispatch —— Client 半边：DSH Web 页面里的「ZCode 派发台」悬浮窗。
+ * dsh-zcode-dispatch —— Client 半边：DSH Web 页面里的「ZCode 派发台」悬浮窗。
  * 纯 JS + React.createElement（无构建 / 无 JSX / 无 npm 依赖）；唯一外部模块为 react（经宿主模块表注入）。
  *
  * 行为：右下角贴边悬浮窗，标题栏可拖拽（pointer events），可折叠，可最小化为圆角小胶囊；
@@ -29,7 +29,7 @@
  * - 「连接中」：尚未收到任何数据包（连接建立前的一次渲染）。
  */
 window.__ModuleLoader__.load({
-  id: '@local/zcode-dispatch',
+  id: 'dsh-zcode-dispatch',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
@@ -784,15 +784,15 @@ window.__ModuleLoader__.load({
     ];
     const remoteCodec = (method, field) => ({
       mode: 'strict',
-      typeSymbol: `@local/zcode-dispatch#zcodeDispatch/${method}:${field}`,
+      typeSymbol: `dsh-zcode-dispatch#zcodeDispatch/${method}:${field}`,
       create: () => REMOTE_JSON_ANY,
     });
     // $mount 贡献项（客户端注册表校验要求 strict codec 字段齐备；acceptsUndefined
     // 允许 JSON 可选参数缺参——网关 assertExactArguments 按它放行）
     const REMOTE_CONTRIBUTION = {
-      package: '@local/zcode-dispatch',
+      package: 'dsh-zcode-dispatch',
       descriptors: REMOTE_METHOD_TABLE.map(([method, params, optionals]) => ({
-        id: `@local/zcode-dispatch#zcodeDispatch/${method}`,
+        id: `dsh-zcode-dispatch#zcodeDispatch/${method}`,
         service: 'zcodeDispatch',
         namespace: 'zcodeDispatch',
         method,
@@ -2818,7 +2818,7 @@ window.__ModuleLoader__.load({
       // ⚠️ 绝不能把自家的 `remote.zcodeDispatch` 写进 inject：该命名空间正是 apply() 里
       // $mount 才挂上的——声明它等于"等自己"，条目会永远 pending，导致 web boot 直接失败：
       //   web boot: 1 entry did not activate
-      //   @local/zcode-dispatch: pending (waiting for service: remote.zcodeDispatch)
+      //   dsh-zcode-dispatch: pending (waiting for service: remote.zcodeDispatch)
       // 命名空间是否就绪改用子 fiber（ctx.inject）在 $mount 之后订阅。
       //
       // ⚠️ `typert` 是**必须**的（2026-09-30 现场定证，错误消息：
