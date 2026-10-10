@@ -146,8 +146,15 @@ setModel : ok（account:bigmodel-start-plan / GLM-5.3-Flash / reasoningLevel=max
 | 台账 | `billing=zcode-plan-gift`、`requests=1`、`inputTokens=18130`、`usageBasis=cli-single`、`channel=appserver-gift`（**未虚高**） |
 | `--list-providers` → `parseProviderTable` | 解析出 8 条通道（0 warning），含 `account:bigmodel-start-plan enabled=true` |
 | 本仓库测试套件 | **27/27 通过**（runner 改动未破坏既有行为） |
+| **插件路径端到端**（`zcd dispatch --provider account:bigmodel-start-plan`） | `state=done exit=0 elapsed=10.9s`、`billing=zcode-plan-gift`、`usage requests=1 in=18208 out=105`、`responseChars=7`（正好 7 个汉字）✓ |
+| `zcd channels` | 免费额度通道在列：`account:bigmodel-start-plan  true  https://zcode.z.ai/… | GLM-5.3, GLM-5.3-Flash (免费额度 Start Plan；--provider start-plan)`（面板/`action=channels` 同源） |
 
 ### 7.3 实现中**新踩到**的坑（比探索阶段更多）
+
+**5. 派发台的 `--reasoning-level agent` 是伪值，不能直接当档位下发**（真机端到端才发现）：
+插件默认传 `agent`（=「Agent决定/不覆盖」），我第一版直接转给 `session/setModel` ⇒
+`-32603 Reasoning effort "agent" is not supported by account:…/GLM-5.3-Flash`，job 4.9s 失败。
+⇒ 在 gift 路径把 `agent`（含空串）视为"未指定"，回落到官方 `defaultVariant` 链。
 
 1. **`session/setModel` 强制要求思考档**：不传报 `-32603 Reasoning level is required for
    account:bigmodel-start-plan/GLM-5.3-Flash`。桥接总是传，所以没暴露。

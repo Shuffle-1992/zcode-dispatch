@@ -391,12 +391,20 @@ export async function runGiftTurn(opts) {
   const revision = computeBuiltinRevision(runtime.file);
   const modelId = opts.model ?? 'GLM-5.3-Flash';
   const timeoutMs = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 45 * 60 * 1000;
-  /* 思考档**必填**（见 defaultReasoningLevelFor 注释：这条通道的 setModel 会硬校验）：
-   * 显式传入 > 本机 config.json 的官方 defaultVariant > 'max'（GLM-5.3 系官方默认）。 */
-  const reasoningLevel = opts.reasoningLevel ?? defaultReasoningLevelFor(modelId) ?? 'max';
+  /* 思考档**必填**（见 defaultReasoningLevelFor 注释：这条通道的 setModel 会硬校验）。
+   * 取值链：显式档位 > 本机 config.json 的官方 defaultVariant > 'max'。
+   * ⚠️ 派发台的 `--reasoning-level agent` 是**伪值**（"Agent决定/不覆盖"，见其 CLI 文档），
+   * 不是合法档位 —— 必须在这里翻译掉，否则真机报
+   * `Reasoning effort "agent" is not supported by account:…/GLM-5.3-Flash`（ZB-33 实测）。 */
+  const requestedLevel =
+    typeof opts.reasoningLevel === 'string' && opts.reasoningLevel !== '' && opts.reasoningLevel !== 'agent'
+      ? opts.reasoningLevel
+      : undefined;
+  const reasoningLevel = requestedLevel ?? defaultReasoningLevelFor(modelId) ?? 'max';
 
   logger.info?.(
-    `[gift] 运行时=${runtime.version} 账户=${accountProviderId} 模型=${modelId} 思考档=${reasoningLevel}（token ${auth.token.length} 字符，不打印）`,
+    `[gift] 运行时=${runtime.version} 账户=${accountProviderId} 模型=${modelId} 思考档=${reasoningLevel}` +
+      `${opts.reasoningLevel === 'agent' ? '（由 agent 伪值回落官方默认）' : ''}（token ${auth.token.length} 字符，不打印）`,
   );
 
   let text = '';
