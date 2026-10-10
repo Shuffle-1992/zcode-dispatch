@@ -15,6 +15,7 @@
  *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --list-providers                      # 看套餐/供应商可用性
  *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --prompt ... --model GLM-5.3-Flash    # 套餐内指定模型
  *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --prompt ... --provider personal --model deepseek-v4-pro
+ *   node "<zcode-dispatch>/collab-kit/zcode-run.mjs" --project <项目根> --prompt "只回复 OK" --provider start-plan   # 免费额度（Start Plan）
  *
  * 参数：
  *   --task <file>        任务包文件（内容内联进 prompt，避免 CLI 找不到路径）
@@ -24,8 +25,14 @@
  *   --mode <mode>        build | edit | plan | yolo（默认 edit；无人值守建议显式指定）
  *   --cwd <path>         工作目录（默认项目根）
  *   --project <dir>      项目根（含 collab/ 的目录；默认 env ZCODE_PROJECT_DIR，再默认 cwd）
- *   --provider <p>       plan（默认，走套餐额度）| personal（个人 API Key）| <v2/config.json 里的 provider 键>
- *   --model <id>         指定模型（套餐默认 GLM-5.3；personal 模式默认个人配置里的模型）
+ *   --provider <p>       plan（默认，走**付费**套餐额度）| personal（个人 API Key）|
+ *                        start-plan / gift（**免费额度 Start Plan**，托管官方 agent 走 app-server）|
+ *                        <v2/config.json 里的 provider 键>
+ *   --transport <t>      执行后端：auto（默认）| print | appserver。
+ *                        auto 判据：--provider start-plan|gift → appserver，其余 → print。
+ *                        appserver 见 collab-kit/appserver-gift.mjs（账户注入 + 鉴权递送 + 回合驱动）。
+ *   --model <id>         指定模型（套餐默认 GLM-5.3；personal 模式默认个人配置里的模型；
+ *                        start-plan 默认 GLM-5.3-Flash）
  *   --personal-config <path>  指定个人 provider 配置（仅 --provider personal 时生效）
  *   --list-providers     列出账号内 provider/套餐可用性与模型，然后退出
  *   --attach <file>      附加文件（可重复）
@@ -122,6 +129,36 @@ function readProjectArg() {
   return readArgValue('--project');
 }
 
+/* ---------- ZCode 派发总开关（跨会话真值来源；契约见 collab/PROTOCOL.md） ----------
+ * 任何会话（DSH / ZCode / 桥）派发前都必须过这一关：文件里 enabled:false 即拒绝。
+ * 真值来源是磁盘文件而非内存开关 —— 跨进程只能靠文件。
+ * 【ZB-33 位置调整】原先它在临时配置生成之后（≈795 行），意味着"总开关关闭"时仍会去
+ * 读 config.json/凭据库做 provider 解析；现在提到最前，作为**第一道闸**（语义不变，更早、更省）。 */
+const SWITCH_FILE =
+  process.env.ZCODE_SWITCH_FILE && process.env.ZCODE_SWITCH_FILE.trim() !== ''
+    ? resolve(process.env.ZCODE_SWITCH_FILE.trim())
+    : join(PROJECT, 'collab', 'zcode-dispatch.switch.json');
+function readDispatchSwitch() {
+  try {
+    if (!existsSync(SWITCH_FILE)) return { enabled: true, source: 'default(无文件=开启)' };
+    const raw = JSON.parse(readFileSync(SWITCH_FILE, 'utf8'));
+    return { enabled: raw.enabled !== false, updatedAt: raw.updatedAt, updatedBy: raw.updatedBy, note: raw.note };
+  } catch (e) {
+    return { enabled: true, source: `default(读取失败: ${e.message})` };
+  }
+}
+{
+  const sw = readDispatchSwitch();
+  if (!sw.enabled) {
+    console.error('[zcode-run] ⛔ ZCode 派发总开关为「关闭」，拒绝派发（未启动任何进程、未消耗任何额度）。');
+    console.error(`[zcode-run] 开关文件: ${SWITCH_FILE}`);
+    if (sw.updatedBy || sw.updatedAt) console.error(`[zcode-run] 最后修改: ${sw.updatedBy ?? '?'} @ ${sw.updatedAt ?? '?'}`);
+    if (sw.note) console.error(`[zcode-run] 备注: ${sw.note}`);
+    console.error('[zcode-run] 需要恢复派发时: node <本仓库>/collab-kit/zcode-switch.mjs --project <宿主项目> on');
+    process.exit(3); // 3 = 因总开关关闭而拒绝（与参数错误 1、超时 124 区分）
+  }
+}
+
 /* ---------- CLI 与环境（本机实测：两个 provider 配置必须同时给出） ---------- */
 const CLI = process.env.ZCODE_CLI || 'F:\\Program Files\\ZCode\\resources\\glm\\zcode.cjs';
 const BUILTIN =
@@ -146,6 +183,7 @@ for (let i = 0; i < argv.length; i += 1) {
   else if (a === '--tag') opt.tag = next();
   else if (a === '--model') opt.model = next();
   else if (a === '--provider') opt.provider = next();
+  else if (a === '--transport') opt.transport = next();
   else if (a === '--personal-config') opt.personalConfig = next();
   else if (a === '--timeout-min') opt.timeoutMin = Number(next());
   else if (a === '--reasoning-level') opt.reasoningLevel = next();
@@ -259,7 +297,7 @@ function personalModelIds() {
   }
 }
 
-const listProviders = () => {
+const listProviders = async () => {
   if (!appCfg) {
     console.error(`[zcode-run] 读不到 ${APP_CONFIG}`);
     process.exit(1);
@@ -284,11 +322,28 @@ const listProviders = () => {
     const lv = reasoningLevelsFor(m);
     if (lv) console.log(`[zcode-run] reasoning-levels ${m}=${lv.join(',')}`);
   }
+  /* ZB-33：免费额度（Start Plan）通道 —— **不是** config.json 里的现成 provider，
+   * 而是运行时注入的 `account:<family>-start-plan`（见 collab-kit/appserver-gift.mjs）。
+   * 这里补一行，好让派发台的 `action=channels` / 面板能选到它（id 可直接当 --provider 用）。
+   * enabled 判据 = 本机凭据库有可解密的 zcodejwttoken（**只表示"已登录、可尝试"**：
+   * 额度窗口与权益由服务端判定，真正的失败会在派发时以暂停签名报出来）。 */
+  const startPlanEntry = appProviders['builtin:bigmodel-start-plan'] ?? appProviders['builtin:zai-start-plan'];
+  const startPlanModels = startPlanEntry?.models ? Object.keys(startPlanEntry.models).join(', ') : 'GLM-5.3-Flash';
+  const startPlanEndpoint = startPlanEntry?.options?.baseURL ?? 'https://zcode.z.ai/api/v1/zcode-plan/anthropic';
+  const { readGiftAuth, startPlanProviderId } = await import('./appserver-gift.mjs'); // 动态导入：新模块的问题不该拖垮既有路径
+  let giftRow;
+  try {
+    const auth = readGiftAuth(CRED_STORE);
+    giftRow = `${startPlanProviderId(auth.activeProvider).padEnd(34)}${'true'.padEnd(10)}${startPlanEndpoint} | ${startPlanModels} (免费额度 Start Plan；--provider start-plan)`;
+  } catch (error) {
+    giftRow = `${startPlanProviderId(undefined).padEnd(34)}${'false'.padEnd(10)}${startPlanEndpoint} | ${startPlanModels} (免费额度：凭据不可用 —— ${String(error?.message ?? error).slice(0, 60)})`;
+  }
+  console.log(giftRow);
   console.log('\n提示：默认 --provider plan 会选第一个启用的 *coding-plan，其次 *start-plan。');
 };
 
 if (opt.listProviders) {
-  listProviders();
+  await listProviders();
   process.exit(0);
 }
 
@@ -512,7 +567,15 @@ let providerRule = null; // 若需注入套餐 provider，这里是 providerRule
 let providerModels = []; // [{ id, contextWindow, maxOutput }]
 let providerLabel = 'personal';
 
-if (opt.provider !== 'personal') {
+/* ZB-33：免费额度（Start Plan）走 app-server 托管，**不经过**这套"读 config.json 里的
+ * builtin provider + 验活 apiKey + 造临时 provider 配置"的流程（那条路的端点是认证型，
+ * 直连必被拦）。它的分支在下方产物路径算好之后。
+ * 接受三种写法：`--provider start-plan` / `--provider gift` / `--provider account:<family>-start-plan`
+ * （最后一种就是 `--list-providers` 里那一行的 id，派发台 `action=channel` 设默认通道时用它）。 */
+const GIFT_PROVIDER_RE = /^account:[a-z]+-start-plan$/;
+const GIFT_MODE = opt.provider === 'gift' || opt.provider === 'start-plan' || GIFT_PROVIDER_RE.test(opt.provider ?? '') || opt.transport === 'appserver';
+
+if (!GIFT_MODE && opt.provider !== 'personal') {
   if (!appCfg) {
     console.error(`[zcode-run] --provider ${opt.provider} 需要读取 ${APP_CONFIG}（桌面端账号配置）`);
     process.exit(1);
@@ -630,6 +693,46 @@ const base = join(LOGS, `zcode-run-${tag}-${stamp}`);
 const outLog = `${base}.out.log`;
 const errLog = `${base}.err.log`;
 const resultFile = `${base}.result.json`;
+
+/* ---------- 免费额度（Start Plan）：托管官方 agent，走 app-server ----------
+ * ZB-33：`builtin:bigmodel-start-plan` 那条路（直连 HTTP）走不通 —— 端点要求逐请求的官方客户端
+ * 证明（直连被 405/3012 拦）。唯一可行路线是托管官方 agent 本体，由它自己签发。
+ * 因此这里**绕过 provider 解析与临时配置生成**，直接交给任务外壳（产物/台账/输出行与 print 模式同形）。 */
+if (GIFT_MODE) {
+  if (opt.resume) {
+    console.error('[zcode-run] 免费额度（app-server）通道暂不支持 --resume（该后端每次新建 CLI 会话）；请用 --prompt/--task 指定完整任务');
+    process.exit(1);
+  }
+  if (opt.target) {
+    console.error('[zcode-run] 免费额度（app-server）通道暂不支持 --target（目标模式是 print 模式 CLI 的能力）；请改用 --prompt/--task');
+    process.exit(1);
+  }
+  if (opt.memoryBench) {
+    console.error('[zcode-run] --memory-bench 仅 print 模式支持');
+    process.exit(1);
+  }
+  if (opt.attach.length > 0) {
+    console.warn('[zcode-run] ⚠️ 免费额度通道暂不转发 --attach（agent 有自己的文件工具，可直接在工作目录里读）；已忽略');
+  }
+  const { runGiftJob } = await import('./appserver-gift-job.mjs'); // 动态导入：新模块的问题不该拖垮既有 print 路径
+  process.exit(
+    await runGiftJob({
+      cliPath: CLI,
+      project: PROJECT,
+      prompt,
+      cwd,
+      tag,
+      taskPath,
+      opt,
+      /* 显式给的是通道 id 时用它（`account:zai-start-plan` 与账号家族不一致也照用 —— 用户点名即照做） */
+      accountProviderId: GIFT_PROVIDER_RE.test(opt.provider ?? '') ? opt.provider : undefined,
+      outLog,
+      errLog,
+      resultFile,
+      ledgerPath: join(LOGS, 'zcode-runs.jsonl'),
+    }),
+  );
+}
 
 /* ---------- 生成临时个人 provider 配置（套餐注入 / --model 改写；原配置不动，副本跑完即删） ---------- */
 let modelPath = personalPath;
@@ -784,34 +887,7 @@ function detectRateLimit(text) {
   };
 }
 
-/* ---------- ZCode 派发总开关（跨会话真值来源；契约见 collab/PROTOCOL.md） ----------
- * 任何会话（DSH / ZCode / 桥）派发前都必须过这一关：文件里 enabled:false 即拒绝。
- * 真值来源是磁盘文件而非内存开关 —— 跨进程只能靠文件。
- * 路径优先取 env `ZCODE_SWITCH_FILE`（跨项目统一开关），否则 <project>/collab/ 下的默认位置。 */
-const SWITCH_FILE =
-  process.env.ZCODE_SWITCH_FILE && process.env.ZCODE_SWITCH_FILE.trim() !== ''
-    ? resolve(process.env.ZCODE_SWITCH_FILE.trim())
-    : join(PROJECT, 'collab', 'zcode-dispatch.switch.json');
-function readDispatchSwitch() {
-  try {
-    if (!existsSync(SWITCH_FILE)) return { enabled: true, source: 'default(无文件=开启)' };
-    const raw = JSON.parse(readFileSync(SWITCH_FILE, 'utf8'));
-    return { enabled: raw.enabled !== false, updatedAt: raw.updatedAt, updatedBy: raw.updatedBy, note: raw.note };
-  } catch (e) {
-    return { enabled: true, source: `default(读取失败: ${e.message})` };
-  }
-}
-{
-  const sw = readDispatchSwitch();
-  if (!sw.enabled) {
-    console.error('[zcode-run] ⛔ ZCode 派发总开关为「关闭」，拒绝派发（未启动任何进程、未消耗任何额度）。');
-    console.error(`[zcode-run] 开关文件: ${SWITCH_FILE}`);
-    if (sw.updatedBy || sw.updatedAt) console.error(`[zcode-run] 最后修改: ${sw.updatedBy ?? '?'} @ ${sw.updatedAt ?? '?'}`);
-    if (sw.note) console.error(`[zcode-run] 备注: ${sw.note}`);
-    console.error('[zcode-run] 需要恢复派发时: node <本仓库>/collab-kit/zcode-switch.mjs --project <宿主项目> on');
-    process.exit(3); // 3 = 因总开关关闭而拒绝（与参数错误 1、超时 124 区分）
-  }
-}
+/* ---------- 派发总开关已在文件前部（第一道闸）检查过，这里不再重复 ---------- */
 
 /* ---------- 执行 ---------- */
 const args = ['-p', prompt];
