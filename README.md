@@ -171,6 +171,13 @@ zcd dispatch --kind task   --task <任务包> --provider account:bigmodel-start-
 （产物 / 输出行 / 台账，与既有 print 模式同形）—— 因此**面板、暂停分类、重试/交接、降级链、
 台账聚合全部复用**，台账按 `billing=zcode-plan-gift` 与付费套餐分账。
 
+> **和姊妹项目 [`dsh-connect-zcode`](https://github.com/Shuffle-1992/dsh-connect-zcode) 的 provider 通道怎么选？**
+> 派发台的语义是「**独立 ZCode 进程 + 它自己的工具 + 独立会话/额度**」—— 所以在这里
+> 「工具由 ZCode 自己执行」是**设计，不是缺陷**；而那边把同一个免费额度接成 **DSH 的模型对话通道**，
+> 代价是 **DSH 工具层不参与**（`browser_*` / Agent Teams / `ask_user_question` / `present` / TODO 等都没有，
+> 见其 README 的「免费额度通道目前缺失的功能速查」）。
+> ⇒ **要让 agent 用工具自主干活，就用派发台；要在 DSH 里做交互式对话并复用 DSH 工具链，就用 provider 通道。**
+
 限制与验收记录见 [`zcode-dispatch/README.md` 的「免费额度（Start Plan）通道」一节](zcode-dispatch/README.md#免费额度start-plan通道zb-33)
 与 [`tasks/ZB-33-gift-channel-exploration.md`](tasks/ZB-33-gift-channel-exploration.md)。
 **额度可见性（ZB-33）**：选中该通道时面板显示**额度条**（剩余 / 百分比 / 窗口 / 剩余时长）；

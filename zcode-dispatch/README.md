@@ -642,6 +642,12 @@ zcd dispatch --kind task --task <任务包> --provider start-plan --mode yolo
 - **解析、暂停分类、面板、重试/交接、降级链、台账全部复用**，无需改动；
   台账 `billing` 记为 **`zcode-plan-gift`**（与付费套餐分账）。
 - 需要新增配置：**无**（`runnerPath` 指向的 runner 已含该 transport）。
+- **选型：什么时候用派发台、什么时候用 provider 通道** —— 本派发台的语义 = **独立 ZCode 进程 + 它自己的工具 + 独立会话/额度**，
+  所以「工具由 ZCode 自己执行」在这里是**设计而非缺陷**；而姊妹项目
+  [`dsh-connect-zcode`](https://github.com/Shuffle-1992/dsh-connect-zcode) 的 `zcode-appserver` 是**模型对话通道**，
+  它那条免费额度通道上 **DSH 工具层不参与**（浏览器面板 / Agent Teams / `ask_user_question` / TODO 等都没有，
+  见其 README 的「免费额度通道目前缺失的功能速查」）。
+  ⇒ **要让 agent 自主用工具干活 ⇒ 用派发台（本文这条通道）；要 DSH 自己的工具链做交互式对话 ⇒ 用 provider 通道。**
 
 ### 额度条与「Agent 知道自己还有多少额度」（ZB-33）
 
