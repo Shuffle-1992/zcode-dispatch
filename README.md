@@ -8,6 +8,25 @@ DSH 自带的 `subagent` 跑的是 DSH 自己的 agent；**本插件跑的是 ZC
 
 ---
 
+## 安装
+
+**从 GitHub 仓库安装（推荐）**——本包**未发布到 npm**，请用 pnpm 的 git 规格：
+
+```bash
+dsh plugin --profile web add github:Shuffle-1992/zcode-dispatch
+```
+
+> 把 `web` 换成你的 profile 名（`dsh plugin list` 可查）。装完**重启 DSH** 生效。
+
+**本地开发挂载**（源码就在本机时）：profile 的 `dependencies` 加
+`"dsh-zcode-dispatch": "link:<仓库>/zcode-dispatch"`、`bundles` 加 `"dsh-zcode-dispatch"`，
+并在 profile 的 `node_modules/dsh-zcode-dispatch` 建 junction 指向该目录。
+
+> 包名 = `dsh-zcode-dispatch`；bundle 资格由**仓库根** `package.json` 的 `dsh.bundle.patch`
+> （→ `zcode-dispatch/cordis.patch.yml`）声明；插件本体清单在 `zcode-dispatch/package.json`。
+
+---
+
 ## 它做什么
 
 | 能力 | 说明 |
@@ -92,7 +111,7 @@ zcode-dispatch/
 
 ```yaml
 - id: zcode-dispatch
-  name: "@local/zcode-dispatch"
+  name: "dsh-zcode-dispatch"
   config:
     demo: false
     maxConcurrent: 1

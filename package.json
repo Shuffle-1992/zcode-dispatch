@@ -1,0 +1,69 @@
+{
+  "name": "dsh-zcode-dispatch",
+  "version": "0.1.0",
+  "description": "在 DeepSeek Harness 里派发/监视多个 ZCode 无头进程：单写者互斥、用量与上下文聚合、套餐通道与自动降级",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Shuffle-1992/zcode-dispatch.git"
+  },
+  "homepage": "https://github.com/Shuffle-1992/zcode-dispatch",
+  "bugs": {
+    "url": "https://github.com/Shuffle-1992/zcode-dispatch/issues"
+  },
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "cordis-plugin",
+    "dsh",
+    "zcode",
+    "dispatch",
+    "subagent",
+    "agent-tool",
+    "client-plugin"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "exports": {
+    ".": "./zcode-dispatch/index.js",
+    "./client": "./zcode-dispatch/client.js",
+    "./typert": "./zcode-dispatch/wire.host.mjs",
+    "./remote": "./zcode-dispatch/wire.client.mjs",
+    "./locale/*.json": "./zcode-dispatch/locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./zcode-dispatch/cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "meta": {
+    "title": "ZCode 派发台",
+    "description": "在 Harness 里派发/监视多个 ZCode 无头进程（单写者互斥、用量与上下文、套餐通道）"
+  },
+  "icon": "./zcode-dispatch/icon.svg",
+  "files": [
+    "zcode-dispatch/index.js",
+    "zcode-dispatch/client.js",
+    "zcode-dispatch/notify.mjs",
+    "zcode-dispatch/wire.host.mjs",
+    "zcode-dispatch/wire.client.mjs",
+    "zcode-dispatch/cordis.patch.yml",
+    "zcode-dispatch/icon.svg",
+    "zcode-dispatch/README.md",
+    "zcode-dispatch/bin",
+    "zcode-dispatch/core",
+    "zcode-dispatch/locale",
+    "README.md",
+    "LICENSE"
+  ]
+}
