@@ -62,7 +62,34 @@ logger.info?.(`[gift] 权限请求 ${msg.method} → ${allow ? 'allow' : 'deny'}
 | 并发 | 一 job 一进程（`maxConcurrent` 内并行） | 同 |
 | 未知的宿主请求 | 我们回 `{}`（若 ZCode 新增依赖宿主的工具，可能静默降级 —— **已知风险**，当前未触发） | 无此问题（不需要宿主） |
 
-## 五、复跑方法（照抄即可）
+## 五、`yolo` vs `edit`（以及 `plan`）：差别在**审批链路**，不在能不能干活（ZB-35 实测）
+
+同一任务（「建文件，内容一行」）、同一模型、同一通道，只改 `mode`：
+
+| | `yolo` | `edit` |
+|---|---|---|
+| 文件落盘 | ✅ | ✅ |
+| `toolNames` | `["Write"]` | `["Write"]` |
+| **审批请求**（`result.json.permissionRequests`） | **`[]`** —— 根本不问 | **`[{method:'interaction/requestPermission', mode:'edit', decision:'allow'}]`** —— 问了一次，由宿主代批 |
+| 事件流 | 无 `permission.*` | 多出 **`permission.requested` / `permission.resolved`** |
+
+**机制**（扒 `zcode.cjs` 得到，2026-10-11）：
+- `session/setMode` 只接受 `build | edit | plan | yolo`（CLI 内 `m.enum(["build","edit","plan","yolo"])`）；
+  桌面端还有更宽的权限模式集合（`default / acceptEdits / auto / dontAsk / bypassPermissions / …`）。
+- 每个工具自带 `needsApproval`：**`Read` = false**（"Read only inspects file content … no external side effects"）、
+  **`Write` / `Edit` = true**（"…creates or overwrites files …"）。
+- ⇒ `yolo` = **CLI 内部直接放行**，不产生审批请求；`edit`/`build` = 对 `needsApproval:true` 的工具
+  **发 `interaction/requestPermission` 等批准** —— 桌面端由用户点，**托管派发由我们代批**（默认放行，
+  仅 `plan` 拒绝）。
+
+**派发建议**：无人值守请显式 `--mode yolo`（少一层往返、少一个失败点），或 `edit`/`build`（现已代批，
+且保留可审计的 `permission.*` 事件）；**别用 `plan`** —— 它的契约就是"只规划不执行"。
+
+> 顺带修正一条此前的乐观结论：MCP **不是"全可用"而是"部分可用"**。CLI 日志里每次会话都有
+> `mcp.server.failed` 警告（有服务器连不上，`durationMs ≈ 1.2s`），但 `node_repl` / `web_reader`
+> 实测调用成功 ⇒ 具体哪些服务器可用取决于桌面端 MCP 配置，**以实测为准**。
+
+## 六、复跑方法（照抄即可）
 
 ```bash
 # 通过派发台工具（Agent 侧）

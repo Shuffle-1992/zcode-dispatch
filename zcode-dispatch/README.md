@@ -673,6 +673,13 @@ zcd dispatch --kind task --task <任务包> --provider start-plan --mode yolo
 **不支持**（都是 print 模式 CLI 的能力，本通道每次新建会话）；`--attach` 被忽略（但 agent 有自己的 Read
 工具，可直接读工作目录 —— 实测文件读写正常）。
 
+**模式怎么选（`--mode`，ZB-35 实测）**：`yolo` = **CLI 内部直接放行**，不产生审批请求；`edit`/`build` =
+对需审批的工具（`Read` 不需要，`Write`/`Edit` 需要）发 `interaction/requestPermission`，
+**托管派发由我们代批**（默认放行，`result.json.permissionRequests` 可见，事件流里有
+`permission.requested` / `permission.resolved`）；`plan` = 只规划不执行（权限请求一律拒绝）。
+三者在"能不能干活"上：`yolo` 与 `edit` **实测等价**（都落盘成功），`plan` 不执行。
+**无人值守派发建议显式 `--mode yolo`**（少一层往返、少一个失败点），或 `edit`/`build`（保留可审计的审批事件）。
+
 ### 额度条与「Agent 知道自己还有多少额度」（ZB-33）
 
 - **面板**：选中免费额度通道时，「通道」分区多一行**额度条**——

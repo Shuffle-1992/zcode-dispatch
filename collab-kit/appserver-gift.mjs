@@ -411,6 +411,7 @@ export async function runGiftTurn(opts) {
   let reasoningChars = 0;
   const toolEvents = [];
   const seenEventTypes = new Set(); // 首次出现的 event 类型打一行诊断（对齐真实事件词汇表）
+  const permissionRequests = []; // 每次审批请求（method/mode/decision）—— yolo vs edit 的差异可观测
   let finished;
   let channel;
   let turnUsage;
@@ -455,6 +456,7 @@ export async function runGiftTurn(opts) {
          * （runner 的默认派发模式）下 agent 的 Write 被拒 —— 它回复「Write 工具调用被拒绝了，
          * 文件未创建」，**与付费套餐 print 模式不等价**。故修正为默认放行。 */
         const allow = opts.mode !== 'plan';
+        permissionRequests.push({ method: String(msg.method), mode: opts.mode ?? 'edit', decision: allow ? 'allow' : 'deny' });
         logger.info?.(
           `[gift] 权限请求 ${msg.method} → ${allow ? 'allow' : 'deny'}（mode=${opts.mode ?? 'edit'}）` +
             `${JSON.stringify(msg.params ?? {}).slice(0, 200)}`,
@@ -622,6 +624,8 @@ export async function runGiftTurn(opts) {
      * 否则"这次派发到底用没用工具、用了哪些"只能靠读 agent 的自我报告。 */
     toolNames: [...new Set(toolEvents.map((t) => t.name).filter((n) => n && n !== '(unnamed)'))],
     eventTypes: [...seenEventTypes].sort(),
+    /* 审批链路（ZB-35）：yolo 下通常为空；edit/build 下每个需审批的工具调用会有一条。 */
+    permissionRequests,
     usage: { ...usage, modelRequestCount: turnUsage?.modelRequestCount ?? null, usageBasis: basis },
     projection: {
       contextUsed: projection.contextUsed ?? null,
