@@ -10,13 +10,19 @@ DSH 自带的 `subagent` 跑的是 DSH 自己的 agent；**本插件跑的是 ZC
 
 ## 安装
 
-**从 GitHub 仓库安装（推荐）**——本包**未发布到 npm**，请用 pnpm 的 git 规格：
+> **本项目不发布 npm**（不提供裸包名安装）。唯一安装路径 = **从 GitHub 仓库安装**；
+> 改代码的场景用本地绝对路径挂载。
+
+**从 GitHub 仓库安装（推荐）**——git 规格 + `#path:` 子目录定位：
 
 ```bash
-dsh plugin --profile web add github:Shuffle-1992/zcode-dispatch
+dsh plugin --profile web add "github:Shuffle-1992/zcode-dispatch#path:zcode-dispatch"
 ```
 
 > 把 `web` 换成你的 profile 名（`dsh plugin list` 可查）。装完**重启 DSH** 生效。
+> **`#path:zcode-dispatch` 不能省**：本仓库是 monorepo，插件本体在 `zcode-dispatch/` 子目录；
+> DSH 实际执行 `pnpm add <spec>`，而 pnpm 对 git 仓库默认取**仓库根** —— 根目录没有插件
+> `package.json`，装出来只会得到占位包（实测 `{"_pnpmPlaceholder":"...did not contain a package.json."}`）。
 
 **本地开发挂载**（源码就在本机时）：profile 的 `dependencies` 加
 `"dsh-zcode-dispatch": "link:<仓库>/zcode-dispatch"`、`bundles` 加 `"dsh-zcode-dispatch"`，

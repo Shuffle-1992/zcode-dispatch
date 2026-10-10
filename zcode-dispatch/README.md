@@ -38,29 +38,26 @@ paused/终态 job 的 id 集合，`snapshot`/`list` 据此过滤；删掉即恢�
 
 ## 安装
 
-### 方式一：从 DSH 插件页 / CLI（推荐，市场同款）
+> **本项目不发布 npm**（不提供裸包名安装）。推荐路径 = **从 GitHub 仓库安装**；
+> 改代码的场景用本地绝对路径挂载。
+
+### 方式一：从 GitHub 仓库安装（推荐）
 
 ```sh
-dsh plugin --profile web add dsh-zcode-dispatch
-```
-
-或在 DSH 的**插件页**点「添加插件」、填包名 `dsh-zcode-dispatch`。
-
-> ⚠️ **本仓库是 monorepo，插件本体在 `zcode-dispatch/` 子目录**。DSH 实际执行的是
-> `pnpm add <spec>`，而 pnpm 对 git 仓库**默认取仓库根**——根目录没有 `package.json`，
-> 装出来只会得到一个占位包（实测 `{"_pnpmPlaceholder":"...did not contain a package.json."}`），
-> 插件文件全在 `zcode-dispatch/` 子层，DSH 加载会失败。
-> 因此**从本仓库 git 直装时必须带 `#path:` 子目录后缀**：
-
-```sh
-# 直接从 GitHub 装（带子目录定位）
 dsh plugin --profile web add "github:Shuffle-1992/zcode-dispatch#path:zcode-dispatch"
 # 或等价 URL 形式
 dsh plugin --profile web add "https://github.com/Shuffle-1992/zcode-dispatch#path:zcode-dispatch"
 ```
 
-已发布到 npm 后，`dsh plugin --profile web add dsh-zcode-dispatch` 这种**裸包名**形式才可用
-（无需 `#path:`，因为 npm 包本身已是插件根）。
+或在 DSH 的**插件页**点「添加插件」、填上面那条 git 规格。
+
+> 把 `web` 换成你的 profile 名（`dsh plugin list` 可查）。装完**重启 DSH** 生效。
+
+> ⚠️ **`#path:zcode-dispatch` 不能省**：本仓库是 monorepo，插件本体在 `zcode-dispatch/`
+> 子目录；DSH 实际执行 `pnpm add <spec>`，而 pnpm 对 git 仓库**默认取仓库根** ——
+> 根目录没有插件 `package.json`，装出来只会得到一个占位包
+> （实测 `{"_pnpmPlaceholder":"...did not contain a package.json."}`），插件文件全在子层，
+> DSH 加载会失败。
 
 ### 方式二：本地开发（绝对路径，创造模式会话）
 
@@ -69,8 +66,9 @@ dsh plugin --profile web add "https://github.com/Shuffle-1992/zcode-dispatch#pat
    `failed` / `overridden` 分别处置。若报 pending build scripts，**先问用户**再传 `approvedBuilds`。
 3. 本包无构建步骤、无 npm 依赖；替换已安装包需要重启才加载新 JS（新装 bundle 可走 HMR）。
 
-> 三种入口的取舍：**npm 包名**（最省事，需先发布）→ **git + `#path:`**（当前仓库可直接装）→
-> **本地绝对路径**（改代码即时生效，开发用）。
+> 两种入口的取舍：**git + `#path:`**（推荐，当前仓库可直接装）→ **本地绝对路径**
+> （改代码即时生效，开发用）。因为不发布 npm，**不要**用裸包名 `dsh-zcode-dispatch` 安装
+> （只有发布到 npm 之后那种形式才成立）。
 
 ## config 说明（cordis.patch.yml 可改；用户 patch 层升级存活）
 
